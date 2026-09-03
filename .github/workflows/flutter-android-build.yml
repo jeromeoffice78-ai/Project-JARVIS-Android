@@ -1,0 +1,66 @@
+name: JARVIS Flutter Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'ci/flutter-app/**'
+      - '.github/workflows/flutter-android-build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Reconstruct current JARVIS Flutter source
+        run: |
+          cat ci/flutter-app/chunk-* > /tmp/jarvis.b64
+          base64 --decode /tmp/jarvis.b64 > /tmp/jarvis.zip
+          echo "8fc2628b6f85057ef6d637bbbcbe5075f97fa633285dddb7938e6c569b8680ac  /tmp/jarvis.zip" | sha256sum --check
+          mkdir -p /tmp/jarvis
+          unzip -q /tmp/jarvis.zip -d /tmp/jarvis
+      - name: Generate Android project and dependencies
+        working-directory: /tmp/jarvis/flutter_app
+        run: |
+          flutter create --platforms=android .
+          python ../scripts/prepare_native.py
+          flutter pub get
+      - name: Analyze
+        working-directory: /tmp/jarvis/flutter_app
+        run: flutter analyze
+      - name: Build debug APK
+        working-directory: /tmp/jarvis/flutter_app
+        env:
+          JARVIS_HTTP_BASE: ${{ vars.JARVIS_HTTP_BASE }}
+          JARVIS_WS_URL: ${{ vars.JARVIS_WS_URL }}
+          JARVIS_CLIENT_TOKEN: ${{ secrets.JARVIS_CLIENT_TOKEN }}
+        run: |
+          flutter build apk --debug \
+            --dart-define=JARVIS_HTTP_BASE="${JARVIS_HTTP_BASE:-http://10.0.2.2:8000}" \
+            --dart-define=JARVIS_WS_URL="${JARVIS_WS_URL:-ws://10.0.2.2:8000/ws/jarvis}" \
+            --dart-define=JARVIS_CLIENT_TOKEN="${JARVIS_CLIENT_TOKEN:-}"
+      - name: Stage APK
+        run: |
+          mkdir -p dist
+          cp /tmp/jarvis/flutter_app/build/app/outputs/flutter-apk/app-debug.apk dist/JARVIS-Voice-Vision-debug.apk
+          sha256sum dist/JARVIS-Voice-Vision-debug.apk > dist/JARVIS-Voice-Vision-debug.apk.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: JARVIS-Voice-Vision-Android
+          path: |
+            dist/JARVIS-Voice-Vision-debug.apk
+            dist/JARVIS-Voice-Vision-debug.apk.sha256
+          retention-days: 30
