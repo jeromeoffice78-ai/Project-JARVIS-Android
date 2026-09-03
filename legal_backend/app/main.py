@@ -50,16 +50,21 @@ class HealthResponse(BaseModel):
     status: str
     service: str
     model: str
+    ai_configured: bool
+    client_auth_configured: bool
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.openai = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    client = AsyncOpenAI(api_key=api_key) if api_key else None
+    app.state.openai = client
     yield
-    await app.state.openai.close()
+    if client is not None:
+        await client.close()
 
 
-app = FastAPI(title=APP_NAME, version="1.0.0", lifespan=lifespan)
+app = FastAPI(title=APP_NAME, version="1.0.1", lifespan=lifespan)
 
 
 def _extract_bearer(value: str | None) -> str:
@@ -101,7 +106,13 @@ def _role_context(role: str) -> str:
 
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
-    return HealthResponse(status="ok", service=APP_NAME, model=DEFAULT_MODEL)
+    return HealthResponse(
+        status="ok",
+        service=APP_NAME,
+        model=DEFAULT_MODEL,
+        ai_configured=app.state.openai is not None,
+        client_auth_configured=bool(CLIENT_TOKEN),
+    )
 
 
 @app.post(
@@ -110,7 +121,13 @@ async def health() -> HealthResponse:
     dependencies=[Depends(require_client_token)],
 )
 async def legal_query(payload: LegalQueryRequest) -> LegalQueryResponse:
-    client: AsyncOpenAI = app.state.openai
+    client: AsyncOpenAI | None = app.state.openai
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI provider credential is not configured on the server.",
+        )
+
     instructions = f"{LEGAL_INSTRUCTIONS}\n\n{_role_context(payload.role)}"
 
     try:
