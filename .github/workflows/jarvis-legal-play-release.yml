@@ -1,0 +1,157 @@
+name: JARVIS Legal Enterprise Play Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-play-aab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Verify production secrets
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          CLIENT_TOKEN: ${{ secrets.JARVIS_CLIENT_TOKEN }}
+        run: |
+          test -n "$KEYSTORE_B64" || (echo "ANDROID_KEYSTORE_BASE64 is missing" && exit 1)
+          test -n "$STORE_PASSWORD" || (echo "ANDROID_KEYSTORE_PASSWORD is missing" && exit 1)
+          test -n "$KEY_ALIAS" || (echo "ANDROID_KEY_ALIAS is missing" && exit 1)
+          test -n "$KEY_PASSWORD" || (echo "ANDROID_KEY_PASSWORD is missing" && exit 1)
+          test -n "$CLIENT_TOKEN" || (echo "JARVIS_CLIENT_TOKEN is missing" && exit 1)
+
+      - name: Create production Android shell
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          rm -rf /tmp/jarvis_legal_release
+          flutter create --platforms=android --project-name jarvis_legal_enterprise --org com.jarvis /tmp/jarvis_legal_release
+          rm -rf /tmp/jarvis_legal_release/lib /tmp/jarvis_legal_release/test
+          cp -R legal_app/lib /tmp/jarvis_legal_release/lib
+          cp -R legal_app/test /tmp/jarvis_legal_release/test
+          cp legal_app/pubspec.yaml /tmp/jarvis_legal_release/pubspec.yaml
+
+          echo "$KEYSTORE_B64" | base64 --decode > /tmp/jarvis_legal_release/android/app/jarvis-release.jks
+          cat > /tmp/jarvis_legal_release/android/key.properties <<EOF
+          storePassword=$STORE_PASSWORD
+          keyPassword=$KEY_PASSWORD
+          keyAlias=$KEY_ALIAS
+          storeFile=jarvis-release.jks
+          EOF
+
+          python - <<'PY'
+          from pathlib import Path
+
+          root = Path('/tmp/jarvis_legal_release')
+          manifest_path = root / 'android/app/src/main/AndroidManifest.xml'
+          manifest_text = manifest_path.read_text()
+          manifest_text = manifest_text.replace(
+              'android:label="jarvis_legal_enterprise"',
+              'android:label="JARVIS Legal Enterprise"',
+          )
+          manifest_path.write_text(manifest_text)
+
+          main_path = root / 'lib/main.dart'
+          main_text = main_path.read_text()
+          main_text = main_text.replace('Owner access: $0.00', r'Owner access: \$0.00')
+          import_marker = "import 'jarvis_legal_api.dart';"
+          if "import 'chairman_board_room.dart';" not in main_text:
+              main_text = main_text.replace(
+                  import_marker,
+                  "import 'chairman_board_room.dart';\n" + import_marker,
+                  1,
+              )
+          board_marker = """        const SizedBox(height: 14),
+                  _chairmanBoardCard(),"""
+          board_insert = """        const SizedBox(height: 14),
+                  ChairmanBoardRoom(
+                    matters: _matters,
+                    onSendToCounsel: (String prompt) {
+                      setState(() {
+                        _aiController.text = prompt;
+                        _index = 4;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 14),
+                  _chairmanBoardCard(),"""
+          if 'ChairmanBoardRoom(' not in main_text:
+              main_text = main_text.replace(board_marker, board_insert, 1)
+          main_path.write_text(main_text)
+
+          gradle = root / 'android/app/build.gradle.kts'
+          text = gradle.read_text()
+          if 'java.util.Properties' not in text:
+              text = 'import java.util.Properties\nimport java.io.FileInputStream\n\n' + text
+          marker = 'android {'
+          signing_prelude = '''val keystoreProperties = Properties()\nval keystorePropertiesFile = rootProject.file("key.properties")\nif (keystorePropertiesFile.exists()) {\n    keystoreProperties.load(FileInputStream(keystorePropertiesFile))\n}\n\n'''
+          if 'val keystoreProperties = Properties()' not in text:
+              text = text.replace(marker, signing_prelude + marker, 1)
+          android_marker = 'android {\n'
+          signing_block = '''    signingConfigs {\n        create("release") {\n            keyAlias = keystoreProperties["keyAlias"] as String\n            keyPassword = keystoreProperties["keyPassword"] as String\n            storeFile = file(keystoreProperties["storeFile"] as String)\n            storePassword = keystoreProperties["storePassword"] as String\n        }\n    }\n'''
+          if 'create("release")' not in text:
+              text = text.replace(android_marker, android_marker + signing_block, 1)
+          text = text.replace(
+              'signingConfig = signingConfigs.getByName("debug")',
+              'signingConfig = signingConfigs.getByName("release")',
+          )
+          gradle.write_text(text)
+          PY
+
+      - name: Resolve dependencies
+        working-directory: /tmp/jarvis_legal_release
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: /tmp/jarvis_legal_release
+        run: flutter analyze
+
+      - name: Test
+        working-directory: /tmp/jarvis_legal_release
+        run: flutter test
+
+      - name: Build signed Play AAB
+        working-directory: /tmp/jarvis_legal_release
+        env:
+          JARVIS_HTTP_BASE: ${{ vars.JARVIS_HTTP_BASE }}
+          JARVIS_CLIENT_TOKEN: ${{ secrets.JARVIS_CLIENT_TOKEN }}
+        run: |
+          flutter build appbundle --release \
+            --dart-define=JARVIS_ROLE=chairman \
+            --dart-define=JARVIS_SUBSCRIPTION_ACTIVE=false \
+            --dart-define=JARVIS_HTTP_BASE="${JARVIS_HTTP_BASE:-}" \
+            --dart-define=JARVIS_CLIENT_TOKEN="${JARVIS_CLIENT_TOKEN:-}"
+
+      - name: Stage signed artifact
+        run: |
+          mkdir -p dist
+          cp /tmp/jarvis_legal_release/build/app/outputs/bundle/release/app-release.aab dist/JARVIS-Legal-Enterprise-Chairman-v1.1.0.aab
+          sha256sum dist/JARVIS-Legal-Enterprise-Chairman-v1.1.0.aab > dist/JARVIS-Legal-Enterprise-Chairman-v1.1.0.aab.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: JARVIS-Legal-Enterprise-Chairman-v1.1.0-Play-AAB
+          path: |
+            dist/JARVIS-Legal-Enterprise-Chairman-v1.1.0.aab
+            dist/JARVIS-Legal-Enterprise-Chairman-v1.1.0.aab.sha256
+          retention-days: 30
