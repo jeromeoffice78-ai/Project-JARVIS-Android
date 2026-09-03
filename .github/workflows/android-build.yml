@@ -43,13 +43,30 @@ jobs:
           mkdir -p jarvis-src
           unzip -q /tmp/jarvis.zip -d jarvis-src
 
-      - name: Patch toolchain for Health Connect
+      - name: Patch toolchain and Kotlin source
         working-directory: jarvis-src
         run: |
           sed -i 's/version "8.7.3"/version "8.9.1"/' build.gradle.kts
           sed -i 's/compileSdk = 35/compileSdk = 36/' app/build.gradle.kts
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/com/jarvis/mobile/MainActivity.kt')
+          s = p.read_text()
+          needle = '''    val client = remember { JarvisClient(cfg) }\n    val peopleMemory = remember { PeopleMemory(context) }\n'''
+          repl = '''    val client = remember { JarvisClient(cfg) }\n    val cognitive = remember { CognitiveMemory(context) }\n    val peopleMemory = remember { PeopleMemory(context) }\n'''
+          if needle not in s:
+              raise SystemExit('Group conversation patch target not found')
+          s = s.replace(needle, repl, 1)
+          needle2 = '    var heartRate by remember { mutableStateOf<Double?>(null) }'
+          if needle2 not in s:
+              raise SystemExit('Heart rate patch target not found')
+          s = s.replace(needle2, '    var heartRate by remember { mutableStateOf<Long?>(null) }', 1)
+          p.write_text(s)
+          PY
           grep 'com.android.application' build.gradle.kts
           grep 'compileSdk' app/build.gradle.kts
+          grep -n 'val cognitive = remember { CognitiveMemory(context) }' app/src/main/java/com/jarvis/mobile/MainActivity.kt | tail -1
+          grep -n 'var heartRate by remember' app/src/main/java/com/jarvis/mobile/MainActivity.kt
 
       - name: Verify JARVIS source
         working-directory: jarvis-src
