@@ -50,7 +50,6 @@ final jarvisApiServiceProvider =
   return service;
 });
 
-
 final jarvisActionApprovalServiceProvider =
     Provider<JarvisActionApprovalService>((Ref ref) {
   final JarvisActionApprovalService service =
@@ -95,8 +94,6 @@ final jarvisChatControllerProvider =
 
   return controller;
 });
-
-
 
 final jarvisVoiceServiceProvider =
     Provider<JarvisVoiceService>((Ref ref) {
@@ -180,3 +177,10 @@ final jarvisWsErrorsProvider =
         .errors;
   },
 );
+
+extension JarvisAsyncValueCompatibility<T> on AsyncValue<T> {
+  T? get valueOrNull {
+    final AsyncValue<T> current = this;
+    return current is AsyncData<T> ? current.value : null;
+  }
+}
