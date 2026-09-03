@@ -1,7 +1,7 @@
 name: jarvis_legal_enterprise
 description: Chairman edition of the JARVIS Legal Enterprise command center.
 publish_to: "none"
-version: 1.2.0+3
+version: 1.2.1+4
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
