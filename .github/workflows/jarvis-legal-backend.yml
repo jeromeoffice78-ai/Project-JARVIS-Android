@@ -29,6 +29,7 @@ jobs:
         run: pip install -r requirements.txt
       - name: Run API tests
         env:
+          PYTHONPATH: .
           OPENAI_API_KEY: test-openai-key
           JARVIS_CLIENT_TOKEN: test-client-token
         run: pytest -q
