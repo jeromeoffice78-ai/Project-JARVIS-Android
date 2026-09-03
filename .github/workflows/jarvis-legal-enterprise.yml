@@ -1,4 +1,4 @@
-name: JARVIS Legal Enterprise Chairman APK
+name: JARVIS Legal Enterprise Chairman READY APK
 
 on:
   workflow_dispatch:
@@ -10,6 +10,9 @@ on:
 
 permissions:
   contents: read
+
+env:
+  JARVIS_HTTP_BASE: https://jarvis-watch-bridge.floot.app
 
 jobs:
   build-chairman-apk:
@@ -25,7 +28,7 @@ jobs:
         with:
           channel: stable
           cache: true
-      - name: Create Android shell
+      - name: Create production Android shell
         run: |
           rm -rf /tmp/jarvis_legal
           flutter create --platforms=android --project-name jarvis_legal_enterprise --org com.jarvis /tmp/jarvis_legal
@@ -49,14 +52,18 @@ jobs:
           main_text = main_text.replace('Owner access: $0.00', r'Owner access: \$0.00')
 
           import_marker = "import 'jarvis_legal_api.dart';"
-          if "import 'chairman_board_room.dart';" not in main_text:
+          imports = "import 'chairman_auth.dart';\nimport 'chairman_board_room.dart';\n" + import_marker
+          if "import 'chairman_auth.dart';" not in main_text:
               if import_marker not in main_text:
                   raise SystemExit('Unable to locate JARVIS legal API import marker.')
-              main_text = main_text.replace(
-                  import_marker,
-                  "import 'chairman_board_room.dart';\n" + import_marker,
-                  1,
-              )
+              main_text = main_text.replace(import_marker, imports, 1)
+
+          home_marker = "home: const ChairmanCommandCenter(),"
+          home_replacement = "home: const ChairmanAuthGate(child: ChairmanCommandCenter()),"
+          if 'ChairmanAuthGate(child:' not in main_text:
+              if home_marker not in main_text:
+                  raise SystemExit('Unable to locate Chairman home marker.')
+              main_text = main_text.replace(home_marker, home_replacement, 1)
 
           board_marker = """        const SizedBox(height: 14),
                   _chairmanBoardCard(),"""
@@ -82,45 +89,35 @@ jobs:
       - name: Resolve dependencies
         working-directory: /tmp/jarvis_legal
         run: flutter pub get
-      - name: Analyze
+      - name: Analyze production source
         working-directory: /tmp/jarvis_legal
         run: flutter analyze
-      - name: Test Chairman access and board engine
+      - name: Run Chairman and board tests
         working-directory: /tmp/jarvis_legal
         run: flutter test
-      - name: Build Chairman debug APK
+      - name: Build universal Chairman release APK
         working-directory: /tmp/jarvis_legal
-        env:
-          JARVIS_HTTP_BASE: ${{ vars.JARVIS_HTTP_BASE }}
-          JARVIS_CLIENT_TOKEN: ${{ secrets.JARVIS_CLIENT_TOKEN }}
         run: |
-          flutter build apk --debug \
+          flutter build apk --release \
             --dart-define=JARVIS_ROLE=chairman \
             --dart-define=JARVIS_SUBSCRIPTION_ACTIVE=false \
-            --dart-define=JARVIS_HTTP_BASE="${JARVIS_HTTP_BASE:-}" \
-            --dart-define=JARVIS_CLIENT_TOKEN="${JARVIS_CLIENT_TOKEN:-}"
-      - name: Build optimized Chairman release APKs
+            --dart-define=JARVIS_HTTP_BASE="$JARVIS_HTTP_BASE"
+      - name: Build optimized ARM64 Chairman APK
         working-directory: /tmp/jarvis_legal
-        env:
-          JARVIS_HTTP_BASE: ${{ vars.JARVIS_HTTP_BASE }}
-          JARVIS_CLIENT_TOKEN: ${{ secrets.JARVIS_CLIENT_TOKEN }}
         run: |
           flutter build apk --release --split-per-abi \
             --dart-define=JARVIS_ROLE=chairman \
             --dart-define=JARVIS_SUBSCRIPTION_ACTIVE=false \
-            --dart-define=JARVIS_HTTP_BASE="${JARVIS_HTTP_BASE:-}" \
-            --dart-define=JARVIS_CLIENT_TOKEN="${JARVIS_CLIENT_TOKEN:-}"
-      - name: Stage artifacts
+            --dart-define=JARVIS_HTTP_BASE="$JARVIS_HTTP_BASE"
+      - name: Stage ready artifacts
         run: |
           mkdir -p dist
-          cp /tmp/jarvis_legal/build/app/outputs/flutter-apk/app-debug.apk dist/JARVIS-Legal-Enterprise-Chairman-v1.1.0-debug.apk
-          cp /tmp/jarvis_legal/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/JARVIS-Legal-Enterprise-Chairman-v1.1.0-arm64.apk
-          cp /tmp/jarvis_legal/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk dist/JARVIS-Legal-Enterprise-Chairman-v1.1.0-arm32.apk
-          cp /tmp/jarvis_legal/build/app/outputs/flutter-apk/app-x86_64-release.apk dist/JARVIS-Legal-Enterprise-Chairman-v1.1.0-x86_64.apk
+          cp /tmp/jarvis_legal/build/app/outputs/flutter-apk/app-release.apk dist/JARVIS-Legal-Enterprise-Chairman-READY.apk
+          cp /tmp/jarvis_legal/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/JARVIS-Legal-Enterprise-Chairman-READY-arm64.apk
           sha256sum dist/*.apk > dist/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: JARVIS-Legal-Enterprise-Chairman-v1.1.0-Android
+          name: JARVIS-Legal-Enterprise-Chairman-READY-Android
           path: |
             dist/*.apk
             dist/SHA256SUMS.txt
