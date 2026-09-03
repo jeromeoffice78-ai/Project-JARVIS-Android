@@ -1,0 +1,73 @@
+name: JARVIS Legal Enterprise Chairman APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'legal_app/**'
+      - '.github/workflows/jarvis-legal-enterprise.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-chairman-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Create Android shell
+        run: |
+          rm -rf /tmp/jarvis_legal
+          flutter create --platforms=android --project-name jarvis_legal_enterprise --org com.jarvis /tmp/jarvis_legal
+          rm -rf /tmp/jarvis_legal/lib
+          cp -R legal_app/lib /tmp/jarvis_legal/lib
+          cp legal_app/pubspec.yaml /tmp/jarvis_legal/pubspec.yaml
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('/tmp/jarvis_legal/android/app/src/main/AndroidManifest.xml')
+          text = path.read_text()
+          text = text.replace('android:label="jarvis_legal_enterprise"', 'android:label="JARVIS Legal Enterprise"')
+          path.write_text(text)
+          PY
+      - name: Resolve dependencies
+        working-directory: /tmp/jarvis_legal
+        run: flutter pub get
+      - name: Analyze
+        working-directory: /tmp/jarvis_legal
+        run: flutter analyze
+      - name: Test
+        working-directory: /tmp/jarvis_legal
+        run: flutter test
+      - name: Build Chairman APK
+        working-directory: /tmp/jarvis_legal
+        env:
+          JARVIS_HTTP_BASE: ${{ vars.JARVIS_HTTP_BASE }}
+          JARVIS_CLIENT_TOKEN: ${{ secrets.JARVIS_CLIENT_TOKEN }}
+        run: |
+          flutter build apk --debug \
+            --dart-define=JARVIS_ROLE=chairman \
+            --dart-define=JARVIS_SUBSCRIPTION_ACTIVE=false \
+            --dart-define=JARVIS_HTTP_BASE="${JARVIS_HTTP_BASE:-}" \
+            --dart-define=JARVIS_CLIENT_TOKEN="${JARVIS_CLIENT_TOKEN:-}"
+      - name: Stage artifact
+        run: |
+          mkdir -p dist
+          cp /tmp/jarvis_legal/build/app/outputs/flutter-apk/app-debug.apk dist/JARVIS-Legal-Enterprise-Chairman.apk
+          sha256sum dist/JARVIS-Legal-Enterprise-Chairman.apk > dist/JARVIS-Legal-Enterprise-Chairman.apk.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: JARVIS-Legal-Enterprise-Chairman-Android
+          path: |
+            dist/JARVIS-Legal-Enterprise-Chairman.apk
+            dist/JARVIS-Legal-Enterprise-Chairman.apk.sha256
+          retention-days: 30
