@@ -35,10 +35,15 @@ jobs:
           cp legal_app/pubspec.yaml /tmp/jarvis_legal/pubspec.yaml
           python - <<'PY'
           from pathlib import Path
-          path = Path('/tmp/jarvis_legal/android/app/src/main/AndroidManifest.xml')
-          text = path.read_text()
-          text = text.replace('android:label="jarvis_legal_enterprise"', 'android:label="JARVIS Legal Enterprise"')
-          path.write_text(text)
+          manifest_path = Path('/tmp/jarvis_legal/android/app/src/main/AndroidManifest.xml')
+          manifest_text = manifest_path.read_text()
+          manifest_text = manifest_text.replace('android:label="jarvis_legal_enterprise"', 'android:label="JARVIS Legal Enterprise"')
+          manifest_path.write_text(manifest_text)
+
+          main_path = Path('/tmp/jarvis_legal/lib/main.dart')
+          main_text = main_path.read_text()
+          main_text = main_text.replace('Owner access: $0.00', r'Owner access: \$0.00')
+          main_path.write_text(main_text)
           PY
       - name: Resolve dependencies
         working-directory: /tmp/jarvis_legal
