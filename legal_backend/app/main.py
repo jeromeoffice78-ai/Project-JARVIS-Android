@@ -10,7 +10,8 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
 APP_NAME = "JARVIS Legal Enterprise API"
-DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-sol").strip() or "gpt-5.6-sol"
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-sol").strip() or "gpt-5.6-sol"
+GATEWAY_MODEL = os.getenv("AI_GATEWAY_MODEL", f"openai/{OPENAI_MODEL}").strip() or f"openai/{OPENAI_MODEL}"
 CHAIRMAN_TOKEN = os.getenv("JARVIS_CHAIRMAN_TOKEN", "").strip()
 CLIENT_TOKEN = os.getenv("JARVIS_CLIENT_TOKEN", "").strip()
 
@@ -52,21 +53,52 @@ class HealthResponse(BaseModel):
     service: str
     model: str
     ai_configured: bool
+    ai_provider: str
     chairman_auth_configured: bool
     client_auth_configured: bool
 
 
+def _build_ai_client() -> tuple[AsyncOpenAI | None, str, str]:
+    """Prefer Vercel AI Gateway OIDC, then Gateway API key, then direct OpenAI.
+
+    Vercel injects VERCEL_OIDC_TOKEN into deployed Functions. AI Gateway accepts that
+    token as bearer auth, allowing production AI without placing a provider key in
+    the Android app or repository.
+    """
+
+    gateway_token = (
+        os.getenv("AI_GATEWAY_API_KEY", "").strip()
+        or os.getenv("VERCEL_OIDC_TOKEN", "").strip()
+    )
+    if gateway_token:
+        return (
+            AsyncOpenAI(
+                api_key=gateway_token,
+                base_url="https://ai-gateway.vercel.sh/v1",
+            ),
+            "vercel-ai-gateway",
+            GATEWAY_MODEL,
+        )
+
+    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if openai_key:
+        return AsyncOpenAI(api_key=openai_key), "openai", OPENAI_MODEL
+
+    return None, "unconfigured", GATEWAY_MODEL
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
-    client = AsyncOpenAI(api_key=api_key) if api_key else None
+    client, provider, model = _build_ai_client()
     app.state.openai = client
+    app.state.ai_provider = provider
+    app.state.ai_model = model
     yield
     if client is not None:
         await client.close()
 
 
-app = FastAPI(title=APP_NAME, version="1.1.0", lifespan=lifespan)
+app = FastAPI(title=APP_NAME, version="1.2.0", lifespan=lifespan)
 
 
 def _extract_bearer(value: str | None) -> str:
@@ -121,8 +153,9 @@ async def health() -> HealthResponse:
     return HealthResponse(
         status="ok",
         service=APP_NAME,
-        model=DEFAULT_MODEL,
-        ai_configured=app.state.openai is not None,
+        model=getattr(app.state, "ai_model", GATEWAY_MODEL),
+        ai_configured=getattr(app.state, "openai", None) is not None,
+        ai_provider=getattr(app.state, "ai_provider", "unconfigured"),
         chairman_auth_configured=bool(CHAIRMAN_TOKEN),
         client_auth_configured=bool(CLIENT_TOKEN),
     )
@@ -142,18 +175,19 @@ async def legal_query(
 
     effective_role = "chairman" if authenticated_role == "chairman" else "client"
 
-    client: AsyncOpenAI | None = app.state.openai
+    client: AsyncOpenAI | None = getattr(app.state, "openai", None)
     if client is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="AI provider credential is not configured on the server.",
         )
 
+    model = getattr(app.state, "ai_model", GATEWAY_MODEL)
     instructions = f"{LEGAL_INSTRUCTIONS}\n\n{_role_context(effective_role)}"
 
     try:
         response = await client.responses.create(
-            model=DEFAULT_MODEL,
+            model=model,
             instructions=instructions,
             input=payload.prompt.strip(),
         )
@@ -172,6 +206,6 @@ async def legal_query(
 
     return LegalQueryResponse(
         answer=answer,
-        model=DEFAULT_MODEL,
+        model=model,
         matter_id=payload.matter_id,
     )
