@@ -9,6 +9,12 @@ on:
     paths:
       - 'ci/flutter-payload/**'
       - '.github/workflows/flutter-android-v1-2.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'ci/flutter-payload/**'
+      - '.github/workflows/flutter-android-v1-2.yml'
 
 permissions:
   contents: read
