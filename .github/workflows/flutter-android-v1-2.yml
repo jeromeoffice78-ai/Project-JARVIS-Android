@@ -47,6 +47,7 @@ jobs:
         working-directory: jarvis_app
         run: |
           flutter create --platforms=android .
+          rm -f test/widget_test.dart
           python scripts/prepare_native.py
           flutter pub get
 
