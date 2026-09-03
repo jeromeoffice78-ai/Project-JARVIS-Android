@@ -29,8 +29,9 @@ jobs:
         run: |
           rm -rf /tmp/jarvis_legal
           flutter create --platforms=android --project-name jarvis_legal_enterprise --org com.jarvis /tmp/jarvis_legal
-          rm -rf /tmp/jarvis_legal/lib
+          rm -rf /tmp/jarvis_legal/lib /tmp/jarvis_legal/test
           cp -R legal_app/lib /tmp/jarvis_legal/lib
+          cp -R legal_app/test /tmp/jarvis_legal/test
           cp legal_app/pubspec.yaml /tmp/jarvis_legal/pubspec.yaml
           python - <<'PY'
           from pathlib import Path
@@ -45,7 +46,7 @@ jobs:
       - name: Analyze
         working-directory: /tmp/jarvis_legal
         run: flutter analyze
-      - name: Test
+      - name: Test Chairman access
         working-directory: /tmp/jarvis_legal
         run: flutter test
       - name: Build Chairman APK
