@@ -58,6 +58,7 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
 
   final TextEditingController _displayName =
       TextEditingController(text: 'Jerome Office');
+  final TextEditingController _activationCode = TextEditingController();
   final TextEditingController _email = TextEditingController();
   final TextEditingController _password = TextEditingController();
   final TextEditingController _confirmPassword = TextEditingController();
@@ -81,6 +82,7 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
   void dispose() {
     ChairmanAuthSession.changes.removeListener(_onSessionChanged);
     _displayName.dispose();
+    _activationCode.dispose();
     _email.dispose();
     _password.dispose();
     _confirmPassword.dispose();
@@ -160,6 +162,10 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
         setState(() => _error = 'Chairman display name is required.');
         return;
       }
+      if (_activationCode.text.trim().isEmpty) {
+        setState(() => _error = 'The one-time Chairman activation code is required.');
+        return;
+      }
       if (password.length < 12) {
         setState(() => _error = 'Use at least 12 characters for the Chairman password.');
         return;
@@ -181,6 +187,7 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
         'email': email,
         'password': password,
         if (_setupMode) 'displayName': _displayName.text.trim(),
+        if (_setupMode) 'activationCode': _activationCode.text.trim(),
       };
       final http.Response response = await _client
           .post(
@@ -212,6 +219,7 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
           _checking = false;
           _submitting = false;
           _error = null;
+          _activationCode.clear();
           _password.clear();
           _confirmPassword.clear();
         });
@@ -310,6 +318,12 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
                         icon: Icons.badge_outlined,
                       ),
                       const SizedBox(height: 10),
+                      _field(
+                        controller: _activationCode,
+                        label: 'One-time activation code',
+                        icon: Icons.vpn_key_outlined,
+                      ),
+                      const SizedBox(height: 10),
                     ],
                     _field(
                       controller: _email,
@@ -403,7 +417,7 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
                           SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'Your password is verified by the hosted authentication service. The app stores only the encrypted session token in Android secure storage.',
+                              'First-run activation is one-time. Your password is verified by the hosted authentication service, and the app stores only the encrypted session token in Android secure storage.',
                               style: TextStyle(color: _authMuted, fontSize: 10.5, height: 1.35),
                             ),
                           ),
