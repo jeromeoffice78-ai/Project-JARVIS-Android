@@ -1,0 +1,78 @@
+name: JARVIS Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jarvis-android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Reconstruct JARVIS source snapshot
+        run: |
+          cat ci/payload/chunk-* > /tmp/jarvis.b64
+          base64 --decode /tmp/jarvis.b64 > /tmp/jarvis.zip
+          echo "862dab58f9e1adaeec0a8865d8ad485e76a7a44c1edc955d921e0fd0e1a3b834  /tmp/jarvis.zip" | sha256sum --check
+          mkdir -p jarvis-src
+          unzip -q /tmp/jarvis.zip -d jarvis-src
+
+      - name: Verify JARVIS source
+        working-directory: jarvis-src
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/verify-project.sh
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Generate Gradle wrapper
+        working-directory: jarvis-src
+        run: gradle wrapper --gradle-version 8.9 --distribution-type bin
+
+      - name: Build debug APK
+        working-directory: jarvis-src
+        run: ./gradlew --no-daemon --stacktrace clean :app:assembleDebug
+
+      - name: Stage APK and checksum
+        run: |
+          mkdir -p dist
+          cp jarvis-src/app/build/outputs/apk/debug/app-debug.apk dist/JARVIS-debug.apk
+          sha256sum dist/JARVIS-debug.apk > dist/JARVIS-debug.apk.sha256
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: JARVIS-Android-debug
+          path: |
+            dist/JARVIS-debug.apk
+            dist/JARVIS-debug.apk.sha256
+          retention-days: 30
