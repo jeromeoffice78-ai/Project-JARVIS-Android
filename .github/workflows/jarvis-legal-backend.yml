@@ -31,6 +31,7 @@ jobs:
         env:
           PYTHONPATH: .
           OPENAI_API_KEY: test-openai-key
+          JARVIS_CHAIRMAN_TOKEN: test-chairman-token
           JARVIS_CLIENT_TOKEN: test-client-token
         run: pytest -q
       - name: Build Docker image
