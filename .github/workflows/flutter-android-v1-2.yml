@@ -5,15 +5,8 @@ on:
   push:
     branches:
       - main
-      - jarvis-v1.2-capabilities
     paths:
-      - 'ci/flutter-payload/**'
-      - '.github/workflows/flutter-android-v1-2.yml'
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'ci/flutter-payload/**'
+      - 'jarvis_app/**'
       - '.github/workflows/flutter-android-v1-2.yml'
 
 permissions:
@@ -33,7 +26,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -50,38 +43,19 @@ jobs:
           dart --version
           java -version
 
-      - name: Reconstruct Project Jarvis v1.2 workspace
-        run: |
-          cat ci/flutter-payload/chunk-* > /tmp/jarvis-v1-2.b64
-          base64 --decode /tmp/jarvis-v1-2.b64 > /tmp/project_jarvis_v1_2_capabilities.zip
-          echo 'abefc5ac8c6b290e912c95ef58d6b5953a41093df90326fc331562c5f47caa13  /tmp/project_jarvis_v1_2_capabilities.zip' | sha256sum --check
-          mkdir -p /tmp/jarvis-v1-2
-          unzip -q /tmp/project_jarvis_v1_2_capabilities.zip -d /tmp/jarvis-v1-2
-
-      - name: Locate Flutter project
-        id: project
-        run: |
-          FLUTTER_DIR="$(find /tmp/jarvis-v1-2 -type f -path '*/flutter_app/pubspec.yaml' -printf '%h\n' | head -1)"
-          if [ -z "$FLUTTER_DIR" ]; then
-            echo 'Flutter project not found.'
-            exit 1
-          fi
-          echo "flutter_dir=$FLUTTER_DIR" >> "$GITHUB_OUTPUT"
-          echo "Flutter project: $FLUTTER_DIR"
-
-      - name: Generate Android scaffold and native permissions
-        working-directory: ${{ steps.project.outputs.flutter_dir }}
+      - name: Generate Android scaffold
+        working-directory: jarvis_app
         run: |
           flutter create --platforms=android .
-          python ../scripts/prepare_native.py
+          python scripts/prepare_native.py
           flutter pub get
 
       - name: Flutter analyze
-        working-directory: ${{ steps.project.outputs.flutter_dir }}
+        working-directory: jarvis_app
         run: flutter analyze
 
       - name: Build debug APK
-        working-directory: ${{ steps.project.outputs.flutter_dir }}
+        working-directory: jarvis_app
         env:
           JARVIS_HTTP_BASE: ${{ vars.JARVIS_HTTP_BASE }}
           JARVIS_WS_URL: ${{ vars.JARVIS_WS_URL }}
@@ -90,18 +64,16 @@ jobs:
           HTTP_BASE="${JARVIS_HTTP_BASE:-http://10.0.2.2:8000}"
           WS_URL="${JARVIS_WS_URL:-ws://10.0.2.2:8000/ws/jarvis}"
           TOKEN="${JARVIS_CLIENT_TOKEN:-}"
-
           flutter build apk --debug \
             --dart-define=JARVIS_HTTP_BASE="$HTTP_BASE" \
             --dart-define=JARVIS_WS_URL="$WS_URL" \
             --dart-define=JARVIS_CLIENT_TOKEN="$TOKEN"
 
-      - name: Stage APK and checksum
-        working-directory: ${{ steps.project.outputs.flutter_dir }}
+      - name: Stage APK
         run: |
-          mkdir -p "$GITHUB_WORKSPACE/dist"
-          cp build/app/outputs/flutter-apk/app-debug.apk "$GITHUB_WORKSPACE/dist/JARVIS-v1.2-debug.apk"
-          sha256sum "$GITHUB_WORKSPACE/dist/JARVIS-v1.2-debug.apk" > "$GITHUB_WORKSPACE/dist/JARVIS-v1.2-debug.apk.sha256"
+          mkdir -p dist
+          cp jarvis_app/build/app/outputs/flutter-apk/app-debug.apk dist/JARVIS-v1.2-debug.apk
+          sha256sum dist/JARVIS-v1.2-debug.apk > dist/JARVIS-v1.2-debug.apk.sha256
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
