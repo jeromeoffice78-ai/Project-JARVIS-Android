@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 APP_NAME = "JARVIS Legal Enterprise API"
 DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-sol").strip() or "gpt-5.6-sol"
+CHAIRMAN_TOKEN = os.getenv("JARVIS_CHAIRMAN_TOKEN", "").strip()
 CLIENT_TOKEN = os.getenv("JARVIS_CLIENT_TOKEN", "").strip()
 
 LEGAL_INSTRUCTIONS = """You are JARVIS Legal Enterprise, a legal research, analysis, organization, and drafting system.
@@ -51,6 +52,7 @@ class HealthResponse(BaseModel):
     service: str
     model: str
     ai_configured: bool
+    chairman_auth_configured: bool
     client_auth_configured: bool
 
 
@@ -64,7 +66,7 @@ async def lifespan(app: FastAPI):
         await client.close()
 
 
-app = FastAPI(title=APP_NAME, version="1.0.1", lifespan=lifespan)
+app = FastAPI(title=APP_NAME, version="1.1.0", lifespan=lifespan)
 
 
 def _extract_bearer(value: str | None) -> str:
@@ -76,32 +78,42 @@ def _extract_bearer(value: str | None) -> str:
     return value[len(prefix) :].strip()
 
 
-async def require_client_token(
+async def authenticate_request(
     authorization: Annotated[str | None, Header()] = None,
-) -> None:
-    if not CLIENT_TOKEN:
+) -> str:
+    if not CHAIRMAN_TOKEN and not CLIENT_TOKEN:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Server client authentication is not configured.",
+            detail="Server authentication is not configured.",
         )
 
     supplied = _extract_bearer(authorization)
-    if not supplied or not hmac.compare_digest(supplied, CLIENT_TOKEN):
+    if not supplied:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid client authentication.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    if CHAIRMAN_TOKEN and hmac.compare_digest(supplied, CHAIRMAN_TOKEN):
+        return "chairman"
+    if CLIENT_TOKEN and hmac.compare_digest(supplied, CLIENT_TOKEN):
+        return "client"
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid client authentication.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
 
 def _role_context(role: str) -> str:
-    normalized = role.strip().lower()
-    if normalized == "chairman":
+    if role == "chairman":
         return (
             "Authenticated application role: CHAIRMAN. Jerome Office is the founder, "
             "Chairman, 100% owner, final enterprise authority, and subscription-exempt owner."
         )
-    return f"Authenticated application role: {normalized or 'client'}."
+    return "Authenticated application role: client."
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -111,16 +123,25 @@ async def health() -> HealthResponse:
         service=APP_NAME,
         model=DEFAULT_MODEL,
         ai_configured=app.state.openai is not None,
+        chairman_auth_configured=bool(CHAIRMAN_TOKEN),
         client_auth_configured=bool(CLIENT_TOKEN),
     )
 
 
-@app.post(
-    "/v1/legal/query",
-    response_model=LegalQueryResponse,
-    dependencies=[Depends(require_client_token)],
-)
-async def legal_query(payload: LegalQueryRequest) -> LegalQueryResponse:
+@app.post("/v1/legal/query", response_model=LegalQueryResponse)
+async def legal_query(
+    payload: LegalQueryRequest,
+    authenticated_role: Annotated[str, Depends(authenticate_request)],
+) -> LegalQueryResponse:
+    requested_role = payload.role.strip().lower()
+    if requested_role == "chairman" and authenticated_role != "chairman":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Chairman authority requires Chairman authentication.",
+        )
+
+    effective_role = "chairman" if authenticated_role == "chairman" else "client"
+
     client: AsyncOpenAI | None = app.state.openai
     if client is None:
         raise HTTPException(
@@ -128,7 +149,7 @@ async def legal_query(payload: LegalQueryRequest) -> LegalQueryResponse:
             detail="AI provider credential is not configured on the server.",
         )
 
-    instructions = f"{LEGAL_INSTRUCTIONS}\n\n{_role_context(payload.role)}"
+    instructions = f"{LEGAL_INSTRUCTIONS}\n\n{_role_context(effective_role)}"
 
     try:
         response = await client.responses.create(
