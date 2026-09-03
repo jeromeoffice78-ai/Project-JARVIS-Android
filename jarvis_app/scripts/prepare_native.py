@@ -44,7 +44,7 @@ def patch_manifest() -> None:
         text = text.replace("    <application", queries + "    <application", 1)
 
     activity_pattern = re.compile(
-        r'(<activity\\b[^>]*android:name="\\.MainActivity"[^>]*>)(.*?)(</activity>)',
+        r'(<activity\b[^>]*android:name="\.MainActivity"[^>]*>)(.*?)(</activity>)',
         re.DOTALL,
     )
     if "androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" not in text:
