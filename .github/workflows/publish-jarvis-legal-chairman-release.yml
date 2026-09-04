@@ -1,0 +1,131 @@
+name: Publish JARVIS Legal Chairman Release
+
+on:
+  workflow_run:
+    workflows:
+      - JARVIS Legal Enterprise Chairman Production APK
+    types: [completed]
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-jarvis-legal-chairman-release.yml'
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  ARTIFACT_NAME: JARVIS-Legal-Enterprise-Chairman-PRODUCTION-SIGNED-Android
+  EXPECTED_SIGNING_CERT_SHA256: 004905e15f747bc9a635366138c01357b1c06615dfe6f3c3af9d3b1d52c1187f
+
+jobs:
+  publish:
+    if: >-
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Resolve verified Chairman production run
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
+          EVENT_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          EVENT_RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" == "workflow_run" ]]; then
+            RUN_ID="$EVENT_RUN_ID"
+            HEAD_SHA="$EVENT_HEAD_SHA"
+            RUN_NUMBER="$EVENT_RUN_NUMBER"
+          else
+            RUN_JSON="$(gh run list \
+              --workflow jarvis-legal-enterprise.yml \
+              --status success \
+              --limit 1 \
+              --json databaseId,headSha,number \
+              --jq '.[0]')"
+            RUN_ID="$(jq -r '.databaseId' <<<"$RUN_JSON")"
+            HEAD_SHA="$(jq -r '.headSha' <<<"$RUN_JSON")"
+            RUN_NUMBER="$(jq -r '.number' <<<"$RUN_JSON")"
+          fi
+
+          test -n "$RUN_ID"
+          test -n "$HEAD_SHA"
+          test -n "$RUN_NUMBER"
+
+          VERSION_LINE="$(git show "$HEAD_SHA:legal_app/pubspec.yaml" | awk '/^version:/ {print $2; exit}')"
+          test -n "$VERSION_LINE"
+          VERSION="${VERSION_LINE%%+*}"
+          TAG="jarvis-legal-chairman-v${VERSION}-build-${RUN_NUMBER}"
+
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          echo "run_number=$RUN_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Download signed Chairman artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.release.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          mkdir -p dist
+          gh run download "$RUN_ID" \
+            --name "$ARTIFACT_NAME" \
+            --dir dist
+
+      - name: Verify APK checksums and permanent signing identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f dist/JARVIS-Legal-Enterprise-Chairman-PRODUCTION.apk
+          test -f dist/JARVIS-Legal-Enterprise-Chairman-PRODUCTION-arm64.apk
+          test -f dist/SHA256SUMS.txt
+          test -f dist/SIGNING-CERT-SHA256.txt
+
+          (
+            cd dist
+            sed 's#dist/##g' SHA256SUMS.txt | sha256sum --check --strict -
+          )
+
+          ACTUAL_CERT_SHA="$(awk '{print $1; exit}' dist/SIGNING-CERT-SHA256.txt)"
+          test "$ACTUAL_CERT_SHA" = "$EXPECTED_SIGNING_CERT_SHA256"
+
+      - name: Publish immutable GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          HEAD_SHA: ${{ steps.release.outputs.head_sha }}
+          VERSION: ${{ steps.release.outputs.version }}
+          RUN_NUMBER: ${{ steps.release.outputs.run_number }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; verified assets are already published."
+            exit 0
+          fi
+
+          gh release create "$TAG" \
+            dist/JARVIS-Legal-Enterprise-Chairman-PRODUCTION.apk \
+            dist/JARVIS-Legal-Enterprise-Chairman-PRODUCTION-arm64.apk \
+            dist/SHA256SUMS.txt \
+            dist/SIGNING-CERT-SHA256.txt \
+            --target "$HEAD_SHA" \
+            --title "JARVIS Legal Enterprise Chairman v${VERSION}" \
+            --notes "Production-signed Chairman Android release from verified Legal Enterprise workflow run #${RUN_NUMBER}. Chairman access remains permanent and subscription-free. Includes universal and ARM64 APKs, SHA-256 checksums, and the permanent signing-certificate fingerprint."
