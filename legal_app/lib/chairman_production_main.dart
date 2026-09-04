@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'animated_leadership_stage.dart';
 import 'chairman_auth.dart';
 import 'chairman_board_room.dart';
 import 'jarvis_legal_api.dart';
@@ -124,10 +125,10 @@ class _ChairmanProductionShellState extends State<ChairmanProductionShell> {
                 style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900),
               ),
               Text(
-                '6 AI DIRECTORS + CHAIRMAN',
+                '6 AI DIRECTORS + CHAIRMAN • 5 LEGAL DEPARTMENT HEADS',
                 style: TextStyle(
-                  fontSize: 9,
-                  letterSpacing: 1.3,
+                  fontSize: 8.5,
+                  letterSpacing: 1.1,
                   color: _cyan,
                   fontWeight: FontWeight.w800,
                 ),
@@ -143,9 +144,22 @@ class _ChairmanProductionShellState extends State<ChairmanProductionShell> {
           ],
         ),
         body: SafeArea(
-          child: ChairmanBoardRoom(
-            matters: _matters,
-            onSendToCounsel: _openCounselHandoff,
+          child: RefreshIndicator(
+            onRefresh: _refreshMatters,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 28),
+              children: <Widget>[
+                const AnimatedBoardLeadership(),
+                const SizedBox(height: 12),
+                const AnimatedDepartmentHeads(),
+                const SizedBox(height: 12),
+                ChairmanBoardRoom(
+                  matters: _matters,
+                  onSendToCounsel: _openCounselHandoff,
+                ),
+              ],
+            ),
           ),
         ),
       );
