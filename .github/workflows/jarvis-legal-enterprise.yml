@@ -21,9 +21,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -84,6 +84,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          WIDGET_TEST_WAS_TRACKED=0
+          if git ls-files --error-unmatch test/widget_test.dart >/dev/null 2>&1; then
+            WIDGET_TEST_WAS_TRACKED=1
+          fi
+
           flutter create \
             --platforms=android \
             --project-name jarvis_legal_enterprise \
@@ -91,9 +97,19 @@ jobs:
             --no-pub \
             .
 
+          # Flutter creates a template widget test for incomplete projects.
+          # Remove it only when it was not part of the checked-in Legal Enterprise.
+          if [ "$WIDGET_TEST_WAS_TRACKED" -eq 0 ]; then
+            rm -f test/widget_test.dart
+          fi
+
           # CI may generate Android platform scaffolding, but it must never rewrite
-          # the checked-in legal application source, tests, or dependency contract.
-          git diff --exit-code -- lib pubspec.yaml test
+          # or inject application source, dependency contracts, or real tests.
+          if [ -n "$(git status --porcelain -- lib pubspec.yaml test)" ]; then
+            echo 'flutter create modified checked-in Legal Enterprise source:' >&2
+            git status --porcelain -- lib pubspec.yaml test >&2
+            exit 1
+          fi
 
           python - <<'PY'
           from pathlib import Path
