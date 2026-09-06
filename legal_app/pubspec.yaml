@@ -1,7 +1,7 @@
 name: jarvis_legal_enterprise
 description: Chairman edition of the JARVIS Legal Enterprise command center.
 publish_to: "none"
-version: 1.3.1+7
+version: 1.3.2+8
 
 environment:
   sdk: ">=3.7.0 <4.0.0"
@@ -10,7 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_secure_storage: ^9.2.4
-  google_sign_in: 6.3.0
+  google_sign_in: ^7.2.0
   http: ^1.5.0
 
 dev_dependencies:
