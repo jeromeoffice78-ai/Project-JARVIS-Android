@@ -15,7 +15,7 @@ permissions:
 env:
   JARVIS_HTTP_BASE: https://jarvis-legal-enterprise-api.onrender.com
   JARVIS_SIGNING_BASE: https://jarvis-watch-bridge.floot.app
-  GOOGLE_SERVER_CLIENT_ID: ${{ secrets.JARVIS_GOOGLE_CLIENT_ID }}
+  GOOGLE_SERVER_CLIENT_ID: 498363735983-nka03bna11698m7o6ao0l7vnga8fb80e.apps.googleusercontent.com
   JARVIS_SIGNING_CERT_SHA256: 004905e15f747bc9a635366138c01357b1c06615dfe6f3c3af9d3b1d52c1187f
   JARVIS_ANDROID_PACKAGE: com.jarvis.jarvis_legal_enterprise
 
@@ -96,7 +96,7 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$GOOGLE_SERVER_CLIENT_ID" || {
-            echo 'Missing GitHub secret JARVIS_GOOGLE_CLIENT_ID.' >&2
+            echo 'Missing Google server client ID.' >&2
             exit 1
           }
 
