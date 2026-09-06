@@ -60,20 +60,17 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
       String.fromEnvironment('GOOGLE_SERVER_CLIENT_ID');
 
   final http.Client _client = http.Client();
-  late final GoogleSignIn _google;
+  final GoogleSignIn _google = GoogleSignIn.instance;
 
   bool _checking = true;
   bool _authenticated = false;
   bool _submitting = false;
+  bool _googleInitialized = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _google = GoogleSignIn(
-      serverClientId: _googleServerClientId.trim(),
-      scopes: const <String>['email', 'profile'],
-    );
     ChairmanAuthSession.changes.addListener(_onSessionChanged);
     _initialize();
   }
@@ -100,14 +97,43 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
       return;
     }
 
+    try {
+      await _google.initialize(serverClientId: _googleServerClientId.trim());
+      _googleInitialized = true;
+    } on GoogleSignInException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _checking = false;
+        _error = _googleError('Google initialization failed', error);
+      });
+      return;
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _checking = false;
+        _error = 'Google initialization failed: $error';
+      });
+      return;
+    }
+
     await _restoreSession();
     if (_authenticated) return;
 
     try {
-      final GoogleSignInAccount? account = await _google.signInSilently();
+      final Future<GoogleSignInAccount?>? attempt =
+          _google.attemptLightweightAuthentication();
+      final GoogleSignInAccount? account = attempt == null ? null : await attempt;
       if (account != null) {
         await _exchangeGoogleIdentity(account, interactive: false);
+      } else if (mounted) {
+        setState(() => _checking = false);
       }
+    } on GoogleSignInException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _checking = false;
+        _error = _googleError('Google session restore failed', error);
+      });
     } on Object {
       if (!mounted) return;
       setState(() => _checking = false);
@@ -159,6 +185,15 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
 
   Future<void> _signInWithGoogle() async {
     if (_submitting) return;
+    if (!_googleInitialized) {
+      setState(() => _error = 'Google authentication is still initializing.');
+      return;
+    }
+    if (!_google.supportsAuthenticate()) {
+      setState(() => _error = 'Interactive Google authentication is unavailable on this device.');
+      return;
+    }
+
     setState(() {
       _submitting = true;
       _error = null;
@@ -166,16 +201,16 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
 
     try {
       await _google.signOut();
-      final GoogleSignInAccount? account = await _google.signIn();
-      if (account == null) {
-        if (!mounted) return;
-        setState(() {
-          _submitting = false;
-          _error = 'Google sign-in was cancelled.';
-        });
-        return;
-      }
+      final GoogleSignInAccount account = await _google.authenticate(
+        scopeHint: const <String>['email', 'profile'],
+      );
       await _exchangeGoogleIdentity(account, interactive: true);
+    } on GoogleSignInException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _error = _googleError('Google sign-in failed', error);
+      });
     } on Object catch (error) {
       if (!mounted) return;
       setState(() {
@@ -185,11 +220,20 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
     }
   }
 
+  String _googleError(String prefix, GoogleSignInException error) {
+    final String description = error.description?.trim() ?? '';
+    final String details = error.details?.toString().trim() ?? '';
+    final StringBuffer text = StringBuffer('$prefix: ${error.code.name}');
+    if (description.isNotEmpty) text.write(' — $description');
+    if (details.isNotEmpty) text.write(' [$details]');
+    return text.toString();
+  }
+
   Future<void> _exchangeGoogleIdentity(
     GoogleSignInAccount account, {
     required bool interactive,
   }) async {
-    final GoogleSignInAuthentication auth = await account.authentication;
+    final GoogleSignInAuthentication auth = account.authentication;
     final String idToken = auth.idToken?.trim() ?? '';
     if (idToken.isEmpty) {
       if (!mounted) return;
@@ -210,7 +254,12 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
           )
           .timeout(const Duration(seconds: 20));
 
-      final Object? decoded = jsonDecode(response.body);
+      Object? decoded;
+      try {
+        decoded = jsonDecode(response.body);
+      } on FormatException {
+        decoded = null;
+      }
       final Map<String, dynamic> payload = decoded is Map<String, dynamic>
           ? decoded
           : <String, dynamic>{};
@@ -301,41 +350,71 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
                       ),
                     ),
                     const SizedBox(height: 14),
-                    const Text('JARVIS LEGAL ENTERPRISE', textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900, letterSpacing: .8)),
+                    const Text(
+                      'JARVIS LEGAL ENTERPRISE',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900, letterSpacing: .8),
+                    ),
                     const SizedBox(height: 5),
-                    const Text('CHAIRMAN SECURE ACCESS', textAlign: TextAlign.center,
-                      style: TextStyle(color: _authCyan, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1.3)),
+                    const Text(
+                      'CHAIRMAN SECURE ACCESS',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: _authCyan, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1.3),
+                    ),
                     const SizedBox(height: 18),
                     Container(
                       padding: const EdgeInsets.all(13),
-                      decoration: BoxDecoration(color: _authPanel2, borderRadius: BorderRadius.circular(14), border: Border.all(color: _authBorder)),
-                      child: const Row(crossAxisAlignment: CrossAxisAlignment.start, children: <Widget>[
-                        Icon(Icons.verified_user_outlined, color: _authGreen, size: 20),
-                        SizedBox(width: 9),
-                        Expanded(child: Text('Use the approved Chairman Google account. Google verifies identity; JARVIS verifies Chairman authority and issues a secure session.',
-                          style: TextStyle(color: _authMuted, fontSize: 11, height: 1.4))),
-                      ]),
+                      decoration: BoxDecoration(
+                        color: _authPanel2,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: _authBorder),
+                      ),
+                      child: const Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Icon(Icons.verified_user_outlined, color: _authGreen, size: 20),
+                          SizedBox(width: 9),
+                          Expanded(
+                            child: Text(
+                              'Use the approved Chairman Google account. Google verifies identity; JARVIS verifies Chairman authority and issues a secure session.',
+                              style: TextStyle(color: _authMuted, fontSize: 11, height: 1.4),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                     if (_error != null) ...<Widget>[
                       const SizedBox(height: 12),
                       Container(
                         padding: const EdgeInsets.all(11),
-                        decoration: BoxDecoration(color: const Color(0x18FF7272), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0x55FF7272))),
-                        child: SelectableText(_error!, style: const TextStyle(fontSize: 11.5, color: Color(0xFFFFB2B2))),
+                        decoration: BoxDecoration(
+                          color: const Color(0x18FF7272),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0x55FF7272)),
+                        ),
+                        child: SelectableText(
+                          _error!,
+                          style: const TextStyle(fontSize: 11.5, color: Color(0xFFFFB2B2)),
+                        ),
                       ),
                     ],
                     const SizedBox(height: 14),
                     FilledButton.icon(
                       onPressed: _submitting ? null : _signInWithGoogle,
                       icon: _submitting
-                          ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
                           : const Icon(Icons.login_rounded),
                       label: const Text('CONTINUE WITH GOOGLE'),
                     ),
                     const SizedBox(height: 12),
-                    const Text('Chairman account: permanent owner access • subscription exempt', textAlign: TextAlign.center,
-                      style: TextStyle(color: _authGold, fontSize: 9.5, fontWeight: FontWeight.w800)),
+                    const Text(
+                      'Chairman account: permanent owner access • subscription exempt',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: _authGold, fontSize: 9.5, fontWeight: FontWeight.w800),
+                    ),
                   ],
                 ),
               ),
