@@ -17,6 +17,7 @@ env:
   JARVIS_SIGNING_BASE: https://jarvis-watch-bridge.floot.app
   GOOGLE_SERVER_CLIENT_ID: ${{ secrets.JARVIS_GOOGLE_CLIENT_ID }}
   JARVIS_SIGNING_CERT_SHA256: 004905e15f747bc9a635366138c01357b1c06615dfe6f3c3af9d3b1d52c1187f
+  JARVIS_ANDROID_PACKAGE: com.jarvis.jarvis_legal_enterprise
 
 jobs:
   build-chairman-apk:
@@ -34,15 +35,6 @@ jobs:
         with:
           channel: stable
           cache: true
-
-      - name: Validate production Google identity configuration
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "$GOOGLE_SERVER_CLIENT_ID" || {
-            echo 'Missing GitHub secret JARVIS_GOOGLE_CLIENT_ID.' >&2
-            exit 1
-          }
 
       - name: Retrieve permanent Chairman signing identity
         shell: bash
@@ -89,6 +81,24 @@ jobs:
             -out /tmp/jarvis_signing/private-key.pk8
           ACTUAL_CERT_SHA="$(openssl x509 -in /tmp/jarvis_signing/certificate.pem -outform DER | sha256sum | awk '{print $1}')"
           test "$ACTUAL_CERT_SHA" = "$JARVIS_SIGNING_CERT_SHA256"
+
+      - name: Report production Google OAuth Android identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHA1_COLON="$(openssl x509 -in /tmp/jarvis_signing/certificate.pem -noout -fingerprint -sha1 | sed 's/^sha1 Fingerprint=//I')"
+          echo "JARVIS_ANDROID_PACKAGE=${JARVIS_ANDROID_PACKAGE}"
+          echo "JARVIS_ANDROID_SIGNING_SHA1=${SHA1_COLON}"
+          echo "JARVIS_ANDROID_SIGNING_SHA256=${JARVIS_SIGNING_CERT_SHA256}"
+
+      - name: Validate production Google identity configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$GOOGLE_SERVER_CLIENT_ID" || {
+            echo 'Missing GitHub secret JARVIS_GOOGLE_CLIENT_ID.' >&2
+            exit 1
+          }
 
       - name: Prepare Android platform around checked-in app source
         working-directory: legal_app
