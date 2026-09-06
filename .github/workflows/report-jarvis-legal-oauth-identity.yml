@@ -1,0 +1,79 @@
+name: Report JARVIS Legal Android OAuth Identity
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/report-jarvis-legal-oauth-identity.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  JARVIS_SIGNING_BASE: https://jarvis-watch-bridge.floot.app
+  JARVIS_SIGNING_CERT_SHA256: 004905e15f747bc9a635366138c01357b1c06615dfe6f3c3af9d3b1d52c1187f
+  JARVIS_ANDROID_PACKAGE: com.jarvis.jarvis_legal_enterprise
+
+jobs:
+  report-oauth-identity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Retrieve public production signing certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/jarvis_oauth
+          OIDC_JSON="$(curl -fsSL \
+            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=jarvis-legal-android-signing")"
+          OIDC_TOKEN="$(OIDC_JSON="$OIDC_JSON" python - <<'PY'
+          import json, os
+          token = json.loads(os.environ['OIDC_JSON']).get('value', '')
+          if not token:
+              raise SystemExit('GitHub OIDC token was not returned.')
+          print(token)
+          PY
+          )"
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${OIDC_TOKEN}" \
+            "${JARVIS_SIGNING_BASE}/_api/v1/internal/android-signing" \
+            -o /tmp/jarvis_oauth/identity.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path('/tmp/jarvis_oauth/identity.json').read_text())
+          certificate = payload.get('certificatePem', '')
+          fingerprint = payload.get('certificateSha256', '').lower()
+          expected = '004905e15f747bc9a635366138c01357b1c06615dfe6f3c3af9d3b1d52c1187f'
+          if not certificate.startswith('-----BEGIN CERTIFICATE-----'):
+              raise SystemExit('Signing service returned an invalid certificate.')
+          if fingerprint != expected:
+              raise SystemExit('Signing certificate fingerprint mismatch.')
+          Path('/tmp/jarvis_oauth/certificate.pem').write_text(certificate)
+          PY
+          rm -f /tmp/jarvis_oauth/identity.json
+
+      - name: Report Google OAuth Android identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA256="$(openssl x509 -in /tmp/jarvis_oauth/certificate.pem -outform DER | sha256sum | awk '{print $1}')"
+          test "$ACTUAL_SHA256" = "$JARVIS_SIGNING_CERT_SHA256"
+          SHA1_COLON="$(openssl x509 -in /tmp/jarvis_oauth/certificate.pem -noout -fingerprint -sha1 | sed 's/^sha1 Fingerprint=//I')"
+          echo "JARVIS_ANDROID_PACKAGE=${JARVIS_ANDROID_PACKAGE}"
+          echo "JARVIS_ANDROID_SIGNING_SHA1=${SHA1_COLON}"
+          echo "JARVIS_ANDROID_SIGNING_SHA256=${ACTUAL_SHA256}"
+          printf 'Package: %s\nSHA-1: %s\nSHA-256: %s\n' \
+            "$JARVIS_ANDROID_PACKAGE" "$SHA1_COLON" "$ACTUAL_SHA256" > /tmp/jarvis_oauth/oauth-identity.txt
+          rm -f /tmp/jarvis_oauth/certificate.pem
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: JARVIS-Legal-Android-OAuth-Identity
+          path: /tmp/jarvis_oauth/oauth-identity.txt
+          retention-days: 30
