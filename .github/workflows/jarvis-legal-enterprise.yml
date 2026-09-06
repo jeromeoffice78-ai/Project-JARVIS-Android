@@ -13,7 +13,9 @@ permissions:
   id-token: write
 
 env:
-  JARVIS_HTTP_BASE: https://jarvis-watch-bridge.floot.app
+  JARVIS_HTTP_BASE: https://jarvis-legal-enterprise-api.onrender.com
+  JARVIS_SIGNING_BASE: https://jarvis-watch-bridge.floot.app
+  GOOGLE_SERVER_CLIENT_ID: ${{ secrets.JARVIS_GOOGLE_CLIENT_ID }}
   JARVIS_SIGNING_CERT_SHA256: 004905e15f747bc9a635366138c01357b1c06615dfe6f3c3af9d3b1d52c1187f
 
 jobs:
@@ -32,6 +34,15 @@ jobs:
         with:
           channel: stable
           cache: true
+
+      - name: Validate production Google identity configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$GOOGLE_SERVER_CLIENT_ID" || {
+            echo 'Missing GitHub secret JARVIS_GOOGLE_CLIENT_ID.' >&2
+            exit 1
+          }
 
       - name: Retrieve permanent Chairman signing identity
         shell: bash
@@ -52,7 +63,7 @@ jobs:
           )"
           curl -fsSL -X POST \
             -H "Authorization: Bearer ${OIDC_TOKEN}" \
-            "${JARVIS_HTTP_BASE}/_api/v1/internal/android-signing" \
+            "${JARVIS_SIGNING_BASE}/_api/v1/internal/android-signing" \
             -o /tmp/jarvis_signing/identity.json
           python - <<'PY'
           import json
@@ -97,14 +108,10 @@ jobs:
             --no-pub \
             .
 
-          # Flutter creates a template widget test for incomplete projects.
-          # Remove it only when it was not part of the checked-in Legal Enterprise.
           if [ "$WIDGET_TEST_WAS_TRACKED" -eq 0 ]; then
             rm -f test/widget_test.dart
           fi
 
-          # CI may generate Android platform scaffolding, but it must never rewrite
-          # or inject application source, dependency contracts, or real tests.
           if [ -n "$(git status --porcelain -- lib pubspec.yaml test)" ]; then
             echo 'flutter create modified checked-in Legal Enterprise source:' >&2
             git status --porcelain -- lib pubspec.yaml test >&2
@@ -157,7 +164,8 @@ jobs:
             --target=lib/chairman_production_main.dart \
             --dart-define=JARVIS_ROLE=chairman \
             --dart-define=JARVIS_SUBSCRIPTION_ACTIVE=false \
-            --dart-define=JARVIS_HTTP_BASE="$JARVIS_HTTP_BASE"
+            --dart-define=JARVIS_HTTP_BASE="$JARVIS_HTTP_BASE" \
+            --dart-define=GOOGLE_SERVER_CLIENT_ID="$GOOGLE_SERVER_CLIENT_ID"
 
       - name: Build optimized ARM64 Chairman APK
         working-directory: legal_app
@@ -166,7 +174,8 @@ jobs:
             --target=lib/chairman_production_main.dart \
             --dart-define=JARVIS_ROLE=chairman \
             --dart-define=JARVIS_SUBSCRIPTION_ACTIVE=false \
-            --dart-define=JARVIS_HTTP_BASE="$JARVIS_HTTP_BASE"
+            --dart-define=JARVIS_HTTP_BASE="$JARVIS_HTTP_BASE" \
+            --dart-define=GOOGLE_SERVER_CLIENT_ID="$GOOGLE_SERVER_CLIENT_ID"
 
       - name: Sign and verify permanent Chairman APKs
         shell: bash
