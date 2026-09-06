@@ -60,17 +60,20 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
       String.fromEnvironment('GOOGLE_SERVER_CLIENT_ID');
 
   final http.Client _client = http.Client();
-  final GoogleSignIn _google = GoogleSignIn.instance;
+  late final GoogleSignIn _google;
 
   bool _checking = true;
   bool _authenticated = false;
   bool _submitting = false;
-  bool _googleInitialized = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
+    _google = GoogleSignIn(
+      serverClientId: _googleServerClientId.trim(),
+      scopes: const <String>['email', 'profile'],
+    );
     ChairmanAuthSession.changes.addListener(_onSessionChanged);
     _initialize();
   }
@@ -87,68 +90,27 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
     _restoreSession();
   }
 
-  String _googleErrorMessage(GoogleSignInException error) {
-    final StringBuffer message = StringBuffer(
-      'Google sign-in failed: ${error.code.name}',
-    );
-    final String description = (error.description ?? '').trim();
-    if (description.isNotEmpty) {
-      message.write(' — $description');
-    }
-    if (error.details != null) {
-      final String details = error.details.toString().trim();
-      if (details.isNotEmpty && details != description) {
-        message.write(' [$details]');
-      }
-    }
-    message.write('.');
-    return message.toString();
-  }
-
   Future<void> _initialize() async {
-    if (_baseUrl.trim().isEmpty) {
+    if (_baseUrl.trim().isEmpty || _googleServerClientId.trim().isEmpty) {
       if (!mounted) return;
       setState(() {
         _checking = false;
-        _error = 'Secure JARVIS backend is not configured in this build.';
+        _error = 'Secure Chairman authentication is not configured in this build.';
       });
       return;
     }
 
-    if (_googleServerClientId.trim().isEmpty) {
-      if (!mounted) return;
-      setState(() {
-        _checking = false;
-        _error = 'Google Chairman authentication is not configured in this build.';
-      });
-      return;
-    }
+    await _restoreSession();
+    if (_authenticated) return;
 
     try {
-      await _google.initialize(serverClientId: _googleServerClientId.trim());
-      _googleInitialized = true;
-      await _restoreSession();
-      if (!_authenticated) {
-        final Future<GoogleSignInAccount?>? lightweight =
-            _google.attemptLightweightAuthentication();
-        final GoogleSignInAccount? account =
-            lightweight == null ? null : await lightweight;
-        if (account != null) {
-          await _exchangeGoogleIdentity(account, interactive: false);
-        }
+      final GoogleSignInAccount? account = await _google.signInSilently();
+      if (account != null) {
+        await _exchangeGoogleIdentity(account, interactive: false);
       }
-    } on GoogleSignInException catch (error) {
+    } on Object {
       if (!mounted) return;
-      setState(() {
-        _checking = false;
-        _error = _googleErrorMessage(error);
-      });
-    } on Object catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _checking = false;
-        _error = 'Unable to initialize Google sign-in: $error';
-      });
+      setState(() => _checking = false);
     }
   }
 
@@ -197,34 +159,28 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
 
   Future<void> _signInWithGoogle() async {
     if (_submitting) return;
-    if (!_googleInitialized) {
-      setState(() => _error = 'Google sign-in is not ready yet.');
-      return;
-    }
-    if (!_google.supportsAuthenticate()) {
-      setState(() => _error = 'Interactive Google sign-in is unavailable on this device.');
-      return;
-    }
-
     setState(() {
       _submitting = true;
       _error = null;
     });
 
     try {
-      final GoogleSignInAccount account = await _google.authenticate();
+      await _google.signOut();
+      final GoogleSignInAccount? account = await _google.signIn();
+      if (account == null) {
+        if (!mounted) return;
+        setState(() {
+          _submitting = false;
+          _error = 'Google sign-in was cancelled.';
+        });
+        return;
+      }
       await _exchangeGoogleIdentity(account, interactive: true);
-    } on GoogleSignInException catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _submitting = false;
-        _error = _googleErrorMessage(error);
-      });
     } on Object catch (error) {
       if (!mounted) return;
       setState(() {
         _submitting = false;
-        _error = 'Secure Google sign-in failed: $error';
+        _error = 'Google sign-in failed: $error';
       });
     }
   }
@@ -233,7 +189,8 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
     GoogleSignInAccount account, {
     required bool interactive,
   }) async {
-    final String idToken = account.authentication.idToken?.trim() ?? '';
+    final GoogleSignInAuthentication auth = await account.authentication;
+    final String idToken = auth.idToken?.trim() ?? '';
     if (idToken.isEmpty) {
       if (!mounted) return;
       setState(() {
@@ -286,9 +243,7 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
               payload['error'] as String? ??
               'This Google account is not authorized for Chairman access.')
           .trim();
-      if (interactive) {
-        await _google.signOut();
-      }
+      if (interactive) await _google.signOut();
       if (!mounted) return;
       setState(() {
         _checking = false;
@@ -332,11 +287,7 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
                   borderRadius: BorderRadius.circular(24),
                   border: Border.all(color: const Color(0x6638E8FF)),
                   boxShadow: const <BoxShadow>[
-                    BoxShadow(
-                      color: Color(0x2438E8FF),
-                      blurRadius: 28,
-                      offset: Offset(0, 10),
-                    ),
+                    BoxShadow(color: Color(0x2438E8FF), blurRadius: 28, offset: Offset(0, 10)),
                   ],
                 ),
                 child: Column(
@@ -350,84 +301,41 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
                       ),
                     ),
                     const SizedBox(height: 14),
-                    const Text(
-                      'JARVIS LEGAL ENTERPRISE',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 19,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: .8,
-                      ),
-                    ),
+                    const Text('JARVIS LEGAL ENTERPRISE', textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900, letterSpacing: .8)),
                     const SizedBox(height: 5),
-                    const Text(
-                      'CHAIRMAN SECURE ACCESS',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: _authCyan,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 1.3,
-                      ),
-                    ),
+                    const Text('CHAIRMAN SECURE ACCESS', textAlign: TextAlign.center,
+                      style: TextStyle(color: _authCyan, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1.3)),
                     const SizedBox(height: 18),
                     Container(
                       padding: const EdgeInsets.all(13),
-                      decoration: BoxDecoration(
-                        color: _authPanel2,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: _authBorder),
-                      ),
-                      child: const Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          Icon(Icons.verified_user_outlined, color: _authGreen, size: 20),
-                          SizedBox(width: 9),
-                          Expanded(
-                            child: Text(
-                              'Use the approved Chairman Google account. Google verifies identity; JARVIS verifies Chairman authority and issues a secure session.',
-                              style: TextStyle(color: _authMuted, fontSize: 11, height: 1.4),
-                            ),
-                          ),
-                        ],
-                      ),
+                      decoration: BoxDecoration(color: _authPanel2, borderRadius: BorderRadius.circular(14), border: Border.all(color: _authBorder)),
+                      child: const Row(crossAxisAlignment: CrossAxisAlignment.start, children: <Widget>[
+                        Icon(Icons.verified_user_outlined, color: _authGreen, size: 20),
+                        SizedBox(width: 9),
+                        Expanded(child: Text('Use the approved Chairman Google account. Google verifies identity; JARVIS verifies Chairman authority and issues a secure session.',
+                          style: TextStyle(color: _authMuted, fontSize: 11, height: 1.4))),
+                      ]),
                     ),
                     if (_error != null) ...<Widget>[
                       const SizedBox(height: 12),
                       Container(
                         padding: const EdgeInsets.all(11),
-                        decoration: BoxDecoration(
-                          color: const Color(0x18FF7272),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: const Color(0x55FF7272)),
-                        ),
-                        child: SelectableText(
-                          _error!,
-                          style: const TextStyle(fontSize: 11.5, color: Color(0xFFFFB2B2)),
-                        ),
+                        decoration: BoxDecoration(color: const Color(0x18FF7272), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0x55FF7272))),
+                        child: SelectableText(_error!, style: const TextStyle(fontSize: 11.5, color: Color(0xFFFFB2B2))),
                       ),
                     ],
                     const SizedBox(height: 14),
                     FilledButton.icon(
                       onPressed: _submitting ? null : _signInWithGoogle,
                       icon: _submitting
-                          ? const SizedBox.square(
-                              dimension: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
+                          ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2))
                           : const Icon(Icons.login_rounded),
                       label: const Text('CONTINUE WITH GOOGLE'),
                     ),
                     const SizedBox(height: 12),
-                    const Text(
-                      'Chairman account: permanent owner access • subscription exempt',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: _authGold,
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
+                    const Text('Chairman account: permanent owner access • subscription exempt', textAlign: TextAlign.center,
+                      style: TextStyle(color: _authGold, fontSize: 9.5, fontWeight: FontWeight.w800)),
                   ],
                 ),
               ),
