@@ -87,6 +87,24 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
     _restoreSession();
   }
 
+  String _googleErrorMessage(GoogleSignInException error) {
+    final StringBuffer message = StringBuffer(
+      'Google sign-in failed: ${error.code.name}',
+    );
+    final String description = (error.description ?? '').trim();
+    if (description.isNotEmpty) {
+      message.write(' — $description');
+    }
+    if (error.details != null) {
+      final String details = error.details.toString().trim();
+      if (details.isNotEmpty && details != description) {
+        message.write(' [$details]');
+      }
+    }
+    message.write('.');
+    return message.toString();
+  }
+
   Future<void> _initialize() async {
     if (_baseUrl.trim().isEmpty) {
       if (!mounted) return;
@@ -119,6 +137,12 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
           await _exchangeGoogleIdentity(account, interactive: false);
         }
       }
+    } on GoogleSignInException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _checking = false;
+        _error = _googleErrorMessage(error);
+      });
     } on Object catch (error) {
       if (!mounted) return;
       setState(() {
@@ -194,7 +218,7 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
       if (!mounted) return;
       setState(() {
         _submitting = false;
-        _error = 'Google sign-in failed: ${error.code.name}.';
+        _error = _googleErrorMessage(error);
       });
     } on Object catch (error) {
       if (!mounted) return;
@@ -377,7 +401,7 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(color: const Color(0x55FF7272)),
                         ),
-                        child: Text(
+                        child: SelectableText(
                           _error!,
                           style: const TextStyle(fontSize: 11.5, color: Color(0xFFFFB2B2)),
                         ),
