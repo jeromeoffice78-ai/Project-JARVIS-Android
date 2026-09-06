@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 
 const Color _authBg = Color(0xFF05090D);
@@ -55,37 +56,28 @@ class ChairmanAuthGate extends StatefulWidget {
 
 class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
   static const String _baseUrl = String.fromEnvironment('JARVIS_HTTP_BASE');
+  static const String _googleServerClientId =
+      String.fromEnvironment('GOOGLE_SERVER_CLIENT_ID');
 
-  final TextEditingController _displayName =
-      TextEditingController(text: 'Jerome Office');
-  final TextEditingController _activationCode = TextEditingController();
-  final TextEditingController _email = TextEditingController();
-  final TextEditingController _password = TextEditingController();
-  final TextEditingController _confirmPassword = TextEditingController();
   final http.Client _client = http.Client();
+  final GoogleSignIn _google = GoogleSignIn.instance;
 
   bool _checking = true;
   bool _authenticated = false;
-  bool _setupMode = false;
   bool _submitting = false;
-  bool _hidePassword = true;
+  bool _googleInitialized = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
     ChairmanAuthSession.changes.addListener(_onSessionChanged);
-    _restoreSession();
+    _initialize();
   }
 
   @override
   void dispose() {
     ChairmanAuthSession.changes.removeListener(_onSessionChanged);
-    _displayName.dispose();
-    _activationCode.dispose();
-    _email.dispose();
-    _password.dispose();
-    _confirmPassword.dispose();
     _client.close();
     super.dispose();
   }
@@ -95,17 +87,48 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
     _restoreSession();
   }
 
-  Future<void> _restoreSession() async {
+  Future<void> _initialize() async {
     if (_baseUrl.trim().isEmpty) {
       if (!mounted) return;
       setState(() {
         _checking = false;
-        _authenticated = false;
         _error = 'Secure JARVIS backend is not configured in this build.';
       });
       return;
     }
 
+    if (_googleServerClientId.trim().isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _checking = false;
+        _error = 'Google Chairman authentication is not configured in this build.';
+      });
+      return;
+    }
+
+    try {
+      await _google.initialize(serverClientId: _googleServerClientId.trim());
+      _googleInitialized = true;
+      await _restoreSession();
+      if (!_authenticated) {
+        final Future<GoogleSignInAccount?>? lightweight =
+            _google.attemptLightweightAuthentication();
+        final GoogleSignInAccount? account =
+            lightweight == null ? null : await lightweight;
+        if (account != null) {
+          await _exchangeGoogleIdentity(account, interactive: false);
+        }
+      }
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _checking = false;
+        _error = 'Unable to initialize Google sign-in: $error';
+      });
+    }
+  }
+
+  Future<void> _restoreSession() async {
     final String token = await ChairmanAuthSession.token();
     if (token.isEmpty) {
       if (!mounted) return;
@@ -119,7 +142,7 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
     try {
       final http.Response response = await _client
           .get(
-            Uri.parse('${_baseUrl.trim()}/_api/v1/auth/mobile-session'),
+            Uri.parse('${_baseUrl.trim()}/v1/auth/session'),
             headers: <String, String>{'authorization': 'Bearer $token'},
           )
           .timeout(const Duration(seconds: 15));
@@ -148,32 +171,15 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
     }
   }
 
-  Future<void> _submit() async {
+  Future<void> _signInWithGoogle() async {
     if (_submitting) return;
-    final String email = _email.text.trim();
-    final String password = _password.text;
-
-    if (email.isEmpty || password.isEmpty) {
-      setState(() => _error = 'Email and password are required.');
+    if (!_googleInitialized) {
+      setState(() => _error = 'Google sign-in is not ready yet.');
       return;
     }
-    if (_setupMode) {
-      if (_displayName.text.trim().length < 2) {
-        setState(() => _error = 'Chairman display name is required.');
-        return;
-      }
-      if (_activationCode.text.trim().isEmpty) {
-        setState(() => _error = 'The one-time Chairman activation code is required.');
-        return;
-      }
-      if (password.length < 12) {
-        setState(() => _error = 'Use at least 12 characters for the Chairman password.');
-        return;
-      }
-      if (password != _confirmPassword.text) {
-        setState(() => _error = 'The passwords do not match.');
-        return;
-      }
+    if (!_google.supportsAuthenticate()) {
+      setState(() => _error = 'Interactive Google sign-in is unavailable on this device.');
+      return;
     }
 
     setState(() {
@@ -182,18 +188,44 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
     });
 
     try {
-      final String route = _setupMode ? 'mobile-register' : 'mobile-login';
-      final Map<String, Object> body = <String, Object>{
-        'email': email,
-        'password': password,
-        if (_setupMode) 'displayName': _displayName.text.trim(),
-        if (_setupMode) 'activationCode': _activationCode.text.trim(),
-      };
+      final GoogleSignInAccount account = await _google.authenticate();
+      await _exchangeGoogleIdentity(account, interactive: true);
+    } on GoogleSignInException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _error = 'Google sign-in failed: ${error.code.name}.';
+      });
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _error = 'Secure Google sign-in failed: $error';
+      });
+    }
+  }
+
+  Future<void> _exchangeGoogleIdentity(
+    GoogleSignInAccount account, {
+    required bool interactive,
+  }) async {
+    final String idToken = account.authentication.idToken?.trim() ?? '';
+    if (idToken.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _checking = false;
+        _submitting = false;
+        _error = 'Google did not return an identity token for this account.';
+      });
+      return;
+    }
+
+    try {
       final http.Response response = await _client
           .post(
-            Uri.parse('${_baseUrl.trim()}/_api/v1/auth/$route'),
+            Uri.parse('${_baseUrl.trim()}/v1/auth/google'),
             headers: const <String, String>{'content-type': 'application/json'},
-            body: jsonEncode(body),
+            body: jsonEncode(<String, String>{'id_token': idToken}),
           )
           .timeout(const Duration(seconds: 20));
 
@@ -203,10 +235,13 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
           : <String, dynamic>{};
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        final String token = (payload['accessToken'] as String? ?? '').trim();
-        final String expiresAt = (payload['expiresAt'] as String? ?? '').trim();
-        if (token.isEmpty || expiresAt.isEmpty) {
-          throw const FormatException('Authentication response was incomplete.');
+        final String token = (payload['access_token'] as String? ?? '').trim();
+        final String expiresAt = (payload['expires_at'] as String? ?? '').trim();
+        final String email = (payload['email'] as String? ?? account.email).trim();
+        final String role = (payload['role'] as String? ?? '').trim().toLowerCase();
+        final bool exempt = payload['subscription_exempt'] == true;
+        if (token.isEmpty || expiresAt.isEmpty || role != 'chairman' || !exempt) {
+          throw const FormatException('Chairman authorization response was incomplete.');
         }
         await ChairmanAuthSession.save(
           token: token,
@@ -219,28 +254,31 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
           _checking = false;
           _submitting = false;
           _error = null;
-          _activationCode.clear();
-          _password.clear();
-          _confirmPassword.clear();
         });
         return;
       }
 
-      final String message = (payload['error'] as String? ??
-              payload['message'] as String? ??
-              'Chairman authentication failed.')
+      final String message = (payload['detail'] as String? ??
+              payload['error'] as String? ??
+              'This Google account is not authorized for Chairman access.')
           .trim();
+      if (interactive) {
+        await _google.signOut();
+      }
       if (!mounted) return;
       setState(() {
+        _checking = false;
         _submitting = false;
+        _authenticated = false;
         _error = message;
-        if (response.statusCode == 409) _setupMode = false;
       });
     } on Object catch (error) {
       if (!mounted) return;
       setState(() {
+        _checking = false;
         _submitting = false;
-        _error = 'Secure sign-in failed: $error';
+        _authenticated = false;
+        _error = 'Unable to establish the secure JARVIS session: $error';
       });
     }
   }
@@ -298,12 +336,10 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
                       ),
                     ),
                     const SizedBox(height: 5),
-                    Text(
-                      _setupMode
-                          ? 'INITIALIZE CHAIRMAN AUTHORITY'
-                          : 'CHAIRMAN SECURE ACCESS',
+                    const Text(
+                      'CHAIRMAN SECURE ACCESS',
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: _authCyan,
                         fontSize: 10,
                         fontWeight: FontWeight.w900,
@@ -311,51 +347,27 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
                       ),
                     ),
                     const SizedBox(height: 18),
-                    if (_setupMode) ...<Widget>[
-                      _field(
-                        controller: _displayName,
-                        label: 'Chairman name',
-                        icon: Icons.badge_outlined,
+                    Container(
+                      padding: const EdgeInsets.all(13),
+                      decoration: BoxDecoration(
+                        color: _authPanel2,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: _authBorder),
                       ),
-                      const SizedBox(height: 10),
-                      _field(
-                        controller: _activationCode,
-                        label: 'One-time activation code',
-                        icon: Icons.vpn_key_outlined,
-                      ),
-                      const SizedBox(height: 10),
-                    ],
-                    _field(
-                      controller: _email,
-                      label: 'Chairman email',
-                      icon: Icons.alternate_email_rounded,
-                      keyboardType: TextInputType.emailAddress,
-                    ),
-                    const SizedBox(height: 10),
-                    _field(
-                      controller: _password,
-                      label: 'Password',
-                      icon: Icons.lock_outline_rounded,
-                      obscureText: _hidePassword,
-                      suffix: IconButton(
-                        onPressed: () =>
-                            setState(() => _hidePassword = !_hidePassword),
-                        icon: Icon(
-                          _hidePassword
-                              ? Icons.visibility_outlined
-                              : Icons.visibility_off_outlined,
-                        ),
+                      child: const Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Icon(Icons.verified_user_outlined, color: _authGreen, size: 20),
+                          SizedBox(width: 9),
+                          Expanded(
+                            child: Text(
+                              'Use the approved Chairman Google account. Google verifies identity; JARVIS verifies Chairman authority and issues a secure session.',
+                              style: TextStyle(color: _authMuted, fontSize: 11, height: 1.4),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    if (_setupMode) ...<Widget>[
-                      const SizedBox(height: 10),
-                      _field(
-                        controller: _confirmPassword,
-                        label: 'Confirm password',
-                        icon: Icons.verified_user_outlined,
-                        obscureText: _hidePassword,
-                      ),
-                    ],
                     if (_error != null) ...<Widget>[
                       const SizedBox(height: 12),
                       Container(
@@ -373,62 +385,24 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
                     ],
                     const SizedBox(height: 14),
                     FilledButton.icon(
-                      onPressed: _submitting ? null : _submit,
+                      onPressed: _submitting ? null : _signInWithGoogle,
                       icon: _submitting
                           ? const SizedBox.square(
                               dimension: 18,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
-                          : Icon(
-                              _setupMode
-                                  ? Icons.admin_panel_settings_rounded
-                                  : Icons.login_rounded,
-                            ),
-                      label: Text(
-                        _setupMode ? 'CREATE CHAIRMAN ACCESS' : 'SIGN IN AS CHAIRMAN',
-                      ),
+                          : const Icon(Icons.login_rounded),
+                      label: const Text('CONTINUE WITH GOOGLE'),
                     ),
-                    const SizedBox(height: 8),
-                    TextButton(
-                      onPressed: _submitting
-                          ? null
-                          : () => setState(() {
-                                _setupMode = !_setupMode;
-                                _error = null;
-                              }),
-                      child: Text(
-                        _setupMode
-                            ? 'Already initialized? Sign in'
-                            : 'First launch? Initialize Chairman access',
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Container(
-                      padding: const EdgeInsets.all(11),
-                      decoration: BoxDecoration(
-                        color: _authPanel2,
-                        borderRadius: BorderRadius.circular(13),
-                        border: Border.all(color: _authBorder),
-                      ),
-                      child: const Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          Icon(Icons.shield_outlined, color: _authGreen, size: 18),
-                          SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'First-run activation is one-time. Your password is verified by the hosted authentication service, and the app stores only the encrypted session token in Android secure storage.',
-                              style: TextStyle(color: _authMuted, fontSize: 10.5, height: 1.35),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 12),
                     const Text(
                       'Chairman account: permanent owner access • subscription exempt',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: _authGold, fontSize: 9.5, fontWeight: FontWeight.w800),
+                      style: TextStyle(
+                        color: _authGold,
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ],
                 ),
@@ -437,32 +411,6 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
           ),
         ),
       ),
-    );
-  }
-
-  Widget _field({
-    required TextEditingController controller,
-    required String label,
-    required IconData icon,
-    TextInputType? keyboardType,
-    bool obscureText = false,
-    Widget? suffix,
-  }) {
-    return TextField(
-      controller: controller,
-      keyboardType: keyboardType,
-      obscureText: obscureText,
-      autocorrect: false,
-      enableSuggestions: !obscureText,
-      decoration: InputDecoration(
-        labelText: label,
-        prefixIcon: Icon(icon),
-        suffixIcon: suffix,
-        filled: true,
-        fillColor: _authPanel2,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
-      ),
-      onSubmitted: (_) => _submit(),
     );
   }
 }
