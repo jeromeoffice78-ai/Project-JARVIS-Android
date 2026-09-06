@@ -9,6 +9,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException, status
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
+from .auth_google import auth_ready, issue_session, verify_google_chairman, verify_session
+
 APP_NAME = "JARVIS Legal Enterprise API"
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-sol").strip() or "gpt-5.6-sol"
 GATEWAY_MODEL = os.getenv("AI_GATEWAY_MODEL", f"openai/{OPENAI_MODEL}").strip() or f"openai/{OPENAI_MODEL}"
@@ -36,6 +38,27 @@ Requirements:
 """
 
 
+class GoogleAuthRequest(BaseModel):
+    id_token: str = Field(min_length=100, max_length=10_000)
+
+
+class AuthResponse(BaseModel):
+    access_token: str
+    expires_at: str
+    role: str
+    display_name: str
+    email: str
+    subscription_exempt: bool
+
+
+class SessionResponse(BaseModel):
+    authenticated: bool
+    role: str
+    display_name: str
+    email: str
+    subscription_exempt: bool
+
+
 class LegalQueryRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=40_000)
     role: str = Field(default="client", min_length=1, max_length=64)
@@ -55,17 +78,11 @@ class HealthResponse(BaseModel):
     ai_configured: bool
     ai_provider: str
     chairman_auth_configured: bool
+    google_chairman_auth_configured: bool
     client_auth_configured: bool
 
 
 def _build_ai_client() -> tuple[AsyncOpenAI | None, str, str]:
-    """Prefer Vercel AI Gateway OIDC, then Gateway API key, then direct OpenAI.
-
-    Vercel injects VERCEL_OIDC_TOKEN into deployed Functions. AI Gateway accepts that
-    token as bearer auth, allowing production AI without placing a provider key in
-    the Android app or repository.
-    """
-
     gateway_token = (
         os.getenv("AI_GATEWAY_API_KEY", "").strip()
         or os.getenv("VERCEL_OIDC_TOKEN", "").strip()
@@ -98,7 +115,7 @@ async def lifespan(app: FastAPI):
         await client.close()
 
 
-app = FastAPI(title=APP_NAME, version="1.2.0", lifespan=lifespan)
+app = FastAPI(title=APP_NAME, version="1.3.0", lifespan=lifespan)
 
 
 def _extract_bearer(value: str | None) -> str:
@@ -113,12 +130,6 @@ def _extract_bearer(value: str | None) -> str:
 async def authenticate_request(
     authorization: Annotated[str | None, Header()] = None,
 ) -> str:
-    if not CHAIRMAN_TOKEN and not CLIENT_TOKEN:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Server authentication is not configured.",
-        )
-
     supplied = _extract_bearer(authorization)
     if not supplied:
         raise HTTPException(
@@ -127,6 +138,12 @@ async def authenticate_request(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    session_identity = verify_session(supplied)
+    if session_identity is not None and session_identity.role == "chairman":
+        return "chairman"
+
+    # Transitional compatibility only. New Chairman builds use Google OIDC +
+    # server-issued sessions; this static token can be removed after migration.
     if CHAIRMAN_TOKEN and hmac.compare_digest(supplied, CHAIRMAN_TOKEN):
         return "chairman"
     if CLIENT_TOKEN and hmac.compare_digest(supplied, CLIENT_TOKEN):
@@ -156,8 +173,44 @@ async def health() -> HealthResponse:
         model=getattr(app.state, "ai_model", GATEWAY_MODEL),
         ai_configured=getattr(app.state, "openai", None) is not None,
         ai_provider=getattr(app.state, "ai_provider", "unconfigured"),
-        chairman_auth_configured=bool(CHAIRMAN_TOKEN),
+        chairman_auth_configured=bool(CHAIRMAN_TOKEN) or auth_ready(),
+        google_chairman_auth_configured=auth_ready(),
         client_auth_configured=bool(CLIENT_TOKEN),
+    )
+
+
+@app.post("/v1/auth/google", response_model=AuthResponse)
+async def google_auth(payload: GoogleAuthRequest) -> AuthResponse:
+    identity = verify_google_chairman(payload.id_token.strip())
+    access_token, expires_at = issue_session(identity)
+    return AuthResponse(
+        access_token=access_token,
+        expires_at=expires_at,
+        role="chairman",
+        display_name=identity.display_name,
+        email=identity.email,
+        subscription_exempt=True,
+    )
+
+
+@app.get("/v1/auth/session", response_model=SessionResponse)
+async def auth_session(
+    authorization: Annotated[str | None, Header()] = None,
+) -> SessionResponse:
+    token = _extract_bearer(authorization)
+    identity = verify_session(token)
+    if identity is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="JARVIS session is invalid or expired.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return SessionResponse(
+        authenticated=True,
+        role=identity.role,
+        display_name=identity.display_name,
+        email=identity.email,
+        subscription_exempt=identity.role == "chairman",
     )
 
 
@@ -191,7 +244,7 @@ async def legal_query(
             instructions=instructions,
             input=payload.prompt.strip(),
         )
-    except Exception as exc:  # The API boundary converts provider failures to 502.
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"AI provider request failed: {type(exc).__name__}",
