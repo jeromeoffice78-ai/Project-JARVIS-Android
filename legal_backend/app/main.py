@@ -214,6 +214,7 @@ async def auth_session(
     )
 
 
+@app.post("/_api/v1/legal/query", response_model=LegalQueryResponse, include_in_schema=False)
 @app.post("/v1/legal/query", response_model=LegalQueryResponse)
 async def legal_query(
     payload: LegalQueryRequest,
