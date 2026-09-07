@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -13,10 +14,24 @@ from fastapi import HTTPException, status
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 
-GOOGLE_CLIENT_ID = os.getenv("JARVIS_GOOGLE_CLIENT_ID", "").strip()
-CHAIRMAN_EMAIL = os.getenv("JARVIS_CHAIRMAN_EMAIL", "").strip().lower()
+DEFAULT_GOOGLE_CLIENT_ID = (
+    "498363735983-nka03bna11698m7o6ao0l7vnga8fb80e.apps.googleusercontent.com"
+)
+DEFAULT_CHAIRMAN_EMAIL = "jeromeoffice78@gmail.com"
+
+GOOGLE_CLIENT_ID = os.getenv(
+    "JARVIS_GOOGLE_CLIENT_ID", DEFAULT_GOOGLE_CLIENT_ID
+).strip()
+CHAIRMAN_EMAIL = os.getenv(
+    "JARVIS_CHAIRMAN_EMAIL", DEFAULT_CHAIRMAN_EMAIL
+).strip().lower()
 CHAIRMAN_GOOGLE_SUB = os.getenv("JARVIS_CHAIRMAN_GOOGLE_SUB", "").strip()
-SESSION_SECRET = os.getenv("JARVIS_SESSION_SECRET", "").strip()
+# A configured secret survives restarts. The random fallback remains server-only and
+# keeps authentication usable on a single-instance free deployment; its sessions
+# intentionally expire whenever the service restarts.
+SESSION_SECRET = (
+    os.getenv("JARVIS_SESSION_SECRET", "").strip() or secrets.token_urlsafe(48)
+)
 SESSION_TTL_SECONDS = int(os.getenv("JARVIS_SESSION_TTL_SECONDS", "86400"))
 
 
