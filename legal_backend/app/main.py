@@ -14,6 +14,7 @@ from .auth_google import auth_ready, issue_session, verify_google_chairman, veri
 APP_NAME = "JARVIS Legal Enterprise API"
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-sol").strip() or "gpt-5.6-sol"
 GATEWAY_MODEL = os.getenv("AI_GATEWAY_MODEL", f"openai/{OPENAI_MODEL}").strip() or f"openai/{OPENAI_MODEL}"
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip() or "llama-3.3-70b-versatile"
 CHAIRMAN_TOKEN = os.getenv("JARVIS_CHAIRMAN_TOKEN", "").strip()
 CLIENT_TOKEN = os.getenv("JARVIS_CLIENT_TOKEN", "").strip()
 
@@ -83,6 +84,17 @@ class HealthResponse(BaseModel):
 
 
 def _build_ai_client() -> tuple[AsyncOpenAI | None, str, str]:
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    if groq_key:
+        return (
+            AsyncOpenAI(
+                api_key=groq_key,
+                base_url="https://api.groq.com/openai/v1",
+            ),
+            "groq-free-tier",
+            GROQ_MODEL,
+        )
+
     gateway_token = (
         os.getenv("AI_GATEWAY_API_KEY", "").strip()
         or os.getenv("VERCEL_OIDC_TOKEN", "").strip()
