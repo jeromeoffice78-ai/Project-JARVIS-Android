@@ -9,7 +9,9 @@ Secure FastAPI backend for the JARVIS Legal Enterprise Chairman Android app.
 
 ## Required production environment variables
 
-- `OPENAI_API_KEY` — server-side OpenAI API credential. Never place this value in the Android app or Git repository.
+- `GROQ_API_KEY` — recommended free-tier server-side provider credential.
+- `GROQ_MODEL` — optional Groq model override. Defaults to `llama-3.3-70b-versatile`.
+- `OPENAI_API_KEY` — optional paid OpenAI API credential. Never place provider credentials in the Android app or Git repository.
 - `JARVIS_CHAIRMAN_TOKEN` — long random bearer credential reserved for the Chairman/owner build.
 - `JARVIS_CLIENT_TOKEN` — optional separate credential for controlled client-tier testing. It cannot claim Chairman authority.
 - `OPENAI_MODEL` — optional model override. Defaults to `gpt-5.6-sol`.
