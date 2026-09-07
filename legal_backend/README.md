@@ -14,6 +14,15 @@ Secure FastAPI backend for the JARVIS Legal Enterprise Chairman Android app.
 - `JARVIS_CLIENT_TOKEN` — optional separate credential for controlled client-tier testing. It cannot claim Chairman authority.
 - `OPENAI_MODEL` — optional model override. Defaults to `gpt-5.6-sol`.
 
+## Google Chairman sign-in defaults
+
+The deployed Chairman build and backend share the approved public Google Web
+OAuth client ID and Chairman email. Environment variables may override either
+value. If `JARVIS_SESSION_SECRET` is absent, the backend generates a strong
+server-only secret at startup; existing sessions then require Google sign-in
+again after a service restart. Configure `JARVIS_SESSION_SECRET` in Render for
+persistent sessions.
+
 ## Chairman security model
 
 The backend derives authority from the bearer credential, not from the `role` string supplied by the mobile client. A request authenticated with the client credential receives client authority even if it sends `role=chairman`; that escalation attempt is rejected with HTTP 403.
