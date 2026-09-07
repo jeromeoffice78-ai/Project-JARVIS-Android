@@ -7,6 +7,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.jarvis.shield.platform.RemediationLauncher
 import com.jarvis.shield.ui.ShieldScreen
 import com.jarvis.shield.ui.ShieldViewModel
 import com.jarvis.shield.ui.theme.JarvisShieldTheme
@@ -24,7 +25,14 @@ class MainActivity : ComponentActivity() {
                 ShieldScreen(
                     state = state,
                     onMonitoringChanged = viewModel::setMonitoringEnabled,
-                    onVerifyFoundation = viewModel::verifyFoundation,
+                    onScanNow = viewModel::scanNow,
+                    onRemediation = { action, packageName ->
+                        RemediationLauncher.launch(
+                            activity = this,
+                            action = action,
+                            packageName = packageName,
+                        )
+                    },
                 )
             }
         }

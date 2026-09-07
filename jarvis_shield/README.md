@@ -2,15 +2,31 @@
 
 JARVIS Shield is a defensive Android security application designed for the REVVL Tab 2 and other modern Android devices.
 
-## Phase 1 scope
+## Current branch status
 
-This phase creates a clean native Android foundation using Kotlin, Jetpack Compose, MVVM, Clean Architecture, Hilt, Room, DataStore, Coroutines, and Flow. It intentionally does not claim to perform malware detection yet.
+The `jarvis-shield` branch contains Phase 1 architecture plus the Phase 2 defensive security engine.
 
-The Phase 2 security engine will add installed-app risk analysis, dangerous-permission correlation, accessibility-service review, notification-listener review, device-admin review, overlay-risk checks, installer/source analysis, package signature and SHA-256 inventory, secure uninstall handoff, and defensive settings guidance.
+## Technology
+
+- Kotlin
+- Jetpack Compose + Material 3
+- MVVM + Clean Architecture
+- Hilt dependency injection
+- Room scan-history persistence
+- DataStore preferences
+- Kotlin Coroutines and Flow
+
+## Phase 2 protection engine
+
+JARVIS Shield now performs an on-device heuristic inspection of installed applications. It correlates install source, granted sensitive permissions, Accessibility access, notification access, device-admin control, overlay capability, unknown-app installation capability, target SDK, debuggable state, signing-certificate SHA-256, and APK SHA-256 inventory for reviewed user apps.
+
+The risk engine emphasizes dangerous combinations rather than treating an ordinary permission as proof of malware. Findings can be remediated through Android's protected app-details, permission, device-admin, special-access, and uninstall confirmation screens.
+
+See `PHASE_2.md` for the exact scanner behavior and threat-model boundaries.
 
 ## Android security boundary
 
-A normal Android app cannot silently uninstall arbitrary apps, inspect every other app's private files, or guarantee detection of every malware family. JARVIS Shield will use public Android APIs, policy-compliant package visibility, user-approved removal flows, and defense-in-depth checks. Root access is not required and will not be requested.
+A normal Android app cannot silently uninstall arbitrary apps, inspect every other app's private files, or guarantee detection of every malware family. JARVIS Shield uses public Android APIs and user-approved remediation flows. It does not request root access or use exploit-based removal.
 
 ## Target
 
@@ -18,8 +34,9 @@ A normal Android app cannot silently uninstall arbitrary apps, inspect every oth
 - Minimum Android: API 28
 - Target Android: API 35
 - Compile SDK: API 36
-- Primary target device: REVVL Tab 2 running Android 15
+- Primary device: REVVL Tab 2 running Android 15
+- Phase 2 version: `1.1.0-phase2` / version code `2`
 
-## Build
+## Next phase
 
-Phase 1 is committed as a standalone Gradle project under `jarvis_shield/`. Build automation is intentionally deferred until Phase 3 in accordance with the staged delivery plan.
+Phase 3 will add the dedicated CI/CD pipeline for tests, lint, APK/AAB builds, signing, checksums, and release artifacts. That phase starts only after Phase 2 is confirmed functional.

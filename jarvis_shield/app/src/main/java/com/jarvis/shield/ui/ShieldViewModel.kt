@@ -3,7 +3,9 @@ package com.jarvis.shield.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.jarvis.shield.domain.model.ScanSummary
+import com.jarvis.shield.domain.model.SecurityScanResult
 import com.jarvis.shield.domain.repository.ShieldRepository
+import com.jarvis.shield.domain.usecase.RunSecurityScanUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,23 +18,23 @@ import kotlinx.coroutines.launch
 @HiltViewModel
 class ShieldViewModel @Inject constructor(
     private val repository: ShieldRepository,
+    private val runSecurityScan: RunSecurityScanUseCase,
 ) : ViewModel() {
-    private val errorMessage = MutableStateFlow<String?>(null)
-    private val isWorking = MutableStateFlow(false)
+    private val session = MutableStateFlow(ScanSession())
 
     val uiState: StateFlow<ShieldUiState> = combine(
         repository.monitoringEnabled,
         repository.scanCount,
         repository.latestScan,
-        errorMessage,
-        isWorking,
-    ) { monitoring, count, latest, error, working ->
+        session,
+    ) { monitoring, count, latest, scanSession ->
         ShieldUiState(
             monitoringEnabled = monitoring,
-            verificationCount = count,
-            latestVerification = latest,
-            isWorking = working,
-            errorMessage = error,
+            scanCount = count,
+            latestScan = latest,
+            isScanning = scanSession.isScanning,
+            currentResult = scanSession.result,
+            errorMessage = scanSession.errorMessage,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -42,31 +44,60 @@ class ShieldViewModel @Inject constructor(
 
     fun setMonitoringEnabled(enabled: Boolean) {
         viewModelScope.launch {
-            runCatching { repository.setMonitoringEnabled(enabled) }
-                .onFailure { errorMessage.value = it.message ?: "Unable to save protection preference." }
+            try {
+                repository.setMonitoringEnabled(enabled)
+            } catch (error: Throwable) {
+                session.value = session.value.copy(
+                    errorMessage = error.message?.takeIf { it.isNotBlank() }
+                        ?: "Unable to save the protection preference.",
+                )
+            }
         }
     }
 
-    fun verifyFoundation() {
-        if (isWorking.value) return
+    fun scanNow() {
+        if (session.value.isScanning) return
         viewModelScope.launch {
-            isWorking.value = true
-            errorMessage.value = null
-            runCatching { repository.recordFoundationVerification() }
-                .onFailure { errorMessage.value = it.message ?: "Local security storage verification failed." }
-            isWorking.value = false
+            session.value = session.value.copy(
+                isScanning = true,
+                errorMessage = null,
+            )
+
+            runSecurityScan().fold(
+                onSuccess = { result ->
+                    session.value = ScanSession(
+                        isScanning = false,
+                        result = result,
+                        errorMessage = null,
+                    )
+                },
+                onFailure = { error ->
+                    session.value = session.value.copy(
+                        isScanning = false,
+                        errorMessage = error.message?.takeIf { it.isNotBlank() }
+                            ?: "The device security scan could not be completed.",
+                    )
+                },
+            )
         }
     }
 
     fun dismissError() {
-        errorMessage.value = null
+        session.value = session.value.copy(errorMessage = null)
     }
 }
 
+private data class ScanSession(
+    val isScanning: Boolean = false,
+    val result: SecurityScanResult? = null,
+    val errorMessage: String? = null,
+)
+
 data class ShieldUiState(
     val monitoringEnabled: Boolean = true,
-    val verificationCount: Int = 0,
-    val latestVerification: ScanSummary? = null,
-    val isWorking: Boolean = false,
+    val scanCount: Int = 0,
+    val latestScan: ScanSummary? = null,
+    val isScanning: Boolean = false,
+    val currentResult: SecurityScanResult? = null,
     val errorMessage: String? = null,
 )

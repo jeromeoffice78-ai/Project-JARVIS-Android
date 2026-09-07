@@ -1,6 +1,7 @@
 package com.jarvis.shield.domain.repository
 
 import com.jarvis.shield.domain.model.ScanSummary
+import com.jarvis.shield.domain.model.SecurityScanResult
 import kotlinx.coroutines.flow.Flow
 
 interface ShieldRepository {
@@ -9,5 +10,5 @@ interface ShieldRepository {
     val latestScan: Flow<ScanSummary?>
 
     suspend fun setMonitoringEnabled(enabled: Boolean)
-    suspend fun recordFoundationVerification()
+    suspend fun runSecurityScan(): Result<SecurityScanResult>
 }
