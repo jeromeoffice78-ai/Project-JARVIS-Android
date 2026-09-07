@@ -42,6 +42,15 @@ def test_health():
         assert payload["google_chairman_auth_configured"] is True
 
 
+def test_groq_free_provider_takes_priority(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
+    client, provider, model = api._build_ai_client()
+    assert client is not None
+    assert provider == "groq-free-tier"
+    assert model == "llama-3.3-70b-versatile"
+
+
+
 def test_query_rejects_missing_bearer_token():
     with TestClient(api.app) as client:
         response = client.post(
