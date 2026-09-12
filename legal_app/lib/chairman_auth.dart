@@ -60,7 +60,10 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
       String.fromEnvironment('GOOGLE_SERVER_CLIENT_ID');
 
   final http.Client _client = http.Client();
-  final GoogleSignIn _google = GoogleSignIn.instance;
+  final GoogleSignIn _google = GoogleSignIn(
+    scopes: const <String>['email', 'profile'],
+    serverClientId: _googleServerClientId,
+  );
 
   bool _checking = true;
   bool _authenticated = false;
@@ -97,43 +100,18 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
       return;
     }
 
-    try {
-      await _google.initialize(serverClientId: _googleServerClientId.trim());
-      _googleInitialized = true;
-    } on GoogleSignInException catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _checking = false;
-        _error = _googleError('Google initialization failed', error);
-      });
-      return;
-    } on Object catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _checking = false;
-        _error = 'Google initialization failed: $error';
-      });
-      return;
-    }
+    _googleInitialized = true;
 
     await _restoreSession();
     if (_authenticated) return;
 
     try {
-      final Future<GoogleSignInAccount?>? attempt =
-          _google.attemptLightweightAuthentication();
-      final GoogleSignInAccount? account = attempt == null ? null : await attempt;
+      final GoogleSignInAccount? account = await _google.signInSilently();
       if (account != null) {
         await _exchangeGoogleIdentity(account, interactive: false);
       } else if (mounted) {
         setState(() => _checking = false);
       }
-    } on GoogleSignInException catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _checking = false;
-        _error = _googleError('Google session restore failed', error);
-      });
     } on Object {
       if (!mounted) return;
       setState(() => _checking = false);
@@ -189,11 +167,6 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
       setState(() => _error = 'Google authentication is still initializing.');
       return;
     }
-    if (!_google.supportsAuthenticate()) {
-      setState(() => _error = 'Interactive Google authentication is unavailable on this device.');
-      return;
-    }
-
     setState(() {
       _submitting = true;
       _error = null;
@@ -201,16 +174,16 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
 
     try {
       await _google.signOut();
-      final GoogleSignInAccount account = await _google.authenticate(
-        scopeHint: const <String>['email', 'profile'],
-      );
+      final GoogleSignInAccount? account = await _google.signIn();
+      if (account == null) {
+        if (!mounted) return;
+        setState(() {
+          _submitting = false;
+          _error = 'Google sign-in was canceled.';
+        });
+        return;
+      }
       await _exchangeGoogleIdentity(account, interactive: true);
-    } on GoogleSignInException catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _submitting = false;
-        _error = _googleError('Google sign-in failed', error);
-      });
     } on Object catch (error) {
       if (!mounted) return;
       setState(() {
@@ -218,15 +191,6 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
         _error = 'Google sign-in failed: $error';
       });
     }
-  }
-
-  String _googleError(String prefix, GoogleSignInException error) {
-    final String description = error.description?.trim() ?? '';
-    final String details = error.details?.toString().trim() ?? '';
-    final StringBuffer text = StringBuffer('$prefix: ${error.code.name}');
-    if (description.isNotEmpty) text.write(' — $description');
-    if (details.isNotEmpty) text.write(' [$details]');
-    return text.toString();
   }
 
   Future<void> _exchangeGoogleIdentity(
