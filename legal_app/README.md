@@ -24,3 +24,5 @@ The repository workflow `jarvis-legal-enterprise.yml` creates a clean Flutter An
 ## Production note
 
 For a commercial client release, enforce role and subscription entitlements server-side. The Chairman Edition is the owner/admin build and is intentionally subscription-exempt.
+
+<!-- Production OAuth identity verification trigger: 2026-09-11 -->
