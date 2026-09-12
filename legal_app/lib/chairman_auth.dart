@@ -197,7 +197,7 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
     GoogleSignInAccount account, {
     required bool interactive,
   }) async {
-    final GoogleSignInAuthentication auth = account.authentication;
+    final GoogleSignInAuthentication auth = await account.authentication;
     final String idToken = auth.idToken?.trim() ?? '';
     if (idToken.isEmpty) {
       if (!mounted) return;
