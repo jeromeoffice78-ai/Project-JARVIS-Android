@@ -77,3 +77,5 @@ jobs:
           name: JARVIS-Legal-Android-OAuth-Identity
           path: /tmp/jarvis_oauth/oauth-identity.txt
           retention-days: 30
+
+# OAuth identity refresh trigger: 2026-09-11
