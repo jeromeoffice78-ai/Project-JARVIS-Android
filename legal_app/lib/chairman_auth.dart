@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 
 const Color _authBg = Color(0xFF05090D);
 const Color _authPanel = Color(0xFF0A1218);
@@ -58,6 +59,8 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
   static const String _baseUrl = String.fromEnvironment('JARVIS_HTTP_BASE');
   static const String _googleServerClientId =
       String.fromEnvironment('GOOGLE_SERVER_CLIENT_ID');
+  static const String _passwordRecoveryUrl =
+      'https://idpneeyysraraznqmiio.supabase.co/functions/v1/password-reset';
 
   final http.Client _client = http.Client();
   final GoogleSignIn _google = GoogleSignIn(
@@ -157,6 +160,28 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
         _checking = false;
         _authenticated = false;
         _error = 'Unable to verify the Chairman session. Check your connection.';
+      });
+    }
+  }
+
+  Future<void> _openPasswordRecovery() async {
+    if (_submitting) return;
+    setState(() => _error = null);
+    final Uri uri = Uri.parse(_passwordRecoveryUrl);
+    try {
+      final bool opened = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!opened && mounted) {
+        setState(() {
+          _error = 'Unable to open secure password recovery on this device.';
+        });
+      }
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Unable to open secure password recovery: $error';
       });
     }
   }
@@ -373,7 +398,19 @@ class _ChairmanAuthGateState extends State<ChairmanAuthGate> {
                           : const Icon(Icons.login_rounded),
                       label: const Text('CONTINUE WITH GOOGLE'),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      onPressed: _submitting ? null : _openPasswordRecovery,
+                      icon: const Icon(Icons.lock_reset_rounded),
+                      label: const Text('FORGOT PASSWORD / RESET PASSWORD'),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Password recovery uses JARVIS breach screening before a new password is accepted.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: _authMuted, fontSize: 9.5, height: 1.35),
+                    ),
+                    const SizedBox(height: 10),
                     const Text(
                       'Chairman account: permanent owner access • subscription exempt',
                       textAlign: TextAlign.center,
