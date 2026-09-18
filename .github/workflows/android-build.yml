@@ -4,6 +4,8 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    paths:
+      - 'ci/payload/**'
 
 permissions:
   contents: read
@@ -112,4 +114,4 @@ jobs:
           path: |
             dist/JARVIS-debug.apk
             dist/JARVIS-debug.apk.sha256
-          retention-days: 30
+          retention-days: 7
