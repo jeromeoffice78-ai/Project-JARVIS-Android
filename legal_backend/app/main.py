@@ -80,6 +80,10 @@ PHONE_GATEWAY_URL = os.getenv(
     "https://idpneeyysraraznqmiio.supabase.co/functions/v1/jarvis-phone-gateway",
 ).strip()
 PHONE_WEBHOOK_SECRET = os.getenv("OPENAI_WEBHOOK_SECRET", "").strip()
+PHONE_WEBHOOK_URL = os.getenv(
+    "JARVIS_PHONE_WEBHOOK_URL",
+    "https://jarvis-legal-enterprise-api.onrender.com/v1/phone/openai-webhook",
+).strip()
 RECEPTIONIST_NUMBER = os.getenv("JARVIS_RECEPTIONIST_NUMBER", "").strip()
 ACTIVE_PHONE_CALLS: dict[str, dict[str, object]] = {}
 PHONE_CALL_TASKS: set[asyncio.Task[None]] = set()
@@ -261,6 +265,11 @@ async def lifespan(app: FastAPI):
     app.state.ai_provider = provider
     app.state.ai_model = model
     app.state.frontier_openai = frontier_client
+    app.state.phone_webhook_secret = PHONE_WEBHOOK_SECRET
+    app.state.phone_webhook_id = ""
+    app.state.phone_webhook_provision_task = asyncio.create_task(
+        _delayed_phone_webhook_provision()
+    )
 
     yield
 
@@ -442,6 +451,104 @@ async def _phone_gateway_call(
         raise RuntimeError(detail or f"Phone gateway HTTP {response.status_code}.")
 
     return data if isinstance(data, dict) else {}
+
+
+
+
+def _phone_webhook_secret() -> str:
+    runtime = str(
+        getattr(app.state, "phone_webhook_secret", "") or ""
+    ).strip()
+    return runtime or PHONE_WEBHOOK_SECRET
+
+
+async def _ensure_phone_webhook_configured() -> bool:
+    if _phone_webhook_secret():
+        return True
+
+    try:
+        stored = await _phone_gateway_call(
+            "get_config",
+            key="openai_webhook_secret",
+        )
+        stored_secret = str(stored.get("value", "") or "").strip()
+        if stored_secret:
+            app.state.phone_webhook_secret = stored_secret
+            webhook_id = await _phone_gateway_call(
+                "get_config",
+                key="openai_webhook_id",
+            )
+            app.state.phone_webhook_id = str(
+                webhook_id.get("value", "") or ""
+            ).strip()
+            return True
+    except Exception:
+        pass
+
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key or not PHONE_WEBHOOK_URL:
+        return False
+
+    def provision() -> tuple[str, str]:
+        client = OpenAI(api_key=api_key)
+        page = client.webhooks.list()
+        existing = None
+        for endpoint in getattr(page, "data", []) or []:
+            if str(getattr(endpoint, "url", "") or "").strip() == PHONE_WEBHOOK_URL:
+                existing = endpoint
+                break
+
+        if existing is not None:
+            result = client.webhooks.rotate_secret(
+                str(existing.id),
+                keep_old_secret_active_for_24_hours=True,
+            )
+        else:
+            result = client.webhooks.create(
+                event_types=["realtime.call.incoming"],
+                name="JARVIS Cellular Receptionist",
+                url=PHONE_WEBHOOK_URL,
+            )
+
+        secret = str(
+            getattr(result, "signing_secret", "") or ""
+        ).strip()
+        webhook_id = str(
+            getattr(result, "id", "") or ""
+        ).strip()
+
+        if not secret or not webhook_id:
+            raise RuntimeError(
+                "OpenAI returned no usable webhook secret."
+            )
+
+        return webhook_id, secret
+
+    try:
+        webhook_id, secret = await asyncio.to_thread(provision)
+        await _phone_gateway_call(
+            "set_config",
+            key="openai_webhook_secret",
+            value=secret,
+        )
+        await _phone_gateway_call(
+            "set_config",
+            key="openai_webhook_id",
+            value=webhook_id,
+        )
+        app.state.phone_webhook_secret = secret
+        app.state.phone_webhook_id = webhook_id
+        return True
+    except Exception as exc:
+        app.state.phone_webhook_provision_error = (
+            f"{type(exc).__name__}: {exc}"[:1000]
+        )
+        return False
+
+
+async def _delayed_phone_webhook_provision() -> None:
+    await asyncio.sleep(3)
+    await _ensure_phone_webhook_configured()
 
 
 async def _summarize_phone_call(
@@ -762,10 +869,11 @@ async def phone_receptionist_status(
     authenticated_role: Annotated[str, Depends(authenticate_request)],
 ) -> PhoneReceptionistStatus:
     del authenticated_role
+    configured = await _ensure_phone_webhook_configured()
     return PhoneReceptionistStatus(
         configured=bool(
             os.getenv("OPENAI_API_KEY", "").strip()
-            and PHONE_WEBHOOK_SECRET
+            and configured
         ),
         provider="openai_sip",
         phone_number=RECEPTIONIST_NUMBER,
@@ -791,17 +899,22 @@ async def phone_receptionist_messages(
 
 @app.post("/v1/phone/openai-webhook", include_in_schema=False)
 async def openai_phone_webhook(request: Request) -> dict[str, bool]:
-    if not PHONE_WEBHOOK_SECRET:
+    secret = _phone_webhook_secret()
+    if not secret:
+        await _ensure_phone_webhook_configured()
+        secret = _phone_webhook_secret()
+
+    if not secret:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="OPENAI_WEBHOOK_SECRET is not configured.",
+            detail="OpenAI phone webhook is not configured.",
         )
 
     raw = await request.body()
     try:
         verifier = OpenAI(
             api_key=os.getenv("OPENAI_API_KEY", "").strip() or "webhook-verification-only",
-            webhook_secret=PHONE_WEBHOOK_SECRET,
+            webhook_secret=secret,
         )
         event = verifier.webhooks.unwrap(
             raw,
