@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -151,6 +153,9 @@ class JarvisCloudDeviceNetwork
   static const String _deviceIdKey =
       'jarvis.print.device_id';
 
+  static const MethodChannel _relayChannel =
+      MethodChannel('jarvis.cloud_relay');
+
   static const Set<String> _allowedActions =
       <String>{
     'ping',
@@ -194,6 +199,7 @@ class JarvisCloudDeviceNetwork
   bool _refreshing = false;
   bool _foreground = true;
   bool _activeAvatar = false;
+  bool _nativeRelayStarted = false;
 
   Stream<JarvisCloudDeviceState> get stateStream =>
       _stateController.stream;
@@ -203,6 +209,11 @@ class JarvisCloudDeviceNetwork
   bool get isConfigured =>
       _config.clientToken.trim().isNotEmpty &&
       _config.deviceGatewayUrl.trim().isNotEmpty;
+
+  bool get _supportsNativeRelay =>
+      !kIsWeb &&
+      defaultTargetPlatform ==
+          TargetPlatform.android;
 
   Future<void> start() async {
     if (_started || _disposed) return;
@@ -224,6 +235,10 @@ class JarvisCloudDeviceNetwork
     );
 
     if (!isConfigured) return;
+
+    await _startNativeRelay(
+      polling: !_foreground,
+    );
 
     await refreshHeartbeat();
     await refreshDevices();
@@ -256,6 +271,101 @@ class JarvisCloudDeviceNetwork
     );
     if (isConfigured) {
       unawaited(refreshHeartbeat());
+      unawaited(
+        _setNativeRelayPolling(
+          !_foreground,
+        ),
+      );
+    }
+  }
+
+  Future<void> _startNativeRelay({
+    required bool polling,
+  }) async {
+    if (!_supportsNativeRelay ||
+        !isConfigured ||
+        _state.deviceId.isEmpty) {
+      return;
+    }
+
+    try {
+      await _relayChannel.invokeMethod<bool>(
+        'start',
+        <String, dynamic>{
+          'gatewayUrl':
+              _config.deviceGatewayUrl,
+          'token': _config.clientToken,
+          'deviceId': _state.deviceId,
+          'deviceName':
+              _state.deviceName.isEmpty
+                  ? 'Jarvis Android'
+                  : _state.deviceName,
+          'polling': polling,
+        },
+      );
+      _nativeRelayStarted = true;
+    } on PlatformException catch (error) {
+      _emit(
+        _state.copyWith(
+          errorMessage:
+              'Background cloud relay could not start: ' +
+                  (error.message ??
+                      error.code),
+        ),
+      );
+    } on MissingPluginException {
+      // Non-Android/test builds keep using the
+      // foreground Dart polling path.
+    }
+  }
+
+  Future<void> _setNativeRelayPolling(
+    bool enabled,
+  ) async {
+    if (!_supportsNativeRelay ||
+        !_nativeRelayStarted) {
+      return;
+    }
+
+    try {
+      await _relayChannel.invokeMethod<bool>(
+        'setPolling',
+        <String, dynamic>{
+          'enabled': enabled,
+        },
+      );
+    } on Object {
+      // Foreground Dart polling remains available.
+    }
+  }
+
+  Future<Map<String, dynamic>>
+      nativeRelayStatus() async {
+    if (!_supportsNativeRelay) {
+      return const <String, dynamic>{
+        'running': false,
+        'polling': false,
+      };
+    }
+
+    try {
+      final Map<dynamic, dynamic>? raw =
+          await _relayChannel
+              .invokeMapMethod<dynamic, dynamic>(
+        'status',
+      );
+
+      return raw == null
+          ? const <String, dynamic>{
+              'running': false,
+              'polling': false,
+            }
+          : Map<String, dynamic>.from(raw);
+    } on Object {
+      return const <String, dynamic>{
+        'running': false,
+        'polling': false,
+      };
     }
   }
 
@@ -276,12 +386,13 @@ class JarvisCloudDeviceNetwork
                 ? 'Jarvis Android'
                 : _state.deviceName,
         'platform': 'android',
-        'app_version': '1.2.0',
+        'app_version': '1.3.0',
         'foreground': _foreground,
         'active_avatar': _activeAvatar,
         'capabilities':
             const <String, dynamic>{
           'cloud_commands': true,
+          'cloud_background_relay': true,
           'speech': true,
           'music': true,
           'camera_vision': true,
@@ -874,6 +985,16 @@ class JarvisCloudDeviceNetwork
     _heartbeatTimer?.cancel();
     _pollTimer?.cancel();
     _refreshTimer?.cancel();
+
+    // Leave the Android foreground relay active so
+    // safe cloud commands can still reach this device
+    // after the Flutter UI is backgrounded or detached.
+    if (_nativeRelayStarted) {
+      unawaited(
+        _setNativeRelayPolling(true),
+      );
+    }
+
     _client.close();
     await _stateController.close();
   }
