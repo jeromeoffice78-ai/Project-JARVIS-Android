@@ -2,7 +2,7 @@ name: JARVIS Legal Backend CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/jarvis-human-autonomous-avatar]
     paths:
       - 'legal_backend/**'
       - '.github/workflows/jarvis-legal-backend.yml'
