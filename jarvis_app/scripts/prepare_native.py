@@ -157,6 +157,26 @@ def patch_manifest() -> None:
 """
         text = text.replace("    </application>", alias + "    </application>", 1)
 
+    if "JarvisAccessibilityService" not in text:
+        accessibility_service = """\
+        <service
+            android:name=".JarvisAccessibilityService"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/jarvis_accessibility_service" />
+        </service>
+"""
+        text = text.replace(
+            "    </application>",
+            accessibility_service + "    </application>",
+            1,
+        )
+
     path.write_text(text, encoding="utf-8")
 
 
@@ -178,6 +198,8 @@ def patch_activity() -> None:
     main_activity = f"""package {package_name}
 
 import android.app.role.RoleManager
+import android.bluetooth.BluetoothManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -205,6 +227,7 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterFragmentActivity() {{
     private val phoneChannel = "jarvis.phone"
     private val printerChannel = "jarvis.printer"
+    private val controlChannel = "jarvis.system_control"
     private val prefsName = "jarvis_phone"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {{
@@ -292,6 +315,92 @@ class MainActivity : FlutterFragmentActivity() {{
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
+            controlChannel,
+        ).setMethodCallHandler {{ call, result ->
+            when (call.method) {{
+                "isAccessibilityEnabled" ->
+                    result.success(isAccessibilityEnabled())
+                "openAccessibilitySettings" -> {{
+                    startActivity(
+                        Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
+                    )
+                    result.success(true)
+                }}
+                "globalAction" -> {{
+                    val action = call.argument<String>("action")?.trim().orEmpty()
+                    val service = JarvisAccessibilityService.instance
+                    result.success(
+                        service?.performNamedGlobalAction(action) ?: false,
+                    )
+                }}
+                "tap" -> {{
+                    val x = call.argument<Double>("x") ?: -1.0
+                    val y = call.argument<Double>("y") ?: -1.0
+                    val service = JarvisAccessibilityService.instance
+                    result.success(
+                        service?.tap(x.toFloat(), y.toFloat()) ?: false,
+                    )
+                }}
+                "swipe" -> {{
+                    val startX = call.argument<Double>("startX") ?: -1.0
+                    val startY = call.argument<Double>("startY") ?: -1.0
+                    val endX = call.argument<Double>("endX") ?: -1.0
+                    val endY = call.argument<Double>("endY") ?: -1.0
+                    val durationMs =
+                        call.argument<Int>("durationMs") ?: 350
+                    val service = JarvisAccessibilityService.instance
+                    result.success(
+                        service?.swipe(
+                            startX.toFloat(),
+                            startY.toFloat(),
+                            endX.toFloat(),
+                            endY.toFloat(),
+                            durationMs.toLong(),
+                        ) ?: false,
+                    )
+                }}
+                "captureScreenshot" -> {{
+                    val service = JarvisAccessibilityService.instance
+                    if (service == null) {{
+                        result.error(
+                            "accessibility_disabled",
+                            "Enable Jarvis Accessibility Control first.",
+                            null,
+                        )
+                    }} else {{
+                        service.captureScreenshot(
+                            onSuccess = {{ encoded ->
+                                runOnUiThread {{
+                                    result.success(encoded)
+                                }}
+                            }},
+                            onError = {{ message ->
+                                runOnUiThread {{
+                                    result.error(
+                                        "screenshot_failed",
+                                        message,
+                                        null,
+                                    )
+                                }}
+                            }},
+                        )
+                    }}
+                }}
+                "listBondedBluetoothDevices" -> {{
+                    result.success(listBondedBluetoothDevices())
+                }}
+                "openBluetoothSettings" -> {{
+                    startActivity(
+                        Intent(Settings.ACTION_BLUETOOTH_SETTINGS),
+                    )
+                    result.success(true)
+                }}
+                else -> result.notImplemented()
+            }}
+        }}
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
             printerChannel,
         ).setMethodCallHandler {{ call, result ->
             when (call.method) {{
@@ -372,6 +481,47 @@ class MainActivity : FlutterFragmentActivity() {{
                 }}
                 else -> result.notImplemented()
             }}
+        }}
+    }}
+
+    private fun isAccessibilityEnabled(): Boolean {{
+        val expected = ComponentName(
+            this,
+            JarvisAccessibilityService::class.java,
+        ).flattenToString()
+
+        val enabled = Settings.Secure.getString(
+            contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+        ) ?: return false
+
+        return enabled
+            .split(':')
+            .any {{ it.equals(expected, ignoreCase = true) }}
+    }}
+
+    private fun listBondedBluetoothDevices(): List<Map<String, Any?>> {{
+        return try {{
+            val manager =
+                getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+            val adapter = manager.adapter ?: return emptyList()
+
+            adapter.bondedDevices.map {{ device ->
+                mapOf(
+                    "name" to (
+                        try {{
+                            device.name ?: "Bluetooth device"
+                        }} catch (_: SecurityException) {{
+                            "Bluetooth device"
+                        }}
+                    ),
+                    "address" to device.address,
+                    "type" to device.type,
+                    "bondState" to device.bondState,
+                )
+            }}
+        }} catch (_: SecurityException) {{
+            emptyList()
         }}
     }}
 
@@ -716,6 +866,232 @@ class JarvisInCallService : InCallService() {{
         manager.cancel(notificationId)
     }}
 }}
+""",
+        encoding="utf-8",
+    )
+
+
+    accessibility_path = path.parent / "JarvisAccessibilityService.kt"
+    accessibility_path.write_text(
+        f"""package {package_name}
+
+import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
+import android.graphics.Bitmap
+import android.graphics.Path
+import android.os.Build
+import android.util.Base64
+import android.view.Display
+import android.view.accessibility.AccessibilityEvent
+import java.io.ByteArrayOutputStream
+
+class JarvisAccessibilityService : AccessibilityService() {{
+    companion object {{
+        var instance: JarvisAccessibilityService? = null
+            private set
+    }}
+
+    override fun onServiceConnected() {{
+        super.onServiceConnected()
+        instance = this
+    }}
+
+    override fun onDestroy() {{
+        if (instance === this) {{
+            instance = null
+        }}
+        super.onDestroy()
+    }}
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {{
+        // Jarvis does not scrape accessibility events or credentials.
+    }}
+
+    override fun onInterrupt() {{
+        // No continuous accessibility feedback stream is used.
+    }}
+
+    fun captureScreenshot(
+        onSuccess: (String) -> Unit,
+        onError: (String) -> Unit,
+    ) {{
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {{
+            onError("Screen capture requires Android 11 or newer.")
+            return
+        }}
+
+        takeScreenshot(
+            Display.DEFAULT_DISPLAY,
+            mainExecutor,
+            object : TakeScreenshotCallback {{
+                override fun onSuccess(
+                    screenshot: ScreenshotResult,
+                ) {{
+                    val hardwareBuffer =
+                        screenshot.hardwareBuffer
+
+                    try {{
+                        val hardwareBitmap =
+                            Bitmap.wrapHardwareBuffer(
+                                hardwareBuffer,
+                                screenshot.colorSpace,
+                            )
+
+                        if (hardwareBitmap == null) {{
+                            onError(
+                                "Android returned no screenshot bitmap.",
+                            )
+                            return
+                        }}
+
+                        val softwareBitmap =
+                            hardwareBitmap.copy(
+                                Bitmap.Config.ARGB_8888,
+                                false,
+                            )
+
+                        if (softwareBitmap == null) {{
+                            onError(
+                                "Could not convert the screenshot.",
+                            )
+                            return
+                        }}
+
+                        val output =
+                            ByteArrayOutputStream()
+                        softwareBitmap.compress(
+                            Bitmap.CompressFormat.PNG,
+                            100,
+                            output,
+                        )
+                        softwareBitmap.recycle()
+
+                        onSuccess(
+                            Base64.encodeToString(
+                                output.toByteArray(),
+                                Base64.NO_WRAP,
+                            ),
+                        )
+                    }} catch (error: Throwable) {{
+                        onError(
+                            error.message
+                                ?: "Screen capture failed.",
+                        )
+                    }} finally {{
+                        hardwareBuffer.close()
+                    }}
+                }}
+
+                override fun onFailure(
+                    errorCode: Int,
+                ) {{
+                    onError(
+                        "Android screenshot failed with code $errorCode.",
+                    )
+                }}
+            }},
+        )
+    }}
+
+    fun performNamedGlobalAction(action: String): Boolean {{
+        val globalAction = when (action.lowercase()) {{
+            "back" -> GLOBAL_ACTION_BACK
+            "home" -> GLOBAL_ACTION_HOME
+            "recents" -> GLOBAL_ACTION_RECENTS
+            "notifications" -> GLOBAL_ACTION_NOTIFICATIONS
+            "quick_settings" -> GLOBAL_ACTION_QUICK_SETTINGS
+            else -> return false
+        }}
+
+        return performGlobalAction(globalAction)
+    }}
+
+    fun tap(x: Float, y: Float): Boolean {{
+        if (x < 0f || y < 0f) {{
+            return false
+        }}
+
+        val path = Path().apply {{
+            moveTo(x, y)
+        }}
+        val gesture = GestureDescription.Builder()
+            .addStroke(
+                GestureDescription.StrokeDescription(
+                    path,
+                    0,
+                    70,
+                ),
+            )
+            .build()
+
+        return dispatchGesture(
+            gesture,
+            null,
+            null,
+        )
+    }}
+
+    fun swipe(
+        startX: Float,
+        startY: Float,
+        endX: Float,
+        endY: Float,
+        durationMs: Long,
+    ): Boolean {{
+        if (
+            startX < 0f ||
+            startY < 0f ||
+            endX < 0f ||
+            endY < 0f
+        ) {{
+            return false
+        }}
+
+        val path = Path().apply {{
+            moveTo(startX, startY)
+            lineTo(endX, endY)
+        }}
+        val gesture = GestureDescription.Builder()
+            .addStroke(
+                GestureDescription.StrokeDescription(
+                    path,
+                    0,
+                    durationMs.coerceIn(100, 5000),
+                ),
+            )
+            .build()
+
+        return dispatchGesture(
+            gesture,
+            null,
+            null,
+        )
+    }}
+}}
+""",
+        encoding="utf-8",
+    )
+
+    accessibility_xml = (
+        ROOT
+        / "android"
+        / "app"
+        / "src"
+        / "main"
+        / "res"
+        / "xml"
+        / "jarvis_accessibility_service.xml"
+    )
+    accessibility_xml.parent.mkdir(parents=True, exist_ok=True)
+    accessibility_xml.write_text(
+        """<?xml version="1.0" encoding="utf-8"?>
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:notificationTimeout="100"
+    android:canPerformGestures="true"
+    android:canRetrieveWindowContent="false"
+    android:description="@string/app_name" />
 """,
         encoding="utf-8",
     )

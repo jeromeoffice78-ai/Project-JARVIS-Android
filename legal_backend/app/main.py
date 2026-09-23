@@ -5,7 +5,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, status
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
@@ -13,6 +13,8 @@ from .auth_google import auth_ready, issue_session, verify_google_chairman, veri
 
 APP_NAME = "JARVIS Legal Enterprise API"
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-sol").strip() or "gpt-5.6-sol"
+FRONTIER_MODEL = os.getenv("JARVIS_FRONTIER_MODEL", "gpt-5.6-sol").strip() or "gpt-5.6-sol"
+IMAGE_MODEL = os.getenv("JARVIS_IMAGE_MODEL", "gpt-image-2.5-sunburst").strip() or "gpt-image-2.5-sunburst"
 GATEWAY_MODEL = os.getenv("AI_GATEWAY_MODEL", f"openai/{OPENAI_MODEL}").strip() or f"openai/{OPENAI_MODEL}"
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip() or "llama-3.3-70b-versatile"
 CHAIRMAN_TOKEN = os.getenv("JARVIS_CHAIRMAN_TOKEN", "").strip()
@@ -88,6 +90,28 @@ class HealthResponse(BaseModel):
     client_auth_configured: bool
 
 
+class FrontierQueryRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=40_000)
+    mode: str = Field(default="reason", min_length=1, max_length=32)
+    image_base64: str | None = Field(default=None, max_length=20_000_000)
+
+
+class FrontierQueryResponse(BaseModel):
+    answer: str
+    model: str
+    mode: str
+    sources: list[dict[str, str]] = Field(default_factory=list)
+
+
+class FrontierImageRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=20_000)
+
+
+class FrontierImageResponse(BaseModel):
+    image_base64: str
+    model: str
+
+
 def _build_ai_client() -> tuple[AsyncOpenAI | None, str, str]:
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
     if groq_key:
@@ -124,12 +148,20 @@ def _build_ai_client() -> tuple[AsyncOpenAI | None, str, str]:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     client, provider, model = _build_ai_client()
+    frontier_key = os.getenv("OPENAI_API_KEY", "").strip()
+    frontier_client = AsyncOpenAI(api_key=frontier_key) if frontier_key else None
+
     app.state.openai = client
     app.state.ai_provider = provider
     app.state.ai_model = model
+    app.state.frontier_openai = frontier_client
+
     yield
+
     if client is not None:
         await client.close()
+    if frontier_client is not None and frontier_client is not client:
+        await frontier_client.close()
 
 
 app = FastAPI(title=APP_NAME, version="1.3.0", lifespan=lifespan)
@@ -180,6 +212,27 @@ def _role_context(role: str) -> str:
             "Chairman, 100% owner, final enterprise authority, and subscription-exempt owner."
         )
     return "Authenticated application role: client."
+
+
+def _extract_web_sources(response: object) -> list[dict[str, str]]:
+    sources: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    for item in getattr(response, "output", []) or []:
+        if getattr(item, "type", "") != "message":
+            continue
+        for content_item in getattr(item, "content", []) or []:
+            for annotation in getattr(content_item, "annotations", []) or []:
+                if getattr(annotation, "type", "") != "url_citation":
+                    continue
+                url = str(getattr(annotation, "url", "") or "").strip()
+                title = str(getattr(annotation, "title", "") or "").strip()
+                if not url or url in seen:
+                    continue
+                seen.add(url)
+                sources.append({"title": title or url, "url": url})
+
+    return sources
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -238,6 +291,232 @@ async def auth_check(
     return AuthCheckResponse(
         authenticated=True,
         role=authenticated_role,
+    )
+
+
+@app.post("/v1/frontier/query", response_model=FrontierQueryResponse)
+async def frontier_query(
+    payload: FrontierQueryRequest,
+    authenticated_role: Annotated[str, Depends(authenticate_request)],
+) -> FrontierQueryResponse:
+    client: AsyncOpenAI | None = getattr(app.state, "frontier_openai", None)
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Frontier AI requires OPENAI_API_KEY on the server.",
+        )
+
+    mode = payload.mode.strip().lower()
+    if mode not in {"reason", "research", "code"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported frontier mode.",
+        )
+
+    tools: list[dict[str, object]] = []
+    reasoning_effort = "high"
+
+    if mode == "research":
+        tools = [{"type": "web_search"}]
+        reasoning_effort = "xhigh"
+    elif mode == "code":
+        tools = [
+            {
+                "type": "code_interpreter",
+                "container": {"type": "auto"},
+            }
+        ]
+        reasoning_effort = "high"
+
+    instructions = (
+        "You are JARVIS Frontier Core. Work as one unified assistant. "
+        "Be precise, verify results, state limitations, and do not claim a tool "
+        "succeeded unless its result confirms success. "
+        f"Authenticated application role: {authenticated_role}."
+    )
+
+    input_payload: object = payload.prompt.strip()
+    if payload.image_base64:
+        input_payload = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": payload.prompt.strip(),
+                    },
+                    {
+                        "type": "input_image",
+                        "image_url": (
+                            "data:image/png;base64,"
+                            + payload.image_base64.strip()
+                        ),
+                    },
+                ],
+            }
+        ]
+
+    request_kwargs: dict[str, object] = {
+        "model": FRONTIER_MODEL,
+        "instructions": instructions,
+        "input": input_payload,
+        "reasoning": {"effort": reasoning_effort},
+    }
+    if tools:
+        request_kwargs["tools"] = tools
+
+    try:
+        response = await client.responses.create(**request_kwargs)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Frontier AI request failed: {type(exc).__name__}",
+        ) from exc
+
+    answer = (response.output_text or "").strip()
+    if not answer:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Frontier AI returned no usable text output.",
+        )
+
+    return FrontierQueryResponse(
+        answer=answer,
+        model=FRONTIER_MODEL,
+        mode=mode,
+        sources=_extract_web_sources(response) if mode == "research" else [],
+    )
+
+
+@app.post("/v1/frontier/file", response_model=FrontierQueryResponse)
+async def frontier_file(
+    document: UploadFile = File(...),
+    prompt: str = Form(default="Analyze this file and summarize the important information."),
+    authenticated_role: Annotated[str, Depends(authenticate_request)] = "client",
+) -> FrontierQueryResponse:
+    client: AsyncOpenAI | None = getattr(app.state, "frontier_openai", None)
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Document intelligence requires OPENAI_API_KEY on the server.",
+        )
+
+    filename = (document.filename or "document").strip()[:255] or "document"
+    data = await document.read()
+    if not data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The selected file is empty.",
+        )
+    if len(data) > 50 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Files must be 50 MB or smaller.",
+        )
+
+    uploaded = None
+    try:
+        uploaded = await client.files.create(
+            file=(
+                filename,
+                data,
+                document.content_type or "application/octet-stream",
+            ),
+            purpose="user_data",
+        )
+
+        response = await client.responses.create(
+            model=FRONTIER_MODEL,
+            instructions=(
+                "You are JARVIS Document Intelligence. Analyze the supplied file "
+                "carefully. Distinguish what is in the file from your own analysis. "
+                "Do not invent missing text, tables, signatures, dates, or figures. "
+                f"Authenticated application role: {authenticated_role}."
+            ),
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_file",
+                            "file_id": uploaded.id,
+                        },
+                        {
+                            "type": "input_text",
+                            "text": prompt.strip()
+                            or "Analyze this file and summarize the important information.",
+                        },
+                    ],
+                }
+            ],
+            reasoning={"effort": "high"},
+        )
+
+        answer = (response.output_text or "").strip()
+        if not answer:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Document intelligence returned no usable output.",
+            )
+
+        return FrontierQueryResponse(
+            answer=answer,
+            model=FRONTIER_MODEL,
+            mode="file",
+            sources=[],
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Document intelligence failed: {type(exc).__name__}",
+        ) from exc
+    finally:
+        if uploaded is not None:
+            try:
+                await client.files.delete(uploaded.id)
+            except Exception:
+                pass
+
+
+@app.post("/v1/frontier/image", response_model=FrontierImageResponse)
+async def frontier_image(
+    payload: FrontierImageRequest,
+    authenticated_role: Annotated[str, Depends(authenticate_request)],
+) -> FrontierImageResponse:
+    del authenticated_role
+
+    client: AsyncOpenAI | None = getattr(app.state, "frontier_openai", None)
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Image generation requires OPENAI_API_KEY on the server.",
+        )
+
+    try:
+        image_result = await client.images.generate(
+            model=IMAGE_MODEL,
+            prompt=payload.prompt.strip(),
+            size="1024x1024",
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Image generation failed: {type(exc).__name__}",
+        ) from exc
+
+    data = getattr(image_result, "data", None) or []
+    image_base64 = str(getattr(data[0], "b64_json", "") or "") if data else ""
+    if not image_base64:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Image generation returned no image data.",
+        )
+
+    return FrontierImageResponse(
+        image_base64=image_base64,
+        model=IMAGE_MODEL,
     )
 
 

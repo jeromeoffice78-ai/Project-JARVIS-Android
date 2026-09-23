@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/network/providers.dart';
 import '../phone/jarvis_phone_screen.dart';
 import '../printer/jarvis_printer_screen.dart';
+import '../system_control/jarvis_screen_control_screen.dart';
 import 'jarvis_bluetooth_manager.dart';
 
 class JarvisDevicesScreen
@@ -241,6 +242,30 @@ class _JarvisDevicesScreenState
                   builder:
                       (BuildContext context) =>
                           const JarvisPrinterScreen(),
+                ),
+              );
+            },
+          ),
+        ),
+        Card(
+          child: ListTile(
+            leading: const Icon(
+              Icons.touch_app_outlined,
+            ),
+            title: const Text(
+              'Screen & App Control',
+            ),
+            subtitle: const Text(
+              'Android Accessibility controls, global navigation actions, gestures, and bonded Classic Bluetooth devices.',
+            ),
+            trailing:
+                const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder:
+                      (BuildContext context) =>
+                          const JarvisScreenControlScreen(),
                 ),
               );
             },

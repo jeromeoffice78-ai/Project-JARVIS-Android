@@ -5,6 +5,30 @@ import 'package:http/http.dart' as http;
 import '../config/jarvis_config.dart';
 import '../../features/people/person_profile.dart';
 
+class JarvisFrontierResult {
+  const JarvisFrontierResult({
+    required this.answer,
+    required this.model,
+    required this.mode,
+    required this.sources,
+  });
+
+  final String answer;
+  final String model;
+  final String mode;
+  final List<Map<String, String>> sources;
+}
+
+class JarvisGeneratedImage {
+  const JarvisGeneratedImage({
+    required this.base64,
+    required this.model,
+  });
+
+  final String base64;
+  final String model;
+}
+
 class JarvisApiService {
   JarvisApiService({
     required JarvisConfig config,
@@ -37,6 +61,184 @@ class JarvisApiService {
 
     return Map<String, dynamic>.from(decoded);
   }
+
+  Future<JarvisFrontierResult> frontierQuery({
+    required String prompt,
+    required String mode,
+    String? imageBase64,
+  }) async {
+    final response = await _client.post(
+      Uri.parse(
+        '${_config.httpBaseUrl}/v1/frontier/query',
+      ),
+      headers: _headers,
+      body: jsonEncode(<String, dynamic>{
+        'prompt': prompt,
+        'mode': mode,
+        if (imageBase64 != null &&
+            imageBase64.isNotEmpty)
+          'image_base64': imageBase64,
+      }),
+    );
+
+    final Object? decoded = jsonDecode(response.body);
+    if (response.statusCode != 200) {
+      final String detail = decoded is Map
+          ? decoded['detail']?.toString() ??
+              'Frontier request failed.'
+          : 'Frontier request failed.';
+      throw StateError(
+        'Frontier request failed: $detail',
+      );
+    }
+
+    if (decoded is! Map) {
+      throw const FormatException(
+        'Invalid frontier response.',
+      );
+    }
+
+    final Map<String, dynamic> data =
+        Map<String, dynamic>.from(decoded);
+
+    final Object? rawSources = data['sources'];
+    final List<Map<String, String>> sources =
+        rawSources is List
+            ? rawSources
+                .whereType<Map>()
+                .map(
+                  (Map raw) =>
+                      <String, String>{
+                    'title':
+                        raw['title']
+                                ?.toString() ??
+                            '',
+                    'url':
+                        raw['url']?.toString() ??
+                            '',
+                  },
+                )
+                .where(
+                  (Map<String, String> item) =>
+                      item['url']!.isNotEmpty,
+                )
+                .toList(growable: false)
+            : const <Map<String, String>>[];
+
+    return JarvisFrontierResult(
+      answer: data['answer']?.toString() ?? '',
+      model: data['model']?.toString() ?? '',
+      mode: data['mode']?.toString() ?? mode,
+      sources: sources,
+    );
+  }
+
+  Future<JarvisFrontierResult> analyzeFile({
+    required List<int> bytes,
+    required String filename,
+    required String prompt,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse(
+        '${_config.httpBaseUrl}/v1/frontier/file',
+      ),
+    );
+
+    if (_config.clientToken.isNotEmpty) {
+      request.headers['Authorization'] =
+          'Bearer ${_config.clientToken}';
+    }
+
+    request.fields['prompt'] = prompt;
+    request.files.add(
+      http.MultipartFile.fromBytes(
+        'document',
+        bytes,
+        filename: filename,
+      ),
+    );
+
+    final streamed = await _client.send(request);
+    final String body =
+        await streamed.stream.bytesToString();
+
+    final Object? decoded = jsonDecode(body);
+    if (streamed.statusCode != 200) {
+      final String detail = decoded is Map
+          ? decoded['detail']?.toString() ??
+              'Document analysis failed.'
+          : 'Document analysis failed.';
+      throw StateError(
+        'Document analysis failed: $detail',
+      );
+    }
+
+    if (decoded is! Map) {
+      throw const FormatException(
+        'Invalid document analysis response.',
+      );
+    }
+
+    final Map<String, dynamic> data =
+        Map<String, dynamic>.from(decoded);
+
+    return JarvisFrontierResult(
+      answer: data['answer']?.toString() ?? '',
+      model: data['model']?.toString() ?? '',
+      mode: data['mode']?.toString() ?? 'file',
+      sources: const <Map<String, String>>[],
+    );
+  }
+
+
+  Future<JarvisGeneratedImage> generateImage(
+    String prompt,
+  ) async {
+    final response = await _client.post(
+      Uri.parse(
+        '${_config.httpBaseUrl}/v1/frontier/image',
+      ),
+      headers: _headers,
+      body: jsonEncode(<String, dynamic>{
+        'prompt': prompt,
+      }),
+    );
+
+    final Object? decoded = jsonDecode(response.body);
+    if (response.statusCode != 200) {
+      final String detail = decoded is Map
+          ? decoded['detail']?.toString() ??
+              'Image generation failed.'
+          : 'Image generation failed.';
+      throw StateError(
+        'Image generation failed: $detail',
+      );
+    }
+
+    if (decoded is! Map) {
+      throw const FormatException(
+        'Invalid image generation response.',
+      );
+    }
+
+    final Map<String, dynamic> data =
+        Map<String, dynamic>.from(decoded);
+
+    final String base64 =
+        data['image_base64']?.toString() ?? '';
+    if (base64.isEmpty) {
+      throw const FormatException(
+        'Image generation returned no image.',
+      );
+    }
+
+    return JarvisGeneratedImage(
+      base64: base64,
+      model: data['model']?.toString() ?? '',
+    );
+  }
+
 
   Future<String> saveMemory({
     required String text,

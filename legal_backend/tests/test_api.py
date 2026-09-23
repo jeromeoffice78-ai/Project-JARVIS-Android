@@ -151,3 +151,193 @@ def test_auth_check_accepts_chairman_session():
         payload = response.json()
         assert payload["authenticated"] is True
         assert payload["role"] == "chairman"
+
+
+class _FakeFrontierResponses:
+    def __init__(self):
+        self.calls = []
+
+    async def create(self, **kwargs):
+        self.calls.append(kwargs)
+        mode = "reason"
+        tools = kwargs.get("tools") or []
+        if tools and tools[0].get("type") == "web_search":
+            mode = "research"
+        elif tools and tools[0].get("type") == "code_interpreter":
+            mode = "code"
+
+        annotation = SimpleNamespace(
+            type="url_citation",
+            url="https://example.com/source",
+            title="Example Source",
+        )
+        content = SimpleNamespace(
+            annotations=[annotation] if mode == "research" else []
+        )
+        message = SimpleNamespace(
+            type="message",
+            content=[content],
+        )
+        return SimpleNamespace(
+            output_text=f"Frontier {mode} result.",
+            output=[message],
+        )
+
+
+class _FakeImages:
+    async def generate(self, **kwargs):
+        assert kwargs["model"] == api.IMAGE_MODEL
+        assert kwargs["size"] == "1024x1024"
+        return SimpleNamespace(
+            data=[SimpleNamespace(b64_json="ZmFrZS1pbWFnZQ==")]
+        )
+
+
+class _FakeFiles:
+    def __init__(self):
+        self.created = []
+        self.deleted = []
+
+    async def create(self, **kwargs):
+        self.created.append(kwargs)
+        return SimpleNamespace(id="file-test-123")
+
+    async def delete(self, file_id):
+        self.deleted.append(file_id)
+        return SimpleNamespace(id=file_id, deleted=True)
+
+
+class _FakeFrontierOpenAI:
+    def __init__(self):
+        self.responses = _FakeFrontierResponses()
+        self.images = _FakeImages()
+        self.files = _FakeFiles()
+
+    async def close(self):
+        return None
+
+
+def test_frontier_reason_uses_gpt_56_sol_without_tools():
+    with TestClient(api.app) as client:
+        fake = _FakeFrontierOpenAI()
+        api.app.state.frontier_openai = fake
+        response = client.post(
+            "/v1/frontier/query",
+            headers={"Authorization": "Bearer test-client-token"},
+            json={"prompt": "Solve this carefully.", "mode": "reason"},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["mode"] == "reason"
+        assert payload["model"] == api.FRONTIER_MODEL
+        assert payload["sources"] == []
+        call = fake.responses.calls[-1]
+        assert call["model"] == api.FRONTIER_MODEL
+        assert "tools" not in call
+        assert call["reasoning"]["effort"] == "high"
+
+
+def test_frontier_research_enables_web_search_and_returns_sources():
+    with TestClient(api.app) as client:
+        fake = _FakeFrontierOpenAI()
+        api.app.state.frontier_openai = fake
+        response = client.post(
+            "/v1/frontier/query",
+            headers={"Authorization": "Bearer test-client-token"},
+            json={"prompt": "Research current information.", "mode": "research"},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["mode"] == "research"
+        assert payload["sources"][0]["url"] == "https://example.com/source"
+        call = fake.responses.calls[-1]
+        assert call["tools"] == [{"type": "web_search"}]
+        assert call["reasoning"]["effort"] == "xhigh"
+
+
+def test_frontier_code_enables_sandboxed_code_interpreter():
+    with TestClient(api.app) as client:
+        fake = _FakeFrontierOpenAI()
+        api.app.state.frontier_openai = fake
+        response = client.post(
+            "/v1/frontier/query",
+            headers={"Authorization": "Bearer test-client-token"},
+            json={"prompt": "Use Python to solve it.", "mode": "code"},
+        )
+
+        assert response.status_code == 200
+        call = fake.responses.calls[-1]
+        assert call["tools"] == [
+            {
+                "type": "code_interpreter",
+                "container": {"type": "auto"},
+            }
+        ]
+
+
+def test_frontier_image_returns_base64_image():
+    with TestClient(api.app) as client:
+        api.app.state.frontier_openai = _FakeFrontierOpenAI()
+        response = client.post(
+            "/v1/frontier/image",
+            headers={"Authorization": "Bearer test-client-token"},
+            json={"prompt": "Create a blue futuristic robot."},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["image_base64"] == "ZmFrZS1pbWFnZQ=="
+        assert payload["model"] == api.IMAGE_MODEL
+
+
+def test_frontier_reason_accepts_screen_image():
+    with TestClient(api.app) as client:
+        fake = _FakeFrontierOpenAI()
+        api.app.state.frontier_openai = fake
+        response = client.post(
+            "/v1/frontier/query",
+            headers={"Authorization": "Bearer test-client-token"},
+            json={
+                "prompt": "Analyze this screen.",
+                "mode": "reason",
+                "image_base64": "ZmFrZS1wbmc=",
+            },
+        )
+
+        assert response.status_code == 200
+        call = fake.responses.calls[-1]
+        assert isinstance(call["input"], list)
+        content = call["input"][0]["content"]
+        assert content[0]["type"] == "input_text"
+        assert content[1]["type"] == "input_image"
+        assert content[1]["image_url"].startswith("data:image/png;base64,")
+
+
+def test_frontier_file_upload_is_analyzed_and_deleted():
+    with TestClient(api.app) as client:
+        fake = _FakeFrontierOpenAI()
+        api.app.state.frontier_openai = fake
+        response = client.post(
+            "/v1/frontier/file",
+            headers={"Authorization": "Bearer test-client-token"},
+            data={"prompt": "Summarize this document."},
+            files={
+                "document": (
+                    "example.txt",
+                    b"Important document content.",
+                    "text/plain",
+                )
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["mode"] == "file"
+        assert fake.files.created
+        assert fake.files.created[-1]["purpose"] == "user_data"
+        assert fake.files.deleted == ["file-test-123"]
+        call = fake.responses.calls[-1]
+        assert call["input"][0]["content"][0]["type"] == "input_file"
+        assert call["input"][0]["content"][0]["file_id"] == "file-test-123"

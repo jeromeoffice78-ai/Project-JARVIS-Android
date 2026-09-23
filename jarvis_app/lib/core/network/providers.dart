@@ -10,6 +10,7 @@ import '../../features/devices/jarvis_bluetooth_manager.dart';
 import '../../features/phone/jarvis_phone_service.dart';
 import '../../features/printer/jarvis_printer_service.dart';
 import '../../features/printer/jarvis_print_router.dart';
+import '../../features/system_control/jarvis_system_control_service.dart';
 import '../../features/vision/jarvis_vision_service.dart';
 import '../../features/voice/jarvis_voice_controller.dart';
 import '../../features/voice/jarvis_voice_service.dart';
@@ -130,6 +131,13 @@ final jarvisPrintRouterProvider =
 
   return router;
 });
+
+final jarvisSystemControlServiceProvider =
+    Provider<JarvisSystemControlService>(
+  (Ref ref) {
+    return JarvisSystemControlService();
+  },
+);
 
 final jarvisChatControllerProvider =
     Provider<JarvisChatController>((Ref ref) {
