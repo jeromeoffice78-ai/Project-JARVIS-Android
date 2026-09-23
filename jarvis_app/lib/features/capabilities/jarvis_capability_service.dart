@@ -13,6 +13,7 @@ import 'package:timezone/timezone.dart' as tz;
 import 'package:url_launcher/url_launcher.dart';
 
 import 'jarvis_action_approval_service.dart';
+import '../devices/jarvis_cloud_device_network.dart';
 import '../printer/jarvis_print_router.dart';
 
 class JarvisCapabilityResult {
@@ -31,9 +32,11 @@ class JarvisCapabilityService {
   JarvisCapabilityService({
     required JarvisActionApprovalService approvalService,
     required JarvisPrintRouter printRouter,
+    required JarvisCloudDeviceNetwork deviceNetwork,
     http.Client? httpClient,
   })  : _approvalService = approvalService,
         _printRouter = printRouter,
+        _deviceNetwork = deviceNetwork,
         _httpClient = httpClient ?? http.Client() {
     tz_data.initializeTimeZones();
   }
@@ -43,6 +46,7 @@ class JarvisCapabilityService {
 
   final JarvisActionApprovalService _approvalService;
   final JarvisPrintRouter _printRouter;
+  final JarvisCloudDeviceNetwork _deviceNetwork;
   final http.Client _httpClient;
   final DeviceCalendarPlugin _calendar =
       DeviceCalendarPlugin();
@@ -95,6 +99,24 @@ class JarvisCapabilityService {
 
         case 'create_and_print_document':
           return _createAndPrintDocument(parameters);
+
+        case 'list_cloud_devices':
+          return _listCloudDevices();
+
+        case 'send_cloud_device_command':
+          return _sendCloudDeviceCommand(
+            parameters,
+          );
+
+        case 'broadcast_cloud_device_command':
+          return _broadcastCloudDeviceCommand(
+            parameters,
+          );
+
+        case 'handoff_jarvis_device':
+          return _handoffJarvisDevice(
+            parameters,
+          );
 
         default:
           return JarvisCapabilityResult(
@@ -776,6 +798,256 @@ class JarvisCapabilityService {
             'Jarvis could not route the document to an available printer: $error',
       );
     }
+  }
+
+  Future<JarvisCapabilityResult>
+      _listCloudDevices() async {
+    await _deviceNetwork.refreshDevices();
+
+    final List<Map<String, dynamic>> devices =
+        _deviceNetwork.state.devices
+            .map(
+              (JarvisCloudDevice device) =>
+                  <String, dynamic>{
+                'device_id': device.deviceId,
+                'device_name':
+                    device.deviceName,
+                'online': device.online,
+                'foreground':
+                    device.foreground,
+                'active_avatar':
+                    device.activeAvatar,
+                'capabilities':
+                    device.capabilities,
+              },
+            )
+            .toList(growable: false);
+
+    return JarvisCapabilityResult(
+      ok: true,
+      result: <String, dynamic>{
+        'this_device_id':
+            _deviceNetwork.state.deviceId,
+        'devices': devices,
+      },
+    );
+  }
+
+  Future<JarvisCapabilityResult>
+      _sendCloudDeviceCommand(
+    Map<String, dynamic> parameters,
+  ) async {
+    final JarvisCloudDevice? target =
+        await _resolveCloudDevice(
+      parameters,
+    );
+
+    if (target == null) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error:
+            'No unique online Jarvis device matched the requested target.',
+      );
+    }
+
+    final String action =
+        parameters['action']
+                ?.toString()
+                .trim() ??
+            '';
+
+    final Map<String, dynamic> commandParams =
+        parameters['parameters'] is Map
+            ? Map<String, dynamic>.from(
+                parameters['parameters'] as Map,
+              )
+            : const <String, dynamic>{};
+
+    if (action.isEmpty) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error:
+            'Cloud device command action is empty.',
+      );
+    }
+
+    final String commandId =
+        await _deviceNetwork.sendCommand(
+      targetDeviceId: target.deviceId,
+      action: action,
+      parameters: commandParams,
+    );
+
+    return JarvisCapabilityResult(
+      ok: commandId.isNotEmpty,
+      result: <String, dynamic>{
+        'command_id': commandId,
+        'target_device_id':
+            target.deviceId,
+        'target_device_name':
+            target.deviceName,
+        'action': action,
+        'status': 'queued',
+      },
+      error: commandId.isEmpty
+          ? 'Cloud command could not be queued.'
+          : null,
+    );
+  }
+
+  Future<JarvisCapabilityResult>
+      _broadcastCloudDeviceCommand(
+    Map<String, dynamic> parameters,
+  ) async {
+    final String action =
+        parameters['action']
+                ?.toString()
+                .trim() ??
+            '';
+
+    final Map<String, dynamic> commandParams =
+        parameters['parameters'] is Map
+            ? Map<String, dynamic>.from(
+                parameters['parameters'] as Map,
+              )
+            : const <String, dynamic>{};
+
+    if (action.isEmpty) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error:
+            'Cloud broadcast action is empty.',
+      );
+    }
+
+    final List<String> ids =
+        await _deviceNetwork.broadcastCommand(
+      action: action,
+      parameters: commandParams,
+    );
+
+    return JarvisCapabilityResult(
+      ok: true,
+      result: <String, dynamic>{
+        'action': action,
+        'command_ids': ids,
+        'queued_count': ids.length,
+      },
+    );
+  }
+
+  Future<JarvisCapabilityResult>
+      _handoffJarvisDevice(
+    Map<String, dynamic> parameters,
+  ) async {
+    final JarvisCloudDevice? target =
+        await _resolveCloudDevice(
+      parameters,
+    );
+
+    if (target == null) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error:
+            'No unique online Jarvis device matched the requested handoff target.',
+      );
+    }
+
+    final String commandId =
+        await _deviceNetwork.handoffJarvisTo(
+      target.deviceId,
+    );
+
+    return JarvisCapabilityResult(
+      ok: commandId.isNotEmpty,
+      result: <String, dynamic>{
+        'command_id': commandId,
+        'target_device_id':
+            target.deviceId,
+        'target_device_name':
+            target.deviceName,
+        'status': 'handoff_queued',
+      },
+      error: commandId.isEmpty
+          ? 'Jarvis handoff could not be queued.'
+          : null,
+    );
+  }
+
+  Future<JarvisCloudDevice?>
+      _resolveCloudDevice(
+    Map<String, dynamic> parameters,
+  ) async {
+    await _deviceNetwork.refreshDevices();
+
+    final String requestedId =
+        parameters['target_device_id']
+                ?.toString()
+                .trim() ??
+            '';
+
+    final String requestedName =
+        parameters['target_device_name']
+                ?.toString()
+                .trim()
+                .toLowerCase() ??
+            '';
+
+    final List<JarvisCloudDevice> online =
+        _deviceNetwork.state.devices
+            .where(
+              (JarvisCloudDevice device) =>
+                  device.online,
+            )
+            .toList(growable: false);
+
+    if (requestedId.isNotEmpty) {
+      final List<JarvisCloudDevice> matches =
+          online
+              .where(
+                (JarvisCloudDevice device) =>
+                    device.deviceId ==
+                    requestedId,
+              )
+              .toList(growable: false);
+      return matches.length == 1
+          ? matches.single
+          : null;
+    }
+
+    if (requestedName.isEmpty) {
+      return null;
+    }
+
+    final List<JarvisCloudDevice> exact =
+        online
+            .where(
+              (JarvisCloudDevice device) =>
+                  device.deviceName
+                      .toLowerCase() ==
+                  requestedName,
+            )
+            .toList(growable: false);
+
+    if (exact.length == 1) {
+      return exact.single;
+    }
+
+    final List<JarvisCloudDevice> partial =
+        online
+            .where(
+              (JarvisCloudDevice device) =>
+                  device.deviceName
+                      .toLowerCase()
+                      .contains(
+                        requestedName,
+                      ),
+            )
+            .toList(growable: false);
+
+    return partial.length == 1
+        ? partial.single
+        : null;
   }
 
   Future<JarvisCapabilityResult> _openWebUrl(
