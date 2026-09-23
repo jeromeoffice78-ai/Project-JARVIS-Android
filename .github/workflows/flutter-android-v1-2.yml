@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - fix/jarvis-openai-sip-receptionist
     paths:
       - 'jarvis_app/**'
       - '.github/workflows/flutter-android-v1-2.yml'
