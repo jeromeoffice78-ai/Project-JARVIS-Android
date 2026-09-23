@@ -23,12 +23,52 @@ class _JarvisVoiceScreenState
   bool _wakeWord = false;
   bool _spokenReplies = true;
   bool _loadingDevices = false;
+  final TextEditingController
+      _wakePassController =
+      TextEditingController(
+    text: JarvisVoiceController.defaultWakePass,
+  );
   List<String> _devices = const <String>[];
 
   @override
   void initState() {
     super.initState();
     Future<void>.microtask(_refreshDevices);
+  }
+
+  Future<void> _saveWakePass(
+    JarvisVoiceController controller,
+  ) async {
+    try {
+      await controller.setWakePass(
+        _wakePassController.text,
+      );
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        SnackBar(
+          content: Text(
+            'Wake pass saved: "' +
+                controller.wakePass +
+                '"',
+          ),
+        ),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        SnackBar(
+          content: Text(
+            'Wake pass could not be saved: ' +
+                error.toString(),
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _refreshDevices() async {
@@ -44,6 +84,12 @@ class _JarvisVoiceScreenState
     } finally {
       if (mounted) setState(() => _loadingDevices = false);
     }
+  }
+
+  @override
+  void dispose() {
+    _wakePassController.dispose();
+    super.dispose();
   }
 
   @override
@@ -170,8 +216,59 @@ class _JarvisVoiceScreenState
                           controller.setWakeWordMode(enabled);
                         },
                         title: const Text('Wake Word Mode'),
-                        subtitle: const Text(
-                          'While the app is open, listen for “Jarvis”.',
+                        subtitle: Text(
+                          'Listen for "' +
+                              controller.wakePass +
+                              '".',
+                        ),
+                      ),
+                      const Divider(height: 1),
+                      Padding(
+                        padding:
+                            const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment:
+                              CrossAxisAlignment.start,
+                          children: <Widget>[
+                            const Text(
+                              'Wake Pass',
+                              style: TextStyle(
+                                fontWeight:
+                                    FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller:
+                                  _wakePassController,
+                              decoration:
+                                  const InputDecoration(
+                                labelText:
+                                    'Wake phrase',
+                                hintText:
+                                    'Hey Jarvis',
+                              ),
+                              textInputAction:
+                                  TextInputAction.done,
+                              onSubmitted: (_) =>
+                                  _saveWakePass(
+                                controller,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            FilledButton.tonalIcon(
+                              onPressed: () =>
+                                  _saveWakePass(
+                                controller,
+                              ),
+                              icon: const Icon(
+                                Icons.key_outlined,
+                              ),
+                              label: const Text(
+                                'Save Wake Pass',
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                       const Divider(height: 1),
