@@ -49,6 +49,14 @@ jobs:
           flutter create --platforms=android .
           rm -f test/widget_test.dart
           python scripts/prepare_native.py
+
+      - name: Bundle standalone Jarvis 3D model
+        working-directory: jarvis_app
+        run: |
+          set -euo pipefail
+          mkdir -p assets/models
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/CesiumMan/glTF-Binary/CesiumMan.glb             --output assets/models/CesiumMan.glb
+          test "$(stat -c %s assets/models/CesiumMan.glb)" -eq 438044
           flutter pub get
 
       - name: Flutter analyze
