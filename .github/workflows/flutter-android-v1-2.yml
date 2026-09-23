@@ -11,7 +11,7 @@ on:
       - '.github/workflows/flutter-android-v1-2.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: jarvis-flutter-v1-2-${{ github.ref }}
@@ -104,3 +104,20 @@ jobs:
             dist/JARVIS-v1.2-debug.apk
             dist/JARVIS-v1.2-debug.apk.sha256
           retention-days: 30
+
+      - name: Publish stable Jarvis APK link
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git tag -f jarvis-latest "$GITHUB_SHA"
+          git push origin -f jarvis-latest
+
+          if gh release view jarvis-latest >/dev/null 2>&1; then
+            gh release upload jarvis-latest               dist/JARVIS-v1.2-debug.apk               dist/JARVIS-v1.2-debug.apk.sha256               --clobber
+            gh release edit jarvis-latest               --title "JARVIS Latest Android"               --notes "Latest verified JARVIS Android build from main. Android may require permission to install apps from your browser or file manager."
+          else
+            gh release create jarvis-latest               dist/JARVIS-v1.2-debug.apk               dist/JARVIS-v1.2-debug.apk.sha256               --title "JARVIS Latest Android"               --notes "Latest verified JARVIS Android build from main. Android may require permission to install apps from your browser or file manager."               --prerelease
+          fi
+
