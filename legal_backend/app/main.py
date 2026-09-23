@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import re
 from contextlib import asynccontextmanager
 from typing import Annotated
 
@@ -18,7 +19,54 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-sol").strip() or "gpt-5.6-sol"
 FRONTIER_MODEL = os.getenv("JARVIS_FRONTIER_MODEL", "gpt-5.6-sol").strip() or "gpt-5.6-sol"
 IMAGE_MODEL = os.getenv("JARVIS_IMAGE_MODEL", "gpt-image-2.5-sunburst").strip() or "gpt-image-2.5-sunburst"
 REALTIME_MODEL = os.getenv("JARVIS_REALTIME_MODEL", "gpt-realtime-2.1").strip() or "gpt-realtime-2.1"
-REALTIME_VOICE = os.getenv("JARVIS_REALTIME_VOICE", "marin").strip() or "marin"
+REALTIME_VOICE = os.getenv("JARVIS_REALTIME_VOICE", "cedar").strip() or "cedar"
+REALTIME_ALLOWED_VOICES = {
+    "alloy",
+    "ash",
+    "ballad",
+    "coral",
+    "echo",
+    "sage",
+    "shimmer",
+    "verse",
+    "marin",
+    "cedar",
+}
+REALTIME_MOOD_INSTRUCTIONS = {
+    "calm": (
+        "Sound calm, grounded, patient, and reassuring. Use an even pace and "
+        "measured emphasis."
+    ),
+    "confident": (
+        "Sound masculine, cool, self-assured, concise, and capable. Use controlled "
+        "energy and crisp emphasis without sounding theatrical."
+    ),
+    "serious": (
+        "Sound serious, composed, firm, and low-key. Slow slightly for important "
+        "details and avoid playful delivery."
+    ),
+    "focused": (
+        "Sound analytical, alert, efficient, and precise. Keep a steady pace and "
+        "stress key facts and action steps."
+    ),
+    "energetic": (
+        "Sound energized, upbeat, decisive, and action-oriented while remaining "
+        "professional."
+    ),
+    "warm": (
+        "Sound warm, friendly, supportive, and conversational. Keep the delivery "
+        "natural rather than sentimental."
+    ),
+    "intense": (
+        "Sound urgent, forceful, controlled, and highly focused. Never shout; use "
+        "stronger emphasis and shorter phrasing."
+    ),
+    "companion": (
+        "Sound warm, steady, masculine, present, and easy to talk to. Listen first, "
+        "ask natural follow-up questions, and do not turn every feeling into advice."
+    ),
+}
+
 GATEWAY_MODEL = os.getenv("AI_GATEWAY_MODEL", f"openai/{OPENAI_MODEL}").strip() or f"openai/{OPENAI_MODEL}"
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip() or "llama-3.3-70b-versatile"
 CHAIRMAN_TOKEN = os.getenv("JARVIS_CHAIRMAN_TOKEN", "").strip()
@@ -114,6 +162,26 @@ class FrontierImageRequest(BaseModel):
 class FrontierImageResponse(BaseModel):
     image_base64: str
     model: str
+
+
+class RealtimeClientSecretRequest(BaseModel):
+    voice: str = Field(default="cedar", min_length=1, max_length=32)
+    mood: str = Field(default="confident", min_length=1, max_length=32)
+    context: str = Field(default="", max_length=12_000)
+
+
+class MusicSearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=300)
+
+
+class MusicSearchResponse(BaseModel):
+    query: str
+    provider: str
+    video_id: str
+    title: str
+    author: str
+    thumbnail_url: str
+    watch_url: str
 
 
 def _build_ai_client() -> tuple[AsyncOpenAI | None, str, str]:
@@ -239,6 +307,61 @@ def _extract_web_sources(response: object) -> list[dict[str, str]]:
     return sources
 
 
+def _youtube_video_id(raw_url: str) -> str | None:
+    url = raw_url.strip()
+    patterns = (
+        r"[?&]v=([A-Za-z0-9_-]{11})",
+        r"youtu\.be/([A-Za-z0-9_-]{11})",
+        r"youtube\.com/embed/([A-Za-z0-9_-]{11})",
+        r"youtube\.com/shorts/([A-Za-z0-9_-]{11})",
+        r"music\.youtube\.com/watch\?v=([A-Za-z0-9_-]{11})",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
+
+
+async def _validate_youtube_video(
+    video_id: str,
+) -> dict[str, str] | None:
+    watch_url = f"https://www.youtube.com/watch?v={video_id}"
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            response = await client.get(
+                "https://www.youtube.com/oembed",
+                params={
+                    "url": watch_url,
+                    "format": "json",
+                },
+            )
+    except httpx.HTTPError:
+        return None
+
+    if response.status_code != 200:
+        return None
+
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+
+    title = str(payload.get("title", "") or "").strip()
+    author = str(payload.get("author_name", "") or "").strip()
+    thumbnail = str(payload.get("thumbnail_url", "") or "").strip()
+
+    if not title:
+        return None
+
+    return {
+        "title": title,
+        "author": author,
+        "thumbnail_url": thumbnail,
+        "watch_url": watch_url,
+    }
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     return HealthResponse(
@@ -298,8 +421,100 @@ async def auth_check(
     )
 
 
+@app.post("/v1/music/search", response_model=MusicSearchResponse)
+async def music_search(
+    payload: MusicSearchRequest,
+    authenticated_role: Annotated[str, Depends(authenticate_request)],
+) -> MusicSearchResponse:
+    client: AsyncOpenAI | None = getattr(app.state, "frontier_openai", None)
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Internet music lookup requires OPENAI_API_KEY on the server.",
+        )
+
+    query = payload.query.strip()
+    search_prompt = (
+        "Search the public web for the exact song requested below. "
+        "Prefer the official artist channel, the artist's Topic channel, "
+        "the official music video, or another clearly authorized YouTube upload. "
+        "Return several direct YouTube watch URLs if possible. Do not invent URLs. "
+        "Do not return lyric reuploads, reaction videos, covers, remixes, or unofficial "
+        "copies unless the user's request specifically asks for one.\n\n"
+        f"Song request: {query}"
+    )
+
+    try:
+        response = await client.responses.create(
+            model=FRONTIER_MODEL,
+            instructions=(
+                "You are JARVIS Music Resolver. Find verified, legal embedded playback "
+                "sources. Prefer official or authorized YouTube uploads. Never fabricate "
+                "a video ID or URL."
+            ),
+            input=search_prompt,
+            tools=[{"type": "web_search"}],
+            reasoning={"effort": "medium"},
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Internet music search failed: {type(exc).__name__}",
+        ) from exc
+
+    candidate_urls: list[str] = []
+    seen_urls: set[str] = set()
+
+    for source in _extract_web_sources(response):
+        url = source.get("url", "").strip()
+        if url and url not in seen_urls:
+            seen_urls.add(url)
+            candidate_urls.append(url)
+
+    output_text = (response.output_text or "").strip()
+    for match in re.findall(
+        r"https?://(?:www\.)?(?:music\.)?(?:youtube\.com/watch\?[^\s<>)\]]+|youtu\.be/[A-Za-z0-9_-]{11})",
+        output_text,
+    ):
+        url = match.rstrip(".,;:'\"")
+        if url not in seen_urls:
+            seen_urls.add(url)
+            candidate_urls.append(url)
+
+    validated: list[tuple[str, dict[str, str]]] = []
+    for url in candidate_urls[:12]:
+        video_id = _youtube_video_id(url)
+        if not video_id:
+            continue
+        metadata = await _validate_youtube_video(video_id)
+        if metadata is None:
+            continue
+        validated.append((video_id, metadata))
+        if len(validated) >= 5:
+            break
+
+    if not validated:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Jarvis could not find a verified playable YouTube result for that song.",
+        )
+
+    video_id, metadata = validated[0]
+
+    return MusicSearchResponse(
+        query=query,
+        provider="youtube",
+        video_id=video_id,
+        title=metadata["title"],
+        author=metadata["author"],
+        thumbnail_url=metadata["thumbnail_url"],
+        watch_url=metadata["watch_url"],
+    )
+
+
 @app.post("/v1/realtime/client-secret")
 async def realtime_client_secret(
+    payload: RealtimeClientSecretRequest,
     authenticated_role: Annotated[str, Depends(authenticate_request)],
 ) -> dict[str, object]:
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
@@ -313,20 +528,150 @@ async def realtime_client_secret(
         f"jarvis:{authenticated_role}:primary".encode("utf-8")
     ).hexdigest()
 
+    requested_voice = payload.voice.strip().lower()
+    voice = (
+        requested_voice
+        if requested_voice in REALTIME_ALLOWED_VOICES
+        else REALTIME_VOICE
+    )
+    mood = payload.mood.strip().lower()
+    mood_instruction = REALTIME_MOOD_INSTRUCTIONS.get(
+        mood,
+        REALTIME_MOOD_INSTRUCTIONS["confident"],
+    )
+    continuity = payload.context.strip()
+
     session_config = {
         "session": {
             "type": "realtime",
             "model": REALTIME_MODEL,
             "instructions": (
-                "You are JARVIS, a concise, capable personal AI assistant. "
-                "Speak naturally, remember that device/tool actions must be verified, "
-                "and never claim an external action succeeded without confirmation."
+                "You are JARVIS, a male personal AI assistant with a cool, capable "
+                "presence. Speak naturally and stay concise unless detail is useful. "
+                + mood_instruction
+                + " Adapt emotion to the conversation while staying authentic and "
+                "controlled. Remember that device/tool actions must be verified, and "
+                "never claim an external action succeeded without confirmation."
+                + (
+                    " Recent continuity from the prior voice session: " + continuity
+                    if continuity
+                    else ""
+                )
             ),
             "audio": {
+                "input": {
+                    "transcription": {
+                        "model": "gpt-live-transcribe",
+                        "delay": "low",
+                    },
+                },
                 "output": {
-                    "voice": REALTIME_VOICE,
+                    "voice": voice,
                 },
             },
+            "tool_choice": "auto",
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "play_music",
+                    "description": (
+                        "Search the internet for the requested song and play the "
+                        "verified result inside JARVIS."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Song, artist, album, or track request.",
+                            },
+                        },
+                        "required": ["query"],
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "pause_music",
+                    "description": "Pause music currently playing inside JARVIS.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "resume_music",
+                    "description": "Resume the current JARVIS music track.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "list_cloud_devices",
+                    "description": (
+                        "List JARVIS devices registered on the user's secure cloud "
+                        "device network and report which are online."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "handoff_jarvis_device",
+                    "description": (
+                        "Move JARVIS presence to another online JARVIS device by "
+                        "device name."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "target_device_name": {
+                                "type": "string",
+                                "description": "Name of the destination device.",
+                            },
+                        },
+                        "required": ["target_device_name"],
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "send_cloud_device_command",
+                    "description": (
+                        "Send an approved command to another online JARVIS device. "
+                        "Supported actions include speak_text, play_music, music_pause, "
+                        "music_resume, vision_refresh, flashlight_on, flashlight_off, "
+                        "system_action, ping, and avatar_handoff."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "target_device_name": {
+                                "type": "string",
+                                "description": "Name of the target JARVIS device.",
+                            },
+                            "action": {
+                                "type": "string",
+                                "description": "Allowed cloud-device action.",
+                            },
+                            "parameters": {
+                                "type": "object",
+                                "description": "Parameters for the target action.",
+                            },
+                        },
+                        "required": ["target_device_name", "action"],
+                        "additionalProperties": False,
+                    },
+                },
+            ],
         }
     }
 

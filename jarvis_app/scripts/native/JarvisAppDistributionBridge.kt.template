@@ -1,0 +1,68 @@
+package __PACKAGE__
+
+import android.app.Activity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
+import java.io.File
+
+object JarvisAppDistributionBridge {
+    private const val CHANNEL =
+        "jarvis.app_distribution"
+
+    fun register(
+        activity: Activity,
+        flutterEngine: FlutterEngine,
+    ) {
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "exportInstalledApk" -> {
+                    Thread {
+                        try {
+                            val source =
+                                File(
+                                    activity.applicationInfo.sourceDir,
+                                )
+                            if (!source.exists()) {
+                                throw IllegalStateException(
+                                    "Installed APK source is unavailable.",
+                                )
+                            }
+
+                            val destination =
+                                File(
+                                    activity.cacheDir,
+                                    "JARVIS-current.apk",
+                                )
+
+                            source.inputStream().use { input ->
+                                destination.outputStream().use { output ->
+                                    input.copyTo(output)
+                                }
+                            }
+
+                            activity.runOnUiThread {
+                                result.success(
+                                    destination.absolutePath,
+                                )
+                            }
+                        } catch (error: Throwable) {
+                            activity.runOnUiThread {
+                                result.error(
+                                    "apk_export_failed",
+                                    error.message
+                                        ?: "Unable to export installed APK.",
+                                    null,
+                                )
+                            }
+                        }
+                    }.start()
+                }
+
+                else -> result.notImplemented()
+            }
+        }
+    }
+}

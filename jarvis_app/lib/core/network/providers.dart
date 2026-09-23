@@ -7,7 +7,10 @@ import '../../features/autonomy/jarvis_autonomy_controller.dart';
 import '../../features/capabilities/jarvis_action_approval_service.dart';
 import '../../features/capabilities/jarvis_capability_service.dart';
 import '../../features/devices/jarvis_bluetooth_manager.dart';
+import '../../features/devices/jarvis_cloud_device_network.dart';
+import '../../features/music/jarvis_music_service.dart';
 import '../../features/phone/jarvis_phone_service.dart';
+import '../../features/people/jarvis_voice_identity_service.dart';
 import '../../features/printer/jarvis_printer_service.dart';
 import '../../features/printer/jarvis_print_router.dart';
 import '../../features/realtime/jarvis_realtime_voice_service.dart';
@@ -79,6 +82,18 @@ final jarvisCapabilityServiceProvider =
     printRouter: ref.watch(
       jarvisPrintRouterProvider,
     ),
+    deviceNetwork: ref.watch(
+      jarvisCloudDeviceNetworkProvider,
+    ),
+    musicService: ref.watch(
+      jarvisMusicServiceProvider,
+    ),
+    visionService: ref.watch(
+      jarvisVisionServiceProvider,
+    ),
+    voiceService: ref.watch(
+      jarvisVoiceServiceProvider,
+    ),
   );
 
   ref.onDispose(service.dispose);
@@ -107,10 +122,42 @@ final jarvisBluetoothStateProvider =
   },
 );
 
+final jarvisMusicServiceProvider =
+    Provider<JarvisMusicService>((Ref ref) {
+  final JarvisMusicService service =
+      JarvisMusicService(
+    apiService: ref.watch(
+      jarvisApiServiceProvider,
+    ),
+  );
+
+  ref.onDispose(() {
+    unawaited(service.dispose());
+  });
+
+  return service;
+});
+
+final jarvisMusicStateProvider =
+    StreamProvider<JarvisMusicState>(
+  (Ref ref) {
+    return ref
+        .watch(jarvisMusicServiceProvider)
+        .stateStream;
+  },
+);
+
 final jarvisPhoneServiceProvider =
     Provider<JarvisPhoneService>((Ref ref) {
   return JarvisPhoneService();
 });
+
+final jarvisVoiceIdentityServiceProvider =
+    Provider<JarvisVoiceIdentityService>(
+  (Ref ref) {
+    return JarvisVoiceIdentityService();
+  },
+);
 
 final jarvisPrinterServiceProvider =
     Provider<JarvisPrinterService>((Ref ref) {
@@ -195,6 +242,12 @@ final jarvisRealtimeVoiceServiceProvider =
       apiService: ref.watch(
         jarvisApiServiceProvider,
       ),
+      voiceIdentityService: ref.watch(
+        jarvisVoiceIdentityServiceProvider,
+      ),
+      capabilityService: ref.watch(
+        jarvisCapabilityServiceProvider,
+      ),
     );
 
     ref.onDispose(() {
@@ -277,6 +330,48 @@ final jarvisVisionStateProvider =
   (Ref ref) {
     return ref
         .watch(jarvisVisionServiceProvider)
+        .stateStream;
+  },
+);
+
+final jarvisCloudDeviceNetworkProvider =
+    Provider<JarvisCloudDeviceNetwork>(
+  (Ref ref) {
+    final JarvisCloudDeviceNetwork network =
+        JarvisCloudDeviceNetwork(
+      config: ref.watch(
+        jarvisConfigProvider,
+      ),
+      printerService: ref.watch(
+        jarvisPrinterServiceProvider,
+      ),
+      musicService: ref.watch(
+        jarvisMusicServiceProvider,
+      ),
+      visionService: ref.watch(
+        jarvisVisionServiceProvider,
+      ),
+      voiceService: ref.watch(
+        jarvisVoiceServiceProvider,
+      ),
+      systemControlService: ref.watch(
+        jarvisSystemControlServiceProvider,
+      ),
+    );
+
+    ref.onDispose(() {
+      unawaited(network.dispose());
+    });
+
+    return network;
+  },
+);
+
+final jarvisCloudDeviceStateProvider =
+    StreamProvider<JarvisCloudDeviceState>(
+  (Ref ref) {
+    return ref
+        .watch(jarvisCloudDeviceNetworkProvider)
         .stateStream;
   },
 );

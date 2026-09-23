@@ -112,7 +112,37 @@ class JarvisChatController {
       return null;
     }
 
-    if (_activeRequestId != null && _state.isGenerating) {
+    final String? localRequestId =
+        _tryHandleLocalFeatureCommand(
+      normalized,
+    );
+
+    if (localRequestId != null) {
+      return localRequestId;
+    }
+
+    if (_looksLikeVisionRequest(normalized)) {
+      final String requestId =
+          _newLocalRequestId('vision');
+
+      unawaited(
+        _prepareVisionAndSend(
+          requestId,
+          normalized,
+        ),
+      );
+
+      return requestId;
+    }
+
+    return _sendRemoteQuery(normalized);
+  }
+
+  String? _sendRemoteQuery(
+    String normalized,
+  ) {
+    if (_activeRequestId != null &&
+        _state.isGenerating) {
       cancelCurrentResponse();
     }
 
@@ -160,13 +190,461 @@ class JarvisChatController {
           status: JarvisChatStatus.error,
           responseText: '',
           requestId: event.requestId,
-          errorMessage: 'Unable to send request: $error',
+          errorMessage:
+              'Unable to send request: ' +
+                  error.toString(),
           retryable: true,
         ),
       );
 
       return null;
     }
+  }
+
+  String? _tryHandleLocalFeatureCommand(
+    String query,
+  ) {
+    final String cleaned = query
+        .replaceFirst(
+          RegExp(
+            r'^jarvis[,:]?\s*',
+            caseSensitive: false,
+          ),
+          '',
+        )
+        .trim();
+
+    final String lower =
+        cleaned.toLowerCase();
+
+    if (RegExp(
+      r'^(pause|stop)\s+(the\s+)?(music|song|track)$',
+    ).hasMatch(lower)) {
+      return _runLocalCapability(
+        action: 'pause_music',
+        parameters:
+            const <String, dynamic>{},
+        successText: (_) =>
+            'Music paused.',
+      );
+    }
+
+    if (RegExp(
+      r'^(resume|continue)\s+(the\s+)?(music|song|track)$',
+    ).hasMatch(lower)) {
+      return _runLocalCapability(
+        action: 'resume_music',
+        parameters:
+            const <String, dynamic>{},
+        successText: (_) =>
+            'Music resumed.',
+      );
+    }
+
+    final RegExp remotePlayPattern =
+        RegExp(
+      r'^play\s+(.+?)\s+on\s+(?:my\s+)?(.+)$',
+      caseSensitive: false,
+    );
+    final RegExpMatch? remotePlay =
+        remotePlayPattern.firstMatch(
+      cleaned,
+    );
+
+    if (remotePlay != null) {
+      final String musicQuery =
+          remotePlay.group(1)?.trim() ?? '';
+      final String deviceName =
+          remotePlay.group(2)?.trim() ?? '';
+
+      if (musicQuery.isNotEmpty &&
+          deviceName.isNotEmpty) {
+        return _runLocalCapability(
+          action:
+              'send_cloud_device_command',
+          parameters: <String, dynamic>{
+            'target_device_name':
+                deviceName,
+            'action': 'play_music',
+            'parameters':
+                <String, dynamic>{
+              'query': musicQuery,
+            },
+          },
+          successText: (
+            Map<String, dynamic> result,
+          ) {
+            return 'Music command sent to ' +
+                (result['target_device_name']
+                        ?.toString() ??
+                    deviceName) +
+                '.';
+          },
+        );
+      }
+    }
+
+    final RegExp playPattern = RegExp(
+      r'^play\s+(.+)$',
+      caseSensitive: false,
+    );
+    final RegExpMatch? playMatch =
+        playPattern.firstMatch(cleaned);
+
+    if (playMatch != null) {
+      String musicQuery =
+          playMatch.group(1)?.trim() ?? '';
+
+      musicQuery = musicQuery.replaceFirst(
+        RegExp(
+          r'^(the\s+)?(song|track|music)\s+',
+          caseSensitive: false,
+        ),
+        '',
+      );
+
+      if (musicQuery.isNotEmpty) {
+        return _runLocalCapability(
+          action: 'play_music',
+          parameters: <String, dynamic>{
+            'query': musicQuery,
+          },
+          successText: (
+            Map<String, dynamic> result,
+          ) {
+            final String title =
+                result['title']
+                        ?.toString() ??
+                    musicQuery;
+            final String author =
+                result['author']
+                        ?.toString() ??
+                    '';
+
+            return author.isEmpty
+                ? 'Playing ' + title + '.'
+                : 'Playing ' +
+                    title +
+                    ' by ' +
+                    author +
+                    '.';
+          },
+        );
+      }
+    }
+
+    final RegExp handoffPattern = RegExp(
+      r'^(move|send|go)\s+(?:jarvis\s+|yourself\s+)?(?:to\s+)?(?:my\s+)?(.+)$',
+      caseSensitive: false,
+    );
+    final RegExpMatch? handoff =
+        handoffPattern.firstMatch(
+      cleaned,
+    );
+
+    if (handoff != null) {
+      final String verb =
+          handoff.group(1)
+                  ?.toLowerCase() ??
+              '';
+      final String target =
+          handoff.group(2)?.trim() ?? '';
+
+      final bool clearlyHandoff =
+          verb == 'move' ||
+          lower.startsWith(
+            'send jarvis',
+          ) ||
+          lower.startsWith('go to');
+
+      if (clearlyHandoff &&
+          target.isNotEmpty) {
+        return _runLocalCapability(
+          action:
+              'handoff_jarvis_device',
+          parameters: <String, dynamic>{
+            'target_device_name':
+                target,
+          },
+          successText: (
+            Map<String, dynamic> result,
+          ) {
+            return 'Jarvis handoff sent to ' +
+                (result['target_device_name']
+                        ?.toString() ??
+                    target) +
+                '.';
+          },
+        );
+      }
+    }
+
+    final RegExp speakPattern = RegExp(
+      r'^(say|speak)\s+(.+?)\s+on\s+(?:my\s+)?(.+)$',
+      caseSensitive: false,
+    );
+    final RegExpMatch? speak =
+        speakPattern.firstMatch(
+      cleaned,
+    );
+
+    if (speak != null) {
+      final String text =
+          speak.group(2)?.trim() ?? '';
+      final String deviceName =
+          speak.group(3)?.trim() ?? '';
+
+      if (text.isNotEmpty &&
+          deviceName.isNotEmpty) {
+        return _runLocalCapability(
+          action:
+              'send_cloud_device_command',
+          parameters: <String, dynamic>{
+            'target_device_name':
+                deviceName,
+            'action': 'speak_text',
+            'parameters':
+                <String, dynamic>{
+              'text': text,
+            },
+          },
+          successText: (
+            Map<String, dynamic> result,
+          ) {
+            return 'Speech command sent to ' +
+                (result['target_device_name']
+                        ?.toString() ??
+                    deviceName) +
+                '.';
+          },
+        );
+      }
+    }
+
+    if (RegExp(
+      r'^(list|show|which|what).*(cloud|jarvis).*(device|devices)',
+    ).hasMatch(lower)) {
+      return _runLocalCapability(
+        action: 'list_cloud_devices',
+        parameters:
+            const <String, dynamic>{},
+        successText: _formatCloudDevices,
+      );
+    }
+
+    return null;
+  }
+
+  bool _looksLikeVisionRequest(
+    String query,
+  ) {
+    return RegExp(
+      r'\b(what do you see|what am i looking at|look at this|look at that|read this|read that|see what i see|use (the )?camera|through (the )?camera|camera vision)\b',
+      caseSensitive: false,
+    ).hasMatch(query);
+  }
+
+  String _newLocalRequestId(
+    String prefix,
+  ) {
+    return prefix +
+        '-' +
+        DateTime.now()
+            .microsecondsSinceEpoch
+            .toString();
+  }
+
+  String _runLocalCapability({
+    required String action,
+    required Map<String, dynamic> parameters,
+    required String Function(
+      Map<String, dynamic> result,
+    ) successText,
+  }) {
+    final String requestId =
+        _newLocalRequestId('local');
+
+    _activeRequestId = requestId;
+    _currentResponseBuffer = '';
+    _expectedChunkIndex = 0;
+
+    _emitState(
+      JarvisChatState(
+        status: JarvisChatStatus.thinking,
+        responseText: '',
+        requestId: requestId,
+      ),
+    );
+    _emitResponseBuffer();
+
+    unawaited(
+      _executeLocalCapability(
+        requestId: requestId,
+        action: action,
+        parameters: parameters,
+        successText: successText,
+      ),
+    );
+
+    return requestId;
+  }
+
+  Future<void> _executeLocalCapability({
+    required String requestId,
+    required String action,
+    required Map<String, dynamic> parameters,
+    required String Function(
+      Map<String, dynamic> result,
+    ) successText,
+  }) async {
+    final JarvisCapabilityResult result =
+        await _capabilityService.execute(
+      requestId: requestId,
+      callId: 'local-' + requestId,
+      action: action,
+      parameters: parameters,
+    );
+
+    if (_disposed ||
+        _activeRequestId != requestId) {
+      return;
+    }
+
+    final String response = result.ok
+        ? successText(result.result)
+        : (result.error ??
+            'Jarvis could not complete that action.');
+
+    _currentResponseBuffer = response;
+    _emitResponseBuffer();
+
+    _emitState(
+      JarvisChatState(
+        status: result.ok
+            ? JarvisChatStatus.completed
+            : JarvisChatStatus.error,
+        responseText: response,
+        requestId: requestId,
+        errorMessage:
+            result.ok ? null : result.error,
+        retryable: !result.ok,
+      ),
+    );
+
+    _activeRequestId = null;
+    _expectedChunkIndex = 0;
+  }
+
+  String _formatCloudDevices(
+    Map<String, dynamic> result,
+  ) {
+    final Object? raw = result['devices'];
+
+    if (raw is! List || raw.isEmpty) {
+      return 'No Jarvis cloud devices are registered yet.';
+    }
+
+    final List<String> labels =
+        <String>[];
+
+    for (final Object? value in raw) {
+      if (value is! Map) {
+        continue;
+      }
+
+      final String name =
+          value['device_name']
+                  ?.toString() ??
+              'Jarvis device';
+      final bool online =
+          value['online'] == true;
+      final bool active =
+          value['active_avatar'] == true;
+
+      labels.add(
+        name +
+            (online
+                ? ' (online'
+                : ' (offline') +
+            (active
+                ? ', Jarvis active here)'
+                : ')'),
+      );
+    }
+
+    return labels.isEmpty
+        ? 'No Jarvis cloud devices are registered yet.'
+        : 'Jarvis devices: ' +
+            labels.join(', ') +
+            '.';
+  }
+
+  Future<void> _prepareVisionAndSend(
+    String preparationRequestId,
+    String query,
+  ) async {
+    _activeRequestId =
+        preparationRequestId;
+    _currentResponseBuffer =
+        'Updating camera vision...';
+    _expectedChunkIndex = 0;
+
+    _emitResponseBuffer();
+    _emitState(
+      JarvisChatState(
+        status: JarvisChatStatus.thinking,
+        responseText:
+            _currentResponseBuffer,
+        requestId:
+            preparationRequestId,
+      ),
+    );
+
+    final JarvisCapabilityResult vision =
+        await _capabilityService.execute(
+      requestId:
+          preparationRequestId,
+      callId:
+          'vision-' +
+              preparationRequestId,
+      action: 'vision_refresh',
+      parameters:
+          const <String, dynamic>{},
+    );
+
+    if (_disposed ||
+        _activeRequestId !=
+            preparationRequestId) {
+      return;
+    }
+
+    if (!vision.ok) {
+      final String error = vision.error ??
+          'Camera vision could not be refreshed.';
+
+      _currentResponseBuffer = error;
+      _emitResponseBuffer();
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.error,
+          responseText: error,
+          requestId:
+              preparationRequestId,
+          errorMessage: error,
+          retryable: true,
+        ),
+      );
+
+      _activeRequestId = null;
+      return;
+    }
+
+    _activeRequestId = null;
+
+    _sendRemoteQuery(
+      query +
+          '\n\nJARVIS VISION CONTEXT: Use the latest camera frame currently available to Jarvis to answer this request.',
+    );
   }
 
   bool _shouldAutoPrint(String query) {

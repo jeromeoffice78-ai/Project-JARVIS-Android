@@ -29,6 +29,26 @@ class JarvisGeneratedImage {
   final String model;
 }
 
+class JarvisMusicTrack {
+  const JarvisMusicTrack({
+    required this.query,
+    required this.provider,
+    required this.videoId,
+    required this.title,
+    required this.author,
+    required this.thumbnailUrl,
+    required this.watchUrl,
+  });
+
+  final String query;
+  final String provider;
+  final String videoId;
+  final String title;
+  final String author;
+  final String thumbnailUrl;
+  final String watchUrl;
+}
+
 class JarvisApiService {
   JarvisApiService({
     required JarvisConfig config,
@@ -62,12 +82,88 @@ class JarvisApiService {
     return Map<String, dynamic>.from(decoded);
   }
 
-  Future<String> createRealtimeClientSecret() async {
+  Future<JarvisMusicTrack> searchMusic(
+    String query,
+  ) async {
+    final String normalized = query.trim();
+
+    if (normalized.isEmpty) {
+      throw ArgumentError(
+        'A song, artist, or album is required.',
+      );
+    }
+
+    final response = await _client.post(
+      Uri.parse(
+        '${_config.httpBaseUrl}/v1/music/search',
+      ),
+      headers: _headers,
+      body: jsonEncode(<String, dynamic>{
+        'query': normalized,
+      }),
+    );
+
+    final Object? decoded =
+        jsonDecode(response.body);
+
+    if (response.statusCode != 200) {
+      final String detail = decoded is Map
+          ? decoded['detail']?.toString() ??
+              'Music search failed.'
+          : 'Music search failed.';
+      throw StateError(
+        'Music search failed: $detail',
+      );
+    }
+
+    if (decoded is! Map) {
+      throw const FormatException(
+        'Invalid music search response.',
+      );
+    }
+
+    final Map<String, dynamic> data =
+        Map<String, dynamic>.from(decoded);
+
+    final String videoId =
+        data['video_id']?.toString() ?? '';
+
+    if (videoId.length != 11) {
+      throw const FormatException(
+        'Music search returned an invalid video ID.',
+      );
+    }
+
+    return JarvisMusicTrack(
+      query: data['query']?.toString() ?? normalized,
+      provider:
+          data['provider']?.toString() ?? 'youtube',
+      videoId: videoId,
+      title: data['title']?.toString() ?? normalized,
+      author: data['author']?.toString() ?? '',
+      thumbnailUrl:
+          data['thumbnail_url']?.toString() ?? '',
+      watchUrl:
+          data['watch_url']?.toString() ?? '',
+    );
+  }
+
+
+  Future<String> createRealtimeClientSecret({
+    String voice = 'cedar',
+    String mood = 'confident',
+    String context = '',
+  }) async {
     final response = await _client.post(
       Uri.parse(
         '${_config.httpBaseUrl}/v1/realtime/client-secret',
       ),
       headers: _headers,
+      body: jsonEncode(<String, dynamic>{
+        'voice': voice,
+        'mood': mood,
+        'context': context,
+      }),
     );
 
     final Object? decoded = jsonDecode(response.body);

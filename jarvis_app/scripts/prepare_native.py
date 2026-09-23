@@ -17,6 +17,13 @@ def patch_gradle() -> None:
         "minSdk = 24",
         "minSdk = 26",
     )
+    if "org.pytorch:executorch-android" not in text:
+        text += """
+dependencies {
+    implementation("org.pytorch:executorch-android:1.3.0")
+}
+"""
+
     path.write_text(text, encoding="utf-8")
 
 
@@ -232,6 +239,15 @@ class MainActivity : FlutterFragmentActivity() {{
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {{
         super.configureFlutterEngine(flutterEngine)
+
+        JarvisVoiceIdentityBridge.register(
+            this,
+            flutterEngine,
+        )
+        JarvisAppDistributionBridge.register(
+            this,
+            flutterEngine,
+        )
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -684,6 +700,46 @@ class JarvisTextPrintAdapter(
 }}
 """
     path.write_text(main_activity, encoding="utf-8")
+
+    voice_identity_template = (
+        ROOT
+        / "scripts"
+        / "native"
+        / "JarvisVoiceIdentityBridge.kt.template"
+    )
+    if not voice_identity_template.exists():
+        raise RuntimeError(
+            "JarvisVoiceIdentityBridge.kt.template is missing"
+        )
+
+    voice_identity_text = voice_identity_template.read_text(
+        encoding="utf-8"
+    ).replace("__PACKAGE__", package_name)
+
+    (path.parent / "JarvisVoiceIdentityBridge.kt").write_text(
+        voice_identity_text,
+        encoding="utf-8",
+    )
+
+    app_distribution_template = (
+        ROOT
+        / "scripts"
+        / "native"
+        / "JarvisAppDistributionBridge.kt.template"
+    )
+    if not app_distribution_template.exists():
+        raise RuntimeError(
+            "JarvisAppDistributionBridge.kt.template is missing"
+        )
+
+    app_distribution_text = app_distribution_template.read_text(
+        encoding="utf-8"
+    ).replace("__PACKAGE__", package_name)
+
+    (path.parent / "JarvisAppDistributionBridge.kt").write_text(
+        app_distribution_text,
+        encoding="utf-8",
+    )
 
     service_path = path.parent / "JarvisInCallService.kt"
     service_path.write_text(
