@@ -59,6 +59,37 @@ jobs:
           test "$(stat -c %s assets/models/CesiumMan.glb)" -eq 438044
           flutter pub get
 
+      - name: Bundle photoreal human Jarvis assets
+        working-directory: jarvis_app
+        run: |
+          set -euo pipefail
+          mkdir -p assets/models
+
+          curl --fail --location --retry 5 --retry-delay 3 \
+            https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/vitruvian_body.glb \
+            --output assets/models/vitruvian_body.glb
+          curl --fail --location --retry 5 --retry-delay 3 \
+            https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/vitruvian_head.glb \
+            --output assets/models/vitruvian_head.glb
+          curl --fail --location --retry 5 --retry-delay 3 \
+            https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/hairtool_cards.glb \
+            --output assets/models/hairtool_cards.glb
+
+          for asset in vit_face_bc.png vit_mouth.png vit_sclera.png vit_iris.png vit_hair_atlas.png vit_hair_opacity.png; do
+            curl --fail --location --retry 5 --retry-delay 3 \
+              "https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/$asset" \
+              --output "assets/models/$asset"
+          done
+
+          test "$(stat -c %s assets/models/vitruvian_body.glb)" -eq 6879364
+          test "$(stat -c %s assets/models/vitruvian_head.glb)" -eq 10189832
+          test "$(stat -c %s assets/models/hairtool_cards.glb)" -eq 14839096
+          test -s assets/models/vit_face_bc.png
+          test -s assets/models/vit_mouth.png
+          test -s assets/models/vit_sclera.png
+          test -s assets/models/vit_iris.png
+          flutter pub get
+
       - name: Bundle on-device speaker identity model
         working-directory: jarvis_app
         run: |
