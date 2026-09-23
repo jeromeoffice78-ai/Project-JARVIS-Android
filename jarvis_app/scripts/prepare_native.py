@@ -391,6 +391,30 @@ class MainActivity : FlutterFragmentActivity() {{
                         ) ?: false,
                     )
                 }}
+                "typeText" -> {{
+                    val text = call.argument<String>("text").orEmpty()
+                    val service = JarvisAccessibilityService.instance
+                    result.success(
+                        service?.typeIntoFocusedField(text) ?: false,
+                    )
+                }}
+                "launchApp" -> {{
+                    val packageName =
+                        call.argument<String>("packageName")?.trim().orEmpty()
+                    if (packageName.isEmpty()) {{
+                        result.success(false)
+                    }} else {{
+                        val launchIntent =
+                            packageManager.getLaunchIntentForPackage(packageName)
+                        if (launchIntent == null) {{
+                            result.success(false)
+                        }} else {{
+                            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            startActivity(launchIntent)
+                            result.success(true)
+                        }}
+                    }}
+                }}
                 "captureScreenshot" -> {{
                     val service = JarvisAccessibilityService.instance
                     if (service == null) {{
@@ -1076,9 +1100,11 @@ import android.accessibilityservice.GestureDescription
 import android.graphics.Bitmap
 import android.graphics.Path
 import android.os.Build
+import android.os.Bundle
 import android.util.Base64
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import java.io.ByteArrayOutputStream
 
 class JarvisAccessibilityService : AccessibilityService() {{
@@ -1189,6 +1215,33 @@ class JarvisAccessibilityService : AccessibilityService() {{
         )
     }}
 
+    fun typeIntoFocusedField(text: String): Boolean {{
+        if (text.isEmpty()) {{
+            return false
+        }}
+
+        val root = rootInActiveWindow ?: return false
+        val focused = root.findFocus(
+            AccessibilityNodeInfo.FOCUS_INPUT,
+        ) ?: return false
+
+        return try {{
+            val arguments = Bundle().apply {{
+                putCharSequence(
+                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                    text,
+                )
+            }}
+            focused.performAction(
+                AccessibilityNodeInfo.ACTION_SET_TEXT,
+                arguments,
+            )
+        }} finally {{
+            focused.recycle()
+            root.recycle()
+        }}
+    }}
+
     fun performNamedGlobalAction(action: String): Boolean {{
         val globalAction = when (action.lowercase()) {{
             "back" -> GLOBAL_ACTION_BACK
@@ -1286,7 +1339,8 @@ class JarvisAccessibilityService : AccessibilityService() {{
     android:accessibilityFeedbackType="feedbackGeneric"
     android:notificationTimeout="100"
     android:canPerformGestures="true"
-    android:canRetrieveWindowContent="false" />
+    android:canRetrieveWindowContent="true"
+    android:description="@string/app_name" />
 """,
         encoding="utf-8",
     )
