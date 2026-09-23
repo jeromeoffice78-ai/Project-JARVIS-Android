@@ -133,6 +133,65 @@ class JarvisApiService {
     );
   }
 
+  Future<JarvisFrontierResult> analyzeFile({
+    required List<int> bytes,
+    required String filename,
+    required String prompt,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse(
+        '${_config.httpBaseUrl}/v1/frontier/file',
+      ),
+    );
+
+    if (_config.clientToken.isNotEmpty) {
+      request.headers['Authorization'] =
+          'Bearer ${_config.clientToken}';
+    }
+
+    request.fields['prompt'] = prompt;
+    request.files.add(
+      http.MultipartFile.fromBytes(
+        'document',
+        bytes,
+        filename: filename,
+      ),
+    );
+
+    final streamed = await _client.send(request);
+    final String body =
+        await streamed.stream.bytesToString();
+
+    final Object? decoded = jsonDecode(body);
+    if (streamed.statusCode != 200) {
+      final String detail = decoded is Map
+          ? decoded['detail']?.toString() ??
+              'Document analysis failed.'
+          : 'Document analysis failed.';
+      throw StateError(
+        'Document analysis failed: $detail',
+      );
+    }
+
+    if (decoded is! Map) {
+      throw const FormatException(
+        'Invalid document analysis response.',
+      );
+    }
+
+    final Map<String, dynamic> data =
+        Map<String, dynamic>.from(decoded);
+
+    return JarvisFrontierResult(
+      answer: data['answer']?.toString() ?? '',
+      model: data['model']?.toString() ?? '',
+      mode: data['mode']?.toString() ?? 'file',
+      sources: const <Map<String, String>>[],
+    );
+  }
+
+
   Future<JarvisGeneratedImage> generateImage(
     String prompt,
   ) async {
