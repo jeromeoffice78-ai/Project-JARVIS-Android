@@ -237,6 +237,11 @@ class MainActivity : FlutterFragmentActivity() {{
     private val controlChannel = "jarvis.system_control"
     private val prefsName = "jarvis_phone"
 
+    override fun onNewIntent(intent: Intent) {{
+        super.onNewIntent(intent)
+        setIntent(intent)
+    }}
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {{
         super.configureFlutterEngine(flutterEngine)
 
@@ -256,6 +261,28 @@ class MainActivity : FlutterFragmentActivity() {{
             when (call.method) {{
                 "isDefaultDialer" -> result.success(isDefaultDialer())
                 "requestDefaultDialer" -> result.success(requestDefaultDialer())
+                "consumeLaunchTarget" -> {{
+                    val target =
+                        intent?.getStringExtra("jarvis_launch_target").orEmpty()
+                    intent?.removeExtra("jarvis_launch_target")
+                    result.success(target)
+                }}
+                "getActiveCall" ->
+                    result.success(JarvisInCallService.activeCallSnapshot())
+                "answerActiveCall" ->
+                    result.success(JarvisInCallService.answerActiveCall())
+                "rejectActiveCall" ->
+                    result.success(JarvisInCallService.rejectActiveCall())
+                "disconnectActiveCall" ->
+                    result.success(JarvisInCallService.disconnectActiveCall())
+                "setMuted" -> {{
+                    val muted = call.argument<Boolean>("muted") ?: false
+                    result.success(JarvisInCallService.setCallMuted(muted))
+                }}
+                "setSpeaker" -> {{
+                    val enabled = call.argument<Boolean>("enabled") ?: false
+                    result.success(JarvisInCallService.setSpeakerEnabled(enabled))
+                }}
                 "setAutoAnswer" -> {{
                     val enabled = call.argument<Boolean>("enabled") ?: false
                     getSharedPreferences(prefsName, Context.MODE_PRIVATE)
@@ -374,6 +401,30 @@ class MainActivity : FlutterFragmentActivity() {{
                             durationMs.toLong(),
                         ) ?: false,
                     )
+                }}
+                "typeText" -> {{
+                    val text = call.argument<String>("text").orEmpty()
+                    val service = JarvisAccessibilityService.instance
+                    result.success(
+                        service?.typeIntoFocusedField(text) ?: false,
+                    )
+                }}
+                "launchApp" -> {{
+                    val packageName =
+                        call.argument<String>("packageName")?.trim().orEmpty()
+                    if (packageName.isEmpty()) {{
+                        result.success(false)
+                    }} else {{
+                        val launchIntent =
+                            packageManager.getLaunchIntentForPackage(packageName)
+                        if (launchIntent == null) {{
+                            result.success(false)
+                        }} else {{
+                            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            startActivity(launchIntent)
+                            result.success(true)
+                        }}
+                    }}
                 }}
                 "captureScreenshot" -> {{
                     val service = JarvisAccessibilityService.instance
@@ -752,17 +803,138 @@ import android.app.PendingIntent
 import android.content.Context
 import android.os.Build
 import android.telecom.Call
+import android.telecom.CallAudioState
 import android.telecom.InCallService
 import android.telecom.VideoProfile
 import org.json.JSONArray
 import org.json.JSONObject
 
 class JarvisInCallService : InCallService() {{
+    companion object {{
+        var instance: JarvisInCallService? = null
+            private set
+        var activeCall: Call? = null
+            private set
+
+        fun activeCallSnapshot(): Map<String, Any?>? {{
+            val call = activeCall ?: return null
+            val details = call.details
+            val number =
+                details.handle?.schemeSpecificPart ?: "Unknown caller"
+            val incoming = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {{
+                details.callDirection == Call.Details.DIRECTION_INCOMING
+            }} else {{
+                call.state == Call.STATE_RINGING
+            }}
+            val service = instance
+            val audioState = service?.callAudioState
+            val route = when (audioState?.route) {{
+                CallAudioState.ROUTE_SPEAKER -> "speaker"
+                CallAudioState.ROUTE_BLUETOOTH -> "bluetooth"
+                CallAudioState.ROUTE_WIRED_HEADSET -> "wired_headset"
+                CallAudioState.ROUTE_EARPIECE -> "earpiece"
+                else -> "unknown"
+            }}
+            val state = when (call.state) {{
+                Call.STATE_RINGING -> "ringing"
+                Call.STATE_ACTIVE -> "active"
+                Call.STATE_HOLDING -> "holding"
+                Call.STATE_DIALING -> "dialing"
+                Call.STATE_CONNECTING -> "connecting"
+                Call.STATE_DISCONNECTED -> "disconnected"
+                else -> "other"
+            }}
+            return mapOf(
+                "phoneNumber" to number,
+                "state" to state,
+                "isIncoming" to incoming,
+                "isMuted" to (audioState?.isMuted ?: false),
+                "audioRoute" to route,
+            )
+        }}
+
+        fun answerActiveCall(): Boolean {{
+            val call = activeCall ?: return false
+            return try {{
+                call.answer(VideoProfile.STATE_AUDIO_ONLY)
+                true
+            }} catch (_: Throwable) {{
+                false
+            }}
+        }}
+
+        fun rejectActiveCall(): Boolean {{
+            val call = activeCall ?: return false
+            return try {{
+                if (call.state == Call.STATE_RINGING) {{
+                    call.reject(false, null)
+                }} else {{
+                    call.disconnect()
+                }}
+                true
+            }} catch (_: Throwable) {{
+                false
+            }}
+        }}
+
+        fun disconnectActiveCall(): Boolean {{
+            val call = activeCall ?: return false
+            return try {{
+                call.disconnect()
+                true
+            }} catch (_: Throwable) {{
+                false
+            }}
+        }}
+
+        fun setCallMuted(muted: Boolean): Boolean {{
+            val service = instance ?: return false
+            return try {{
+                service.setMuted(muted)
+                true
+            }} catch (_: Throwable) {{
+                false
+            }}
+        }}
+
+        fun setSpeakerEnabled(enabled: Boolean): Boolean {{
+            val service = instance ?: return false
+            return try {{
+                @Suppress("DEPRECATION")
+                service.setAudioRoute(
+                    if (enabled) {{
+                        CallAudioState.ROUTE_SPEAKER
+                    }} else {{
+                        CallAudioState.ROUTE_EARPIECE
+                    }},
+                )
+                true
+            }} catch (_: Throwable) {{
+                false
+            }}
+        }}
+    }}
+
     private val prefsName = "jarvis_phone"
     private val channelId = "jarvis_calls"
     private val notificationId = 7731
 
+    override fun onCreate() {{
+        super.onCreate()
+        instance = this
+    }}
+
+    override fun onDestroy() {{
+        if (instance === this) {{
+            instance = null
+        }}
+        activeCall = null
+        super.onDestroy()
+    }}
+
     override fun onCallAdded(call: Call) {{
+        super.onCallAdded(call)
+        activeCall = call
         super.onCallAdded(call)
 
         if (!isIncoming(call)) {{
@@ -821,6 +993,9 @@ class JarvisInCallService : InCallService() {{
 
     override fun onCallRemoved(call: Call) {{
         super.onCallRemoved(call)
+        if (activeCall === call) {{
+            activeCall = null
+        }}
         cancelIncomingCallNotification()
     }}
 
@@ -883,7 +1058,9 @@ class JarvisInCallService : InCallService() {{
         }}
 
         val launchIntent =
-            packageManager.getLaunchIntentForPackage(packageName)
+            packageManager.getLaunchIntentForPackage(packageName)?.apply {{
+                putExtra("jarvis_launch_target", "phone")
+            }}
         val pendingIntent = launchIntent?.let {{
             PendingIntent.getActivity(
                 this,
@@ -936,9 +1113,11 @@ import android.accessibilityservice.GestureDescription
 import android.graphics.Bitmap
 import android.graphics.Path
 import android.os.Build
+import android.os.Bundle
 import android.util.Base64
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import java.io.ByteArrayOutputStream
 
 class JarvisAccessibilityService : AccessibilityService() {{
@@ -1049,6 +1228,33 @@ class JarvisAccessibilityService : AccessibilityService() {{
         )
     }}
 
+    fun typeIntoFocusedField(text: String): Boolean {{
+        if (text.isEmpty()) {{
+            return false
+        }}
+
+        val root = rootInActiveWindow ?: return false
+        val focused = root.findFocus(
+            AccessibilityNodeInfo.FOCUS_INPUT,
+        ) ?: return false
+
+        return try {{
+            val arguments = Bundle().apply {{
+                putCharSequence(
+                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                    text,
+                )
+            }}
+            focused.performAction(
+                AccessibilityNodeInfo.ACTION_SET_TEXT,
+                arguments,
+            )
+        }} finally {{
+            focused.recycle()
+            root.recycle()
+        }}
+    }}
+
     fun performNamedGlobalAction(action: String): Boolean {{
         val globalAction = when (action.lowercase()) {{
             "back" -> GLOBAL_ACTION_BACK
@@ -1146,7 +1352,8 @@ class JarvisAccessibilityService : AccessibilityService() {{
     android:accessibilityFeedbackType="feedbackGeneric"
     android:notificationTimeout="100"
     android:canPerformGestures="true"
-    android:canRetrieveWindowContent="false" />
+    android:canRetrieveWindowContent="true"
+    android:description="@string/app_name" />
 """,
         encoding="utf-8",
     )

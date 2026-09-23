@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -23,15 +25,23 @@ class _JarvisPhoneScreenState
   bool _autoAnswer = false;
   List<JarvisCallMessage> _messages =
       const <JarvisCallMessage>[];
+  JarvisActiveCall? _activeCall;
+  Timer? _callTimer;
 
   @override
   void initState() {
     super.initState();
     _refresh();
+    _callTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => unawaited(_refreshActiveCall()),
+    );
   }
 
   @override
   void dispose() {
+    _callTimer?.cancel();
+    _callTimer = null;
     _greetingController.dispose();
     super.dispose();
   }
@@ -58,6 +68,43 @@ class _JarvisPhoneScreenState
       _greetingController.text = greeting;
       _loading = false;
     });
+  }
+
+  Future<void> _refreshActiveCall() async {
+    final JarvisPhoneService phone =
+        ref.read(jarvisPhoneServiceProvider);
+    final JarvisActiveCall? call =
+        await phone.getActiveCall();
+
+    if (!mounted) return;
+
+    if (_activeCall?.phoneNumber !=
+            call?.phoneNumber ||
+        _activeCall?.state != call?.state ||
+        _activeCall?.isMuted != call?.isMuted ||
+        _activeCall?.audioRoute !=
+            call?.audioRoute) {
+      setState(() {
+        _activeCall = call;
+      });
+    }
+  }
+
+  Future<void> _runCallAction(
+    Future<bool> Function() action,
+  ) async {
+    final bool ok = await action();
+    await _refreshActiveCall();
+
+    if (!mounted || ok) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Android could not complete that call action.',
+        ),
+      ),
+    );
   }
 
   Future<void> _requestRole() async {
@@ -112,6 +159,148 @@ class _JarvisPhoneScreenState
           : ListView(
               padding: const EdgeInsets.all(16),
               children: <Widget>[
+                if (_activeCall != null) ...[
+                  Card(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .primaryContainer,
+                    child: Padding(
+                      padding:
+                          const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment:
+                            CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Row(
+                            children: <Widget>[
+                              const Icon(
+                                Icons.phone_in_talk,
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment
+                                          .start,
+                                  children: <Widget>[
+                                    const Text(
+                                      'Active call',
+                                      style: TextStyle(
+                                        fontWeight:
+                                            FontWeight.bold,
+                                      ),
+                                    ),
+                                    Text(
+                                      _activeCall!
+                                          .phoneNumber,
+                                    ),
+                                    Text(
+                                      '${_activeCall!.state.toUpperCase()} • ${_activeCall!.audioRoute}',
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 14),
+                          Wrap(
+                            spacing: 10,
+                            runSpacing: 10,
+                            children: <Widget>[
+                              if (_activeCall!
+                                  .isRinging)
+                                FilledButton.icon(
+                                  onPressed: () =>
+                                      _runCallAction(
+                                    phone
+                                        .answerActiveCall,
+                                  ),
+                                  icon: const Icon(
+                                    Icons.call,
+                                  ),
+                                  label: const Text(
+                                    'Answer',
+                                  ),
+                                ),
+                              if (_activeCall!
+                                  .isRinging)
+                                OutlinedButton.icon(
+                                  onPressed: () =>
+                                      _runCallAction(
+                                    phone
+                                        .rejectActiveCall,
+                                  ),
+                                  icon: const Icon(
+                                    Icons.call_end,
+                                  ),
+                                  label: const Text(
+                                    'Reject',
+                                  ),
+                                ),
+                              if (!_activeCall!
+                                  .isRinging)
+                                FilledButton.icon(
+                                  onPressed: () =>
+                                      _runCallAction(
+                                    phone
+                                        .disconnectActiveCall,
+                                  ),
+                                  icon: const Icon(
+                                    Icons.call_end,
+                                  ),
+                                  label: const Text(
+                                    'End Call',
+                                  ),
+                                ),
+                              FilterChip(
+                                selected:
+                                    _activeCall!
+                                        .isMuted,
+                                avatar: const Icon(
+                                  Icons.mic_off,
+                                  size: 18,
+                                ),
+                                label: const Text(
+                                  'Mute',
+                                ),
+                                onSelected:
+                                    (bool value) =>
+                                        _runCallAction(
+                                  () => phone
+                                      .setMuted(
+                                    value,
+                                  ),
+                                ),
+                              ),
+                              FilterChip(
+                                selected:
+                                    _activeCall!
+                                            .audioRoute ==
+                                        'speaker',
+                                avatar: const Icon(
+                                  Icons.volume_up,
+                                  size: 18,
+                                ),
+                                label: const Text(
+                                  'Speaker',
+                                ),
+                                onSelected:
+                                    (bool value) =>
+                                        _runCallAction(
+                                  () => phone
+                                      .setSpeaker(
+                                    value,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 Card(
                   child: ListTile(
                     leading: Icon(

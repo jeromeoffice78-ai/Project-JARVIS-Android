@@ -15,6 +15,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'jarvis_action_approval_service.dart';
 import '../devices/jarvis_cloud_device_network.dart';
 import '../music/jarvis_music_service.dart';
+import '../phone/jarvis_phone_service.dart';
+import '../system_control/jarvis_system_control_service.dart';
 import '../vision/jarvis_vision_service.dart';
 import '../voice/jarvis_voice_service.dart';
 import '../printer/jarvis_print_router.dart';
@@ -39,6 +41,8 @@ class JarvisCapabilityService {
     required JarvisMusicService musicService,
     required JarvisVisionService visionService,
     required JarvisVoiceService voiceService,
+    required JarvisPhoneService phoneService,
+    required JarvisSystemControlService systemControlService,
     http.Client? httpClient,
   })  : _approvalService = approvalService,
         _printRouter = printRouter,
@@ -46,6 +50,8 @@ class JarvisCapabilityService {
         _musicService = musicService,
         _visionService = visionService,
         _voiceService = voiceService,
+        _phoneService = phoneService,
+        _systemControlService = systemControlService,
         _httpClient = httpClient ?? http.Client() {
     tz_data.initializeTimeZones();
   }
@@ -59,6 +65,8 @@ class JarvisCapabilityService {
   final JarvisMusicService _musicService;
   final JarvisVisionService _visionService;
   final JarvisVoiceService _voiceService;
+  final JarvisPhoneService _phoneService;
+  final JarvisSystemControlService _systemControlService;
   final http.Client _httpClient;
   final DeviceCalendarPlugin _calendar =
       DeviceCalendarPlugin();
@@ -143,6 +151,61 @@ class JarvisCapabilityService {
         case 'handoff_jarvis_device':
           return _handoffJarvisDevice(
             parameters,
+          );
+
+        case 'phone_active_call':
+          return _phoneActiveCall();
+
+        case 'phone_answer_call':
+          return _phoneControl(
+            'answer',
+          );
+
+        case 'phone_reject_call':
+          return _phoneControl(
+            'reject',
+          );
+
+        case 'phone_end_call':
+          return _phoneControl(
+            'end',
+          );
+
+        case 'phone_set_mute':
+          return _phoneSetMute(parameters);
+
+        case 'phone_set_speaker':
+          return _phoneSetSpeaker(parameters);
+
+        case 'system_global_action':
+          return _systemGlobalAction(
+            parameters,
+          );
+
+        case 'system_type_text':
+          return _systemTypeText(
+            requestId: requestId,
+            callId: callId,
+            parameters: parameters,
+          );
+
+        case 'system_launch_app':
+          return _systemLaunchApp(
+            parameters,
+          );
+
+        case 'system_tap':
+          return _systemTap(
+            requestId: requestId,
+            callId: callId,
+            parameters: parameters,
+          );
+
+        case 'system_swipe':
+          return _systemSwipe(
+            requestId: requestId,
+            callId: callId,
+            parameters: parameters,
           );
 
         default:
@@ -1172,6 +1235,337 @@ class JarvisCapabilityService {
     return partial.length == 1
         ? partial.single
         : null;
+  }
+
+  Future<JarvisCapabilityResult>
+      _phoneActiveCall() async {
+    final JarvisActiveCall? call =
+        await _phoneService.getActiveCall();
+
+    if (call == null) {
+      return const JarvisCapabilityResult(
+        ok: true,
+        result: <String, dynamic>{
+          'active_call': false,
+        },
+      );
+    }
+
+    return JarvisCapabilityResult(
+      ok: true,
+      result: <String, dynamic>{
+        'active_call': true,
+        'phone_number': call.phoneNumber,
+        'state': call.state,
+        'incoming': call.isIncoming,
+        'muted': call.isMuted,
+        'audio_route': call.audioRoute,
+      },
+    );
+  }
+
+  Future<JarvisCapabilityResult> _phoneControl(
+    String action,
+  ) async {
+    final bool ok = switch (action) {
+      'answer' =>
+        await _phoneService.answerActiveCall(),
+      'reject' =>
+        await _phoneService.rejectActiveCall(),
+      'end' =>
+        await _phoneService.disconnectActiveCall(),
+      _ => false,
+    };
+
+    return JarvisCapabilityResult(
+      ok: ok,
+      result: <String, dynamic>{
+        'action': action,
+        'completed': ok,
+      },
+      error: ok
+          ? null
+          : 'Android could not complete the call action.',
+    );
+  }
+
+  Future<JarvisCapabilityResult>
+      _phoneSetMute(
+    Map<String, dynamic> parameters,
+  ) async {
+    final bool muted =
+        parameters['muted'] == true;
+    final bool ok =
+        await _phoneService.setMuted(muted);
+
+    return JarvisCapabilityResult(
+      ok: ok,
+      result: <String, dynamic>{
+        'muted': muted,
+      },
+      error: ok
+          ? null
+          : 'Android could not change call mute state.',
+    );
+  }
+
+  Future<JarvisCapabilityResult>
+      _phoneSetSpeaker(
+    Map<String, dynamic> parameters,
+  ) async {
+    final bool enabled =
+        parameters['enabled'] == true;
+    final bool ok =
+        await _phoneService.setSpeaker(
+      enabled,
+    );
+
+    return JarvisCapabilityResult(
+      ok: ok,
+      result: <String, dynamic>{
+        'speaker': enabled,
+      },
+      error: ok
+          ? null
+          : 'Android could not change call audio route.',
+    );
+  }
+
+  Future<JarvisCapabilityResult>
+      _systemGlobalAction(
+    Map<String, dynamic> parameters,
+  ) async {
+    final String action =
+        parameters['action']
+                ?.toString()
+                .trim() ??
+            '';
+
+    final bool ok =
+        await _systemControlService
+            .performGlobalAction(action);
+
+    return JarvisCapabilityResult(
+      ok: ok,
+      result: <String, dynamic>{
+        'action': action,
+      },
+      error: ok
+          ? null
+          : 'Android system action was unavailable.',
+    );
+  }
+
+  Future<JarvisCapabilityResult>
+      _systemTypeText({
+    required String requestId,
+    required String callId,
+    required Map<String, dynamic> parameters,
+  }) async {
+    final String text =
+        parameters['text']
+                ?.toString() ??
+            '';
+
+    if (text.isEmpty) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error: 'Text input is empty.',
+      );
+    }
+
+    final bool approved =
+        await _approvalService.request(
+      JarvisActionApprovalRequest(
+        id: '$requestId:$callId',
+        title:
+            'Let Jarvis type into the focused field?',
+        description: text,
+        action: 'system_type_text',
+        parameters: parameters,
+      ),
+    );
+
+    if (!approved) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error:
+            'Text entry was not approved.',
+      );
+    }
+
+    final bool ok =
+        await _systemControlService
+            .typeIntoFocusedField(text);
+
+    return JarvisCapabilityResult(
+      ok: ok,
+      result: <String, dynamic>{
+        'typed': ok,
+        'character_count': text.length,
+      },
+      error: ok
+          ? null
+          : 'No editable focused field was available.',
+    );
+  }
+
+  Future<JarvisCapabilityResult>
+      _systemLaunchApp(
+    Map<String, dynamic> parameters,
+  ) async {
+    final String packageName =
+        parameters['package_name']
+                ?.toString()
+                .trim() ??
+            '';
+
+    if (packageName.isEmpty) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error:
+            'Android package name is empty.',
+      );
+    }
+
+    final bool ok =
+        await _systemControlService
+            .launchAppPackage(packageName);
+
+    return JarvisCapabilityResult(
+      ok: ok,
+      result: <String, dynamic>{
+        'package_name': packageName,
+        'opened': ok,
+      },
+      error: ok
+          ? null
+          : 'Android could not launch that package.',
+    );
+  }
+
+  Future<JarvisCapabilityResult> _systemTap({
+    required String requestId,
+    required String callId,
+    required Map<String, dynamic> parameters,
+  }) async {
+    final double? x =
+        (parameters['x'] as num?)?.toDouble();
+    final double? y =
+        (parameters['y'] as num?)?.toDouble();
+
+    if (x == null || y == null || x < 0 || y < 0) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error: 'Tap coordinates are invalid.',
+      );
+    }
+
+    final bool approved =
+        await _approvalService.request(
+      JarvisActionApprovalRequest(
+        id: '$requestId:$callId',
+        title: 'Let Jarvis tap the screen?',
+        description:
+            'Tap at screen coordinates (${x.toStringAsFixed(0)}, ${y.toStringAsFixed(0)}).',
+        action: 'system_tap',
+        parameters: parameters,
+      ),
+    );
+
+    if (!approved) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error: 'Screen tap was not approved.',
+      );
+    }
+
+    final bool ok =
+        await _systemControlService.tap(x: x, y: y);
+
+    return JarvisCapabilityResult(
+      ok: ok,
+      result: <String, dynamic>{
+        'x': x,
+        'y': y,
+        'tapped': ok,
+      },
+      error: ok
+          ? null
+          : 'Android could not perform the tap.',
+    );
+  }
+
+  Future<JarvisCapabilityResult> _systemSwipe({
+    required String requestId,
+    required String callId,
+    required Map<String, dynamic> parameters,
+  }) async {
+    final double? startX =
+        (parameters['start_x'] as num?)?.toDouble();
+    final double? startY =
+        (parameters['start_y'] as num?)?.toDouble();
+    final double? endX =
+        (parameters['end_x'] as num?)?.toDouble();
+    final double? endY =
+        (parameters['end_y'] as num?)?.toDouble();
+    final int durationMs =
+        (((parameters['duration_ms'] as num?)
+                    ?.toInt() ??
+                350)
+            .clamp(100, 5000))
+            .toInt();
+
+    if (<double?>[startX, startY, endX, endY]
+            .any((double? value) => value == null || value < 0)) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error: 'Swipe coordinates are invalid.',
+      );
+    }
+
+    final bool approved =
+        await _approvalService.request(
+      JarvisActionApprovalRequest(
+        id: '$requestId:$callId',
+        title: 'Let Jarvis swipe the screen?',
+        description:
+            'Swipe from (${startX!.toStringAsFixed(0)}, ${startY!.toStringAsFixed(0)}) to (${endX!.toStringAsFixed(0)}, ${endY!.toStringAsFixed(0)}).',
+        action: 'system_swipe',
+        parameters: parameters,
+      ),
+    );
+
+    if (!approved) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error: 'Screen swipe was not approved.',
+      );
+    }
+
+    final bool ok =
+        await _systemControlService.swipe(
+      startX: startX!,
+      startY: startY!,
+      endX: endX!,
+      endY: endY!,
+      durationMs: durationMs,
+    );
+
+    return JarvisCapabilityResult(
+      ok: ok,
+      result: <String, dynamic>{
+        'start_x': startX,
+        'start_y': startY,
+        'end_x': endX,
+        'end_y': endY,
+        'duration_ms': durationMs,
+        'swiped': ok,
+      },
+      error: ok
+          ? null
+          : 'Android could not perform the swipe.',
+    );
   }
 
   Future<JarvisCapabilityResult> _openWebUrl(

@@ -14,6 +14,7 @@ import '../presence/jarvis_presence_screen.dart';
 import '../memory/jarvis_memory_screen.dart';
 import '../music/jarvis_music_now_playing.dart';
 import '../people/people_memory_screen.dart';
+import '../phone/jarvis_phone_screen.dart';
 import '../system/jarvis_system_screen.dart';
 import '../vision/jarvis_vision_screen.dart';
 import '../voice/jarvis_voice_screen.dart';
@@ -27,8 +28,10 @@ class JarvisShell extends ConsumerStatefulWidget {
 }
 
 class _JarvisShellState
-    extends ConsumerState<JarvisShell> {
+    extends ConsumerState<JarvisShell>
+    with WidgetsBindingObserver {
   int _index = 0;
+  bool _openingPhoneScreen = false;
 
   StreamSubscription<JarvisActionApprovalRequest>?
       _approvalSubscription;
@@ -36,6 +39,11 @@ class _JarvisShellState
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => unawaited(_consumeLaunchTarget()),
+    );
 
     // Start printer presence/heartbeat immediately with the Jarvis shell so
     // cross-device routing knows which Android device currently hosts a printer.
@@ -59,6 +67,39 @@ class _JarvisShellState
         );
       },
     );
+  }
+
+  Future<void> _consumeLaunchTarget() async {
+    final String target = await ref
+        .read(jarvisPhoneServiceProvider)
+        .consumeLaunchTarget();
+
+    if (!mounted ||
+        target != 'phone' ||
+        _openingPhoneScreen) {
+      return;
+    }
+
+    _openingPhoneScreen = true;
+    try {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (BuildContext context) =>
+              const JarvisPhoneScreen(),
+        ),
+      );
+    } finally {
+      _openingPhoneScreen = false;
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(
+    AppLifecycleState state,
+  ) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_consumeLaunchTarget());
+    }
   }
 
   Future<void> _showApprovalDialog(
@@ -125,6 +166,7 @@ class _JarvisShellState
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _approvalSubscription?.cancel();
     _approvalSubscription = null;
     super.dispose();

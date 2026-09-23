@@ -373,6 +373,22 @@ class _FakeRealtimeHttpClient:
         assert kwargs["json"]["session"]["audio"]["input"]["transcription"]["model"] == "gpt-live-transcribe"
         assert "Recent conversation with Marcus." in kwargs["json"]["session"]["instructions"]
         assert "Listen first" in kwargs["json"]["session"]["instructions"]
+        tool_names = {
+            tool["name"]
+            for tool in kwargs["json"]["session"]["tools"]
+            if tool.get("type") == "function"
+        }
+        assert "phone_active_call" in tool_names
+        assert "phone_answer_call" in tool_names
+        assert "phone_reject_call" in tool_names
+        assert "phone_end_call" in tool_names
+        assert "phone_set_mute" in tool_names
+        assert "phone_set_speaker" in tool_names
+        assert "system_global_action" in tool_names
+        assert "system_type_text" in tool_names
+        assert "system_launch_app" in tool_names
+        assert "system_tap" in tool_names
+        assert "system_swipe" in tool_names
         return _FakeRealtimeHttpResponse()
 
 
