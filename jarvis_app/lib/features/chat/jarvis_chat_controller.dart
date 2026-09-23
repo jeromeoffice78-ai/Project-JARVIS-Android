@@ -116,16 +116,20 @@ class JarvisChatController {
       return null;
     }
 
-    if (_activeRequestId != null && _state.isGenerating) {
-      cancelCurrentResponse();
-    }
-
     final _JarvisMusicCommand? musicCommand =
         _parseMusicCommand(normalized);
 
     if (musicCommand != null) {
+      if (_activeRequestId != null &&
+          _state.isGenerating) {
+        cancelCurrentResponse();
+      }
+
       final String requestId =
-          generateUuidV4();
+          'music-' +
+          DateTime.now()
+              .microsecondsSinceEpoch
+              .toString();
 
       _activeRequestId = requestId;
       _currentResponseBuffer = '';
@@ -148,6 +152,10 @@ class JarvisChatController {
       );
 
       return requestId;
+    }
+
+    if (_activeRequestId != null && _state.isGenerating) {
+      cancelCurrentResponse();
     }
 
     final bool autoPrint =
@@ -203,25 +211,14 @@ class JarvisChatController {
     }
   }
 
-
   _JarvisMusicCommand? _parseMusicCommand(
-    String input,
+    String normalized,
   ) {
-    String normalized = input.trim();
-
-    normalized = normalized.replaceFirst(
-      RegExp(
-        r'^jarvis\s*[,\-:]?\s*',
-        caseSensitive: false,
-      ),
-      '',
-    );
-
     final String lower =
-        normalized.toLowerCase();
+        normalized.trim().toLowerCase();
 
     if (RegExp(
-      r'^(pause|stop)\s+(the\s+)?(music|song|track)
+      r'^(?:jarvis[, ]*)?(?:pause|stop)\s+(?:the\s+)?(?:music|song)
     final String lower =
         query.toLowerCase();
 
@@ -791,7 +788,7 @@ Then add one blank line and the complete document body. Do not include markdown 
     }
 
     if (RegExp(
-      r'^(resume|continue)\s+(the\s+)?(music|song|track)
+      r'^(?:jarvis[, ]*)?(?:resume|continue)\s+(?:the\s+)?(?:music|song)
     final String lower =
         query.toLowerCase();
 
@@ -1361,7 +1358,7 @@ Then add one blank line and the complete document body. Do not include markdown 
     }
 
     final RegExp playPattern = RegExp(
-      r'^(?:please\s+)?(?:play\s+me\s+|play\s+|put\s+on\s+)(.+)
+      r'^(?:jarvis[, ]*)?(?:play|put on)\s+(.+?)(?:\s+for me)?[.!?]*
     final String lower =
         query.toLowerCase();
 
@@ -1943,9 +1940,7 @@ Then add one blank line and the complete document body. Do not include markdown 
       return null;
     }
 
-    return _JarvisMusicCommand.play(
-      query,
-    );
+    return _JarvisMusicCommand.play(query);
   }
 
   Future<void> _executeMusicCommand(
@@ -1961,14 +1956,16 @@ Then add one blank line and the complete document body. Do not include markdown 
               await _musicService.searchAndPlay(
             command.query,
           );
-
           final String artist =
               track.author.trim().isEmpty
                   ? ''
-                  : ' by ${track.author.trim()}';
-
+                  : ' by ' +
+                      track.author.trim();
           responseText =
-              'Playing ${track.title}${artist} inside Jarvis.';
+              'Playing ' +
+              track.title +
+              artist +
+              ' inside Jarvis.';
           break;
 
         case _JarvisMusicCommandType.pause:
@@ -2012,7 +2009,8 @@ Then add one blank line and the complete document body. Do not include markdown 
           responseText: '',
           requestId: requestId,
           errorMessage:
-              'Jarvis could not play that song: ${error}',
+              'Jarvis could not play that song: ' +
+                  error.toString(),
           retryable: true,
         ),
       );
