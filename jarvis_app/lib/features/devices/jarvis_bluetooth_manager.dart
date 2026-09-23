@@ -63,6 +63,7 @@ final class JarvisBluetoothState {
 
 class JarvisBluetoothManager {
   JarvisBluetoothManager() {
+    UniversalBle.queueType = QueueType.perDevice;
     _scanSubscription =
         UniversalBle.scanStream.listen(_handleScanResult);
     _availabilitySubscription =
