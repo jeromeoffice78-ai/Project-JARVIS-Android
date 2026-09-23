@@ -313,7 +313,7 @@ class MainActivity : FlutterFragmentActivity() {{
                         val printManager =
                             getSystemService(Context.PRINT_SERVICE) as PrintManager
                         val text =
-                            "JARVIS printer test\\nHP OfficeJet 2620 USB/OTG path\\nAndroid system print framework"
+                            "JARVIS printer test\\\\nHP OfficeJet 2620 USB/OTG path\\\\nAndroid system print framework"
                         printManager.print(
                             "JARVIS Test Print",
                             JarvisTextPrintAdapter(this, text),
