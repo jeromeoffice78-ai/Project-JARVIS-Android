@@ -5,6 +5,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:http/http.dart' as http;
 
 import '../../core/network/jarvis_api_service.dart';
+import '../people/jarvis_voice_identity_service.dart';
 import '../people/person_profile.dart';
 
 enum JarvisRealtimeVoiceStatus {
@@ -112,8 +113,10 @@ final class _VoiceDirection {
 class JarvisRealtimeVoiceService {
   JarvisRealtimeVoiceService({
     required JarvisApiService apiService,
+    required JarvisVoiceIdentityService voiceIdentityService,
     http.Client? httpClient,
   })  : _apiService = apiService,
+        _voiceIdentityService = voiceIdentityService,
         _httpClient = httpClient ?? http.Client();
 
   static const Set<String> supportedVoices =
@@ -143,6 +146,7 @@ class JarvisRealtimeVoiceService {
   };
 
   final JarvisApiService _apiService;
+  final JarvisVoiceIdentityService _voiceIdentityService;
   final http.Client _httpClient;
 
   final StreamController<JarvisRealtimeVoiceState>
@@ -184,6 +188,7 @@ class JarvisRealtimeVoiceService {
     }
 
     await _refreshKnownPeople();
+    await _identifySpeakerBeforeConversation();
 
     await _connect(
       preserveConversation: true,
@@ -282,6 +287,58 @@ class JarvisRealtimeVoiceService {
     } on Object {
       _knownPeople =
           const <PersonProfile>[];
+    }
+  }
+
+  Future<void>
+      _identifySpeakerBeforeConversation() async {
+    if (_knownPeople.isEmpty) {
+      return;
+    }
+
+    try {
+      final Set<String> enrolledIds =
+          await _voiceIdentityService
+              .listVoiceProfileIds();
+
+      if (enrolledIds.isEmpty) {
+        return;
+      }
+
+      final JarvisVoiceIdentityMatch match =
+          await _voiceIdentityService
+              .identifySpeaker();
+
+      if (!match.matched ||
+          match.personId.isEmpty) {
+        return;
+      }
+
+      PersonProfile? person;
+      for (final PersonProfile candidate
+          in _knownPeople) {
+        if (candidate.personId ==
+            match.personId) {
+          person = candidate;
+          break;
+        }
+      }
+
+      if (person == null) {
+        return;
+      }
+
+      await setActiveSpeaker(person);
+
+      _recordTurn(
+        'System',
+        'Voice profile matched ${person.displayName} '
+            'with similarity '
+            '${match.similarity.toStringAsFixed(3)}.',
+      );
+    } on Object {
+      // Voice matching is best-effort. Failure must not
+      // prevent the live conversation from starting.
     }
   }
 
