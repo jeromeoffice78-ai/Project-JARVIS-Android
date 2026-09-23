@@ -193,10 +193,25 @@ class _FakeImages:
         )
 
 
+class _FakeFiles:
+    def __init__(self):
+        self.created = []
+        self.deleted = []
+
+    async def create(self, **kwargs):
+        self.created.append(kwargs)
+        return SimpleNamespace(id="file-test-123")
+
+    async def delete(self, file_id):
+        self.deleted.append(file_id)
+        return SimpleNamespace(id=file_id, deleted=True)
+
+
 class _FakeFrontierOpenAI:
     def __init__(self):
         self.responses = _FakeFrontierResponses()
         self.images = _FakeImages()
+        self.files = _FakeFiles()
 
     async def close(self):
         return None
@@ -275,3 +290,54 @@ def test_frontier_image_returns_base64_image():
         payload = response.json()
         assert payload["image_base64"] == "ZmFrZS1pbWFnZQ=="
         assert payload["model"] == api.IMAGE_MODEL
+
+
+def test_frontier_reason_accepts_screen_image():
+    with TestClient(api.app) as client:
+        fake = _FakeFrontierOpenAI()
+        api.app.state.frontier_openai = fake
+        response = client.post(
+            "/v1/frontier/query",
+            headers={"Authorization": "Bearer test-client-token"},
+            json={
+                "prompt": "Analyze this screen.",
+                "mode": "reason",
+                "image_base64": "ZmFrZS1wbmc=",
+            },
+        )
+
+        assert response.status_code == 200
+        call = fake.responses.calls[-1]
+        assert isinstance(call["input"], list)
+        content = call["input"][0]["content"]
+        assert content[0]["type"] == "input_text"
+        assert content[1]["type"] == "input_image"
+        assert content[1]["image_url"].startswith("data:image/png;base64,")
+
+
+def test_frontier_file_upload_is_analyzed_and_deleted():
+    with TestClient(api.app) as client:
+        fake = _FakeFrontierOpenAI()
+        api.app.state.frontier_openai = fake
+        response = client.post(
+            "/v1/frontier/file",
+            headers={"Authorization": "Bearer test-client-token"},
+            data={"prompt": "Summarize this document."},
+            files={
+                "document": (
+                    "example.txt",
+                    b"Important document content.",
+                    "text/plain",
+                )
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["mode"] == "file"
+        assert fake.files.created
+        assert fake.files.created[-1]["purpose"] == "user_data"
+        assert fake.files.deleted == ["file-test-123"]
+        call = fake.responses.calls[-1]
+        assert call["input"][0]["content"][0]["type"] == "input_file"
+        assert call["input"][0]["content"][0]["file_id"] == "file-test-123"
