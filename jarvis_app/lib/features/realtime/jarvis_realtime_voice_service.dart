@@ -5,6 +5,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:http/http.dart' as http;
 
 import '../../core/network/jarvis_api_service.dart';
+import '../capabilities/jarvis_capability_service.dart';
 import '../people/jarvis_voice_identity_service.dart';
 import '../people/person_profile.dart';
 
@@ -114,9 +115,11 @@ class JarvisRealtimeVoiceService {
   JarvisRealtimeVoiceService({
     required JarvisApiService apiService,
     required JarvisVoiceIdentityService voiceIdentityService,
+    required JarvisCapabilityService capabilityService,
     http.Client? httpClient,
   })  : _apiService = apiService,
         _voiceIdentityService = voiceIdentityService,
+        _capabilityService = capabilityService,
         _httpClient = httpClient ?? http.Client();
 
   static const Set<String> supportedVoices =
@@ -147,6 +150,7 @@ class JarvisRealtimeVoiceService {
 
   final JarvisApiService _apiService;
   final JarvisVoiceIdentityService _voiceIdentityService;
+  final JarvisCapabilityService _capabilityService;
   final http.Client _httpClient;
 
   final StreamController<JarvisRealtimeVoiceState>
@@ -542,6 +546,28 @@ class JarvisRealtimeVoiceService {
           event['type']?.toString() ?? '';
 
       if (type ==
+          'response.function_call_arguments.done') {
+        final String callId =
+            event['call_id']?.toString() ?? '';
+        final String name =
+            event['name']?.toString() ?? '';
+        final String rawArguments =
+            event['arguments']?.toString() ?? '{}';
+
+        if (callId.isNotEmpty &&
+            name.isNotEmpty) {
+          unawaited(
+            _executeRealtimeTool(
+              callId: callId,
+              name: name,
+              rawArguments: rawArguments,
+            ),
+          );
+        }
+        return;
+      }
+
+      if (type ==
           'input_audio_buffer.speech_started') {
         _emit(
           _state.copyWith(
@@ -724,6 +750,96 @@ class JarvisRealtimeVoiceService {
     } on FormatException {
       // Ignore malformed/non-JSON data-channel events.
     }
+  }
+
+  Future<void> _executeRealtimeTool({
+    required String callId,
+    required String name,
+    required String rawArguments,
+  }) async {
+    final RTCDataChannel? channel =
+        _dataChannel;
+
+    if (channel == null ||
+        channel.state !=
+            RTCDataChannelState
+                .RTCDataChannelOpen) {
+      return;
+    }
+
+    Map<String, dynamic> arguments =
+        const <String, dynamic>{};
+
+    try {
+      final Object? decoded =
+          jsonDecode(rawArguments);
+      if (decoded is Map) {
+        arguments =
+            Map<String, dynamic>.from(
+          decoded,
+        );
+      }
+    } on FormatException {
+      arguments =
+          const <String, dynamic>{};
+    }
+
+    _emit(
+      _state.copyWith(
+        activity:
+            JarvisConversationActivity.thinking,
+        clearError: true,
+      ),
+    );
+
+    final JarvisCapabilityResult result =
+        await _capabilityService.execute(
+      requestId: callId,
+      callId: callId,
+      action: name,
+      parameters: arguments,
+    );
+
+    if (_disposed ||
+        _dataChannel != channel) {
+      return;
+    }
+
+    final String output = jsonEncode(
+      <String, dynamic>{
+        'ok': result.ok,
+        'result': result.result,
+        if (result.error != null)
+          'error': result.error,
+      },
+    );
+
+    channel.send(
+      RTCDataChannelMessage(
+        jsonEncode(
+          <String, dynamic>{
+            'type':
+                'conversation.item.create',
+            'item': <String, dynamic>{
+              'type':
+                  'function_call_output',
+              'call_id': callId,
+              'output': output,
+            },
+          },
+        ),
+      ),
+    );
+
+    channel.send(
+      RTCDataChannelMessage(
+        jsonEncode(
+          const <String, dynamic>{
+            'type': 'response.create',
+          },
+        ),
+      ),
+    );
   }
 
   Future<void> _learnSpeakerFromIntroduction(
