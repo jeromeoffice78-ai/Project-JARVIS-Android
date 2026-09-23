@@ -129,8 +129,9 @@ function configureHead(node){
     if(o.morphTargetDictionary && Object.keys(o.morphTargetDictionary).length){
       morphMeshes.push(o);
     }
-    const mats=Array.isArray(o.material)?o.material:[o.material];
-    o.material=mats.map(m=>{
+    const multi=Array.isArray(o.material);
+    const mats=multi?o.material:[o.material];
+    const mapped=mats.map(m=>{
       const n=materialName(m);
       if(n==='VitSkin' || n.includes('Skin')) return skinMat;
       if(n==='VitMouth' || n.includes('Mouth')) return mouthMat;
@@ -140,22 +141,23 @@ function configureHead(node){
       if(n.includes('Scalp')) return new THREE.MeshStandardMaterial({color:0x2a1d15,roughness:.8});
       return m || skinMat;
     });
-    if(!Array.isArray(o.material)) o.material=o.material[0];
+    o.material=multi?mapped:mapped[0];
   });
 }
 function configureBody(node){
   node.traverse(o=>{
     if(!o.isMesh) return;
     o.castShadow=true; o.receiveShadow=true;
-    const mats=Array.isArray(o.material)?o.material:[o.material];
-    o.material=mats.map(m=>{
+    const multi=Array.isArray(o.material);
+    const mats=multi?o.material:[o.material];
+    const mapped=mats.map(m=>{
       const n=materialName(m);
       if(n.includes('Shirt')) return new THREE.MeshStandardMaterial({color:0x111827,roughness:.72});
       if(n.includes('Pants')) return new THREE.MeshStandardMaterial({color:0x0b0f16,roughness:.78});
       if(n.includes('Shoes')) return new THREE.MeshStandardMaterial({color:0x090909,roughness:.45});
       return new THREE.MeshStandardMaterial({color:0x825f4a,roughness:.62});
     });
-    if(!Array.isArray(o.material)) o.material=o.material[0];
+    o.material=multi?mapped:mapped[0];
   });
 }
 function configureHair(node){
