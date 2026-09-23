@@ -59,6 +59,17 @@ jobs:
           test "$(stat -c %s assets/models/CesiumMan.glb)" -eq 438044
           flutter pub get
 
+      - name: Bundle on-device speaker identity model
+        working-directory: jarvis_app
+        run: |
+          set -euo pipefail
+          mkdir -p assets/models
+          curl --fail --location --retry 5 --retry-delay 3 \
+            "https://huggingface.co/mlboydaisuke/ECAPA-TDNN-Speaker-ExecuTorch/resolve/main/speaker_ecapa_xnnpack_fp32.pte?download=true" \
+            --output assets/models/speaker_ecapa_xnnpack_fp32.pte
+          test "$(stat -c %s assets/models/speaker_ecapa_xnnpack_fp32.pte)" -gt 80000000
+          flutter pub get
+
       - name: Flutter analyze
         working-directory: jarvis_app
         run: flutter analyze --no-fatal-warnings --no-fatal-infos
