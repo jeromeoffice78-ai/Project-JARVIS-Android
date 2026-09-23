@@ -9,6 +9,8 @@ import '../chat/jarvis_chat_screen.dart';
 import '../autonomy/jarvis_autonomy_screen.dart';
 import '../capabilities/jarvis_action_approval_service.dart';
 import '../devices/jarvis_devices_screen.dart';
+import '../frontier/jarvis_frontier_screen.dart';
+import '../presence/jarvis_presence_screen.dart';
 import '../memory/jarvis_memory_screen.dart';
 import '../people/people_memory_screen.dart';
 import '../system/jarvis_system_screen.dart';
@@ -204,6 +206,34 @@ class _JarvisShellState
           ],
         ),
         actions: <Widget>[
+          IconButton(
+            tooltip: 'Jarvis Presence',
+            icon: const Icon(
+              Icons.face_retouching_natural,
+            ),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (BuildContext context) =>
+                      const JarvisPresenceScreen(),
+                ),
+              );
+            },
+          ),
+          IconButton(
+            tooltip: 'Frontier AI',
+            icon: const Icon(
+              Icons.hub_outlined,
+            ),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (BuildContext context) =>
+                      const JarvisFrontierScreen(),
+                ),
+              );
+            },
+          ),
           IconButton(
             tooltip: 'Autonomous Agent',
             icon: const Icon(
