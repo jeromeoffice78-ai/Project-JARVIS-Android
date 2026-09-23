@@ -1,0 +1,95 @@
+package __PACKAGE__
+
+import android.app.Activity
+import android.content.Intent
+import android.os.Build
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
+
+object JarvisCloudRelayBridge {
+    private const val CHANNEL = "jarvis.cloud_relay"
+
+    fun register(activity: Activity, flutterEngine: FlutterEngine) {
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "start" -> {
+                    val gatewayUrl = call.argument<String>("gatewayUrl")?.trim().orEmpty()
+                    val token = call.argument<String>("token")?.trim().orEmpty()
+                    val deviceId = call.argument<String>("deviceId")?.trim().orEmpty()
+                    val deviceName = call.argument<String>("deviceName")?.trim().orEmpty()
+                    val polling = call.argument<Boolean>("polling") ?: false
+
+                    if (gatewayUrl.isEmpty() || token.isEmpty() || deviceId.isEmpty()) {
+                        result.error(
+                            "invalid_cloud_relay_config",
+                            "Gateway URL, token, and device ID are required.",
+                            null,
+                        )
+                        return@setMethodCallHandler
+                    }
+
+                    val intent = Intent(
+                        activity,
+                        JarvisCloudRelayService::class.java,
+                    ).apply {
+                        action = JarvisCloudRelayService.ACTION_START
+                        putExtra(JarvisCloudRelayService.EXTRA_GATEWAY_URL, gatewayUrl)
+                        putExtra(JarvisCloudRelayService.EXTRA_TOKEN, token)
+                        putExtra(JarvisCloudRelayService.EXTRA_DEVICE_ID, deviceId)
+                        putExtra(
+                            JarvisCloudRelayService.EXTRA_DEVICE_NAME,
+                            deviceName.ifBlank { "Jarvis Android" },
+                        )
+                        putExtra(JarvisCloudRelayService.EXTRA_POLLING, polling)
+                    }
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        activity.startForegroundService(intent)
+                    } else {
+                        activity.startService(intent)
+                    }
+
+                    result.success(true)
+                }
+
+                "setPolling" -> {
+                    val enabled = call.argument<Boolean>("enabled") ?: false
+                    val intent = Intent(
+                        activity,
+                        JarvisCloudRelayService::class.java,
+                    ).apply {
+                        action = JarvisCloudRelayService.ACTION_SET_POLLING
+                        putExtra(JarvisCloudRelayService.EXTRA_POLLING, enabled)
+                    }
+                    activity.startService(intent)
+                    result.success(true)
+                }
+
+                "status" -> {
+                    result.success(
+                        mapOf(
+                            "running" to JarvisCloudRelayService.running,
+                            "polling" to JarvisCloudRelayService.pollingEnabled,
+                        ),
+                    )
+                }
+
+                "stop" -> {
+                    val intent = Intent(
+                        activity,
+                        JarvisCloudRelayService::class.java,
+                    ).apply {
+                        action = JarvisCloudRelayService.ACTION_STOP
+                    }
+                    activity.startService(intent)
+                    result.success(true)
+                }
+
+                else -> result.notImplemented()
+            }
+        }
+    }
+}
