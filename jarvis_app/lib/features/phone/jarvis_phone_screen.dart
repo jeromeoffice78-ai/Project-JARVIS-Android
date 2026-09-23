@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/network/jarvis_api_service.dart';
 import '../../core/network/providers.dart';
 import 'jarvis_phone_service.dart';
 
@@ -26,6 +27,11 @@ class _JarvisPhoneScreenState
   List<JarvisCallMessage> _messages =
       const <JarvisCallMessage>[];
   JarvisActiveCall? _activeCall;
+  JarvisPhoneReceptionistStatus? _cloudStatus;
+  List<JarvisPhoneReceptionistMessage>
+      _cloudMessages =
+      const <JarvisPhoneReceptionistMessage>[];
+  String? _cloudError;
   Timer? _callTimer;
 
   @override
@@ -59,12 +65,33 @@ class _JarvisPhoneScreenState
     final List<JarvisCallMessage> messages =
         await phone.listCallMessages();
 
+    JarvisPhoneReceptionistStatus? cloudStatus;
+    List<JarvisPhoneReceptionistMessage>
+        cloudMessages =
+        const <JarvisPhoneReceptionistMessage>[];
+    String? cloudError;
+
+    try {
+      final JarvisApiService api = ref.read(
+        jarvisApiServiceProvider,
+      );
+      cloudStatus =
+          await api.phoneReceptionistStatus();
+      cloudMessages =
+          await api.phoneReceptionistMessages();
+    } on Object catch (error) {
+      cloudError = error.toString();
+    }
+
     if (!mounted) return;
 
     setState(() {
       _isDefaultDialer = defaultDialer;
       _autoAnswer = autoAnswer;
       _messages = messages;
+      _cloudStatus = cloudStatus;
+      _cloudMessages = cloudMessages;
+      _cloudError = cloudError;
       _greetingController.text = greeting;
       _loading = false;
     });
@@ -304,6 +331,126 @@ class _JarvisPhoneScreenState
                 Card(
                   child: ListTile(
                     leading: Icon(
+                      _cloudStatus?.configured == true
+                          ? Icons.support_agent
+                          : Icons.cloud_off,
+                    ),
+                    title: const Text(
+                      'Spoken AI Cellular Receptionist',
+                    ),
+                    subtitle: Text(
+                      _cloudStatus == null
+                          ? (_cloudError ??
+                              'Checking the cloud receptionist...')
+                          : (_cloudStatus!.configured
+                              ? ('OpenAI SIP receptionist ready'
+                                  + (_cloudStatus!.phoneNumber.isEmpty
+                                      ? ''
+                                      : ' • ' + _cloudStatus!.phoneNumber)
+                                  + ' • active calls: '
+                                  + _cloudStatus!.activeCalls.toString())
+                              : 'Backend is ready; SIP/webhook activation is still required.'),
+                    ),
+                    trailing:
+                        _cloudStatus?.configured == true
+                            ? const Icon(
+                                Icons.check_circle,
+                              )
+                            : const Icon(
+                                Icons.warning_amber,
+                              ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                if (_cloudMessages.isNotEmpty) ...[
+                  Text(
+                    'AI receptionist messages',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  ..._cloudMessages.map(
+                    (JarvisPhoneReceptionistMessage item) =>
+                        Card(
+                      child: ExpansionTile(
+                        leading: Icon(
+                          item.urgent
+                              ? Icons.priority_high
+                              : Icons.voicemail_outlined,
+                        ),
+                        title: Text(
+                          item.callerName.isNotEmpty
+                              ? item.callerName
+                              : (item.callbackNumber.isNotEmpty
+                                  ? item.callbackNumber
+                                  : (item.fromNumber.isNotEmpty
+                                      ? item.fromNumber
+                                      : 'Unknown caller')),
+                        ),
+                        subtitle: Text(
+                          (item.urgent ? 'URGENT • ' : '') +
+                              (item.summary.isEmpty
+                                  ? item.status
+                                  : item.summary),
+                        ),
+                        children: <Widget>[
+                          if (item.callbackNumber.isNotEmpty)
+                            ListTile(
+                              leading:
+                                  const Icon(Icons.call),
+                              title: const Text(
+                                'Callback number',
+                              ),
+                              subtitle: Text(
+                                item.callbackNumber,
+                              ),
+                            ),
+                          if (item.transcript.isNotEmpty)
+                            Padding(
+                              padding:
+                                  const EdgeInsets.fromLTRB(
+                                16,
+                                0,
+                                16,
+                                12,
+                              ),
+                              child: Align(
+                                alignment:
+                                    Alignment.centerLeft,
+                                child: SelectableText(
+                                  'Caller:\n' +
+                                      item.transcript,
+                                ),
+                              ),
+                            ),
+                          if (item.assistantTranscript.isNotEmpty)
+                            Padding(
+                              padding:
+                                  const EdgeInsets.fromLTRB(
+                                16,
+                                0,
+                                16,
+                                16,
+                              ),
+                              child: Align(
+                                alignment:
+                                    Alignment.centerLeft,
+                                child: SelectableText(
+                                  'JARVIS:\n' +
+                                      item.assistantTranscript,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+                Card(
+                  child: ListTile(
+                    leading: Icon(
                       _isDefaultDialer
                           ? Icons.phone_in_talk
                           : Icons.phone_disabled,
@@ -432,7 +579,9 @@ class _JarvisPhoneScreenState
                   child: Padding(
                     padding: EdgeInsets.all(16),
                     child: Text(
-                      'Android can let a default dialer answer and control calls, but normal third-party apps cannot capture both sides of cellular-call audio for AI transcription. Full spoken message-taking needs the Jarvis telephony bridge.',
+                      'Local Android call controls and the cloud receptionist are separate. '
+                      'The cloud receptionist handles full two-way spoken AI calls through SIP, '
+                      'then stores the caller message and transcript for Jarvis.',
                     ),
                   ),
                 ),
