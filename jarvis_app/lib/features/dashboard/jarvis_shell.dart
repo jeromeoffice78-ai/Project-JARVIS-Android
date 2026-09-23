@@ -199,23 +199,23 @@ class _JarvisShellState
             ),
           ],
         ),
-      ),
-      actions: <Widget>[
-        IconButton(
-          tooltip: 'Autonomous Agent',
-          icon: const Icon(
-            Icons.auto_awesome,
+        actions: <Widget>[
+          IconButton(
+            tooltip: 'Autonomous Agent',
+            icon: const Icon(
+              Icons.auto_awesome,
+            ),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (BuildContext context) =>
+                      const JarvisAutonomyScreen(),
+                ),
+              );
+            },
           ),
-          onPressed: () {
-            Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (BuildContext context) =>
-                    const JarvisAutonomyScreen(),
-              ),
-            );
-          },
-        ),
-      ],
+        ],
+      ),
       body: Column(
         children: <Widget>[
           _ConnectionBanner(
