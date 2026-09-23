@@ -34,6 +34,7 @@ def patch_manifest() -> None:
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.health.READ_STEPS" />
     <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
     <uses-permission android:name="android.permission.health.READ_RESTING_HEART_RATE" />
@@ -65,6 +66,13 @@ def patch_manifest() -> None:
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
 
     <application""",
+            1,
+        )
+
+    if "android.hardware.usb.host" not in text:
+        text = text.replace(
+            "    <application",
+            '    <uses-feature android:name="android.hardware.usb.host" android:required="false" />\n\n    <application',
             1,
         )
 
@@ -174,13 +182,29 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.os.CancellationSignal
+import android.os.ParcelFileDescriptor
+import android.provider.Settings
+import android.hardware.usb.UsbConstants
+import android.hardware.usb.UsbManager
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.pdf.PdfDocument
+import android.print.PageRange
+import android.print.PrintAttributes
+import android.print.PrintDocumentAdapter
+import android.print.PrintDocumentInfo
+import android.print.PrintManager
+import android.print.pdf.PrintedPdfDocument
 import android.telecom.TelecomManager
+import java.io.FileOutputStream
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterFragmentActivity() {{
     private val phoneChannel = "jarvis.phone"
+    private val printerChannel = "jarvis.printer"
     private val prefsName = "jarvis_phone"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {{
@@ -265,6 +289,88 @@ class MainActivity : FlutterFragmentActivity() {{
                 else -> result.notImplemented()
             }}
         }}
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            printerChannel,
+        ).setMethodCallHandler {{ call, result ->
+            when (call.method) {{
+                "listUsbPrinters" -> result.success(listUsbPrinters())
+                "openPrintSettings" -> {{
+                    try {{
+                        startActivity(Intent(Settings.ACTION_PRINT_SETTINGS))
+                        result.success(true)
+                    }} catch (error: Throwable) {{
+                        result.error(
+                            "print_settings_failed",
+                            error.message ?: "Unable to open print settings.",
+                            null,
+                        )
+                    }}
+                }}
+                "printTestPage" -> {{
+                    try {{
+                        val printManager =
+                            getSystemService(Context.PRINT_SERVICE) as PrintManager
+                        val text =
+                            "JARVIS printer test\nHP OfficeJet 2620 USB/OTG path\nAndroid system print framework"
+                        printManager.print(
+                            "JARVIS Test Print",
+                            JarvisTextPrintAdapter(this, text),
+                            PrintAttributes.Builder().build(),
+                        )
+                        result.success(true)
+                    }} catch (error: Throwable) {{
+                        result.error(
+                            "print_failed",
+                            error.message ?: "Unable to start print job.",
+                            null,
+                        )
+                    }}
+                }}
+                else -> result.notImplemented()
+            }}
+        }}
+    }}
+
+    private fun listUsbPrinters(): List<Map<String, Any?>> {{
+        val manager =
+            getSystemService(Context.USB_SERVICE) as UsbManager
+
+        return manager.deviceList.values.map {{ device ->
+            var printerClass = device.deviceClass == UsbConstants.USB_CLASS_PRINTER
+
+            for (index in 0 until device.interfaceCount) {{
+                if (device.getInterface(index).interfaceClass ==
+                    UsbConstants.USB_CLASS_PRINTER
+                ) {{
+                    printerClass = true
+                    break
+                }}
+            }}
+
+            val manufacturer = try {{
+                device.manufacturerName ?: ""
+            }} catch (_: Throwable) {{
+                ""
+            }}
+
+            val product = try {{
+                device.productName ?: ""
+            }} catch (_: Throwable) {{
+                ""
+            }}
+
+            mapOf(
+                "deviceName" to device.deviceName,
+                "vendorId" to device.vendorId,
+                "productId" to device.productId,
+                "manufacturer" to manufacturer,
+                "productName" to product,
+                "isPrinterClass" to printerClass,
+                "isHpDevice" to (device.vendorId == 0x03F0),
+            )
+        }}
     }}
 
     private fun isDefaultDialer(): Boolean {{
@@ -305,6 +411,83 @@ class MainActivity : FlutterFragmentActivity() {{
         }} catch (_: Throwable) {{
             false
         }}
+    }}
+}}
+
+class JarvisTextPrintAdapter(
+    context: Context,
+    private val text: String,
+) : PrintDocumentAdapter() {{
+    private var pdf: PrintedPdfDocument? = null
+
+    override fun onLayout(
+        oldAttributes: PrintAttributes?,
+        newAttributes: PrintAttributes,
+        cancellationSignal: CancellationSignal,
+        callback: LayoutResultCallback,
+        extras: Bundle?,
+    ) {{
+        pdf?.close()
+        pdf = PrintedPdfDocument(context, newAttributes)
+
+        if (cancellationSignal.isCanceled) {{
+            callback.onLayoutCancelled()
+            return
+        }}
+
+        callback.onLayoutFinished(
+            PrintDocumentInfo.Builder("jarvis-test.pdf")
+                .setContentType(PrintDocumentInfo.CONTENT_TYPE_DOCUMENT)
+                .setPageCount(1)
+                .build(),
+            true,
+        )
+    }}
+
+    override fun onWrite(
+        pages: Array<out PageRange>,
+        destination: ParcelFileDescriptor,
+        cancellationSignal: CancellationSignal,
+        callback: WriteResultCallback,
+    ) {{
+        val document = pdf
+        if (document == null) {{
+            callback.onWriteFailed("Print document was not prepared.")
+            return
+        }}
+
+        val page = document.startPage(0)
+        val canvas = page.canvas
+        val paint = Paint().apply {{
+            color = Color.BLACK
+            textSize = 18f
+            isAntiAlias = true
+        }}
+
+        var y = 72f
+        text.lines().forEach {{ line ->
+            canvas.drawText(line, 54f, y, paint)
+            y += 30f
+        }}
+
+        document.finishPage(page)
+
+        try {{
+            FileOutputStream(destination.fileDescriptor).use {{ output ->
+                document.writeTo(output)
+            }}
+            callback.onWriteFinished(arrayOf(PageRange.ALL_PAGES))
+        }} catch (error: Throwable) {{
+            callback.onWriteFailed(error.message)
+        }} finally {{
+            document.close()
+            pdf = null
+        }}
+    }}
+
+    override fun onFinish() {{
+        pdf?.close()
+        pdf = null
     }}
 }}
 """
