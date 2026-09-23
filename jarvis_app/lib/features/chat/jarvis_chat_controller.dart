@@ -150,6 +150,9 @@ class JarvisChatController {
       _wsService.sendJson(event.toJson());
       return event.requestId;
     } on Object catch (error) {
+      _autoPrintRequestIds.remove(
+        event.requestId,
+      );
       _activeRequestId = null;
 
       _emitState(
@@ -450,6 +453,12 @@ Then add one blank line and the complete document body. Do not include markdown 
       ),
     );
 
+    if (event.requestId != null) {
+      _autoPrintRequestIds.remove(
+        event.requestId,
+      );
+    }
+
     if (event.requestId == null ||
         event.requestId == _activeRequestId) {
       _activeRequestId = null;
@@ -473,6 +482,12 @@ Then add one blank line and the complete document body. Do not include markdown 
         requestId: event.requestId ?? _activeRequestId,
       ),
     );
+
+    if (event.requestId != null) {
+      _autoPrintRequestIds.remove(
+        event.requestId,
+      );
+    }
 
     _activeRequestId = null;
     _expectedChunkIndex = 0;
