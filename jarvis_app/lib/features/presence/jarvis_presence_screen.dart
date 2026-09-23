@@ -496,11 +496,14 @@ class _JarvisAnimatedPresenceState
             });
           },
         );
+        break;
       case JarvisAvatarMotion.approach:
         _alignment = const Alignment(0, 0.12);
+        break;
       case JarvisAvatarMotion.breathe:
       case JarvisAvatarMotion.still:
         _alignment = Alignment.center;
+        break;
     }
 
     if (mounted) {
