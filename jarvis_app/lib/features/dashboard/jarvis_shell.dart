@@ -34,6 +34,10 @@ class _JarvisShellState
   void initState() {
     super.initState();
 
+    // Start printer presence/heartbeat immediately with the Jarvis shell so
+    // cross-device routing knows which Android device currently hosts a printer.
+    ref.read(jarvisPrintRouterProvider);
+
     _approvalSubscription = ref
         .read(
           jarvisActionApprovalServiceProvider,
