@@ -341,3 +341,50 @@ def test_frontier_file_upload_is_analyzed_and_deleted():
         call = fake.responses.calls[-1]
         assert call["input"][0]["content"][0]["type"] == "input_file"
         assert call["input"][0]["content"][0]["file_id"] == "file-test-123"
+
+
+class _FakeRealtimeHttpResponse:
+    status_code = 200
+
+    def json(self):
+        return {
+            "value": "ek_test_realtime",
+            "expires_at": 9999999999,
+        }
+
+
+class _FakeRealtimeHttpClient:
+    def __init__(self, *args, **kwargs):
+        self.post_calls = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def post(self, url, **kwargs):
+        self.post_calls.append((url, kwargs))
+        assert url == "https://api.openai.com/v1/realtime/client_secrets"
+        assert kwargs["headers"]["Authorization"] == "Bearer test-openai-key"
+        assert kwargs["headers"]["OpenAI-Safety-Identifier"]
+        assert kwargs["json"]["session"]["model"] == api.REALTIME_MODEL
+        return _FakeRealtimeHttpResponse()
+
+
+def test_realtime_client_secret_proxies_ephemeral_credential(monkeypatch):
+    monkeypatch.setattr(
+        api.httpx,
+        "AsyncClient",
+        _FakeRealtimeHttpClient,
+    )
+
+    with TestClient(api.app) as client:
+        response = client.post(
+            "/v1/realtime/client-secret",
+            headers={"Authorization": "Bearer test-client-token"},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["value"] == "ek_test_realtime"
