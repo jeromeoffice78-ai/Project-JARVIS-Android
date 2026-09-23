@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - feature/jarvis-human-autonomous-avatar
     paths:
       - 'jarvis_app/**'
       - '.github/workflows/flutter-android-v1-2.yml'
