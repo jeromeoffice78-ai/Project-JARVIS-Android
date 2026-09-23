@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:model_viewer_plus/model_viewer_plus.dart';
 
 import '../../core/network/providers.dart';
+import '../devices/jarvis_cloud_device_network.dart';
 import '../realtime/jarvis_realtime_voice_screen.dart';
 import '../realtime/jarvis_realtime_voice_service.dart';
 import '../voice/jarvis_voice_screen.dart';
@@ -24,6 +25,41 @@ class JarvisPresenceScreen
     final JarvisRealtimeVoiceState voice =
         asyncVoice.valueOrNull ??
             const JarvisRealtimeVoiceState.initial();
+
+    final JarvisCloudDeviceNetwork cloud =
+        ref.watch(
+      jarvisCloudDeviceNetworkProvider,
+    );
+
+    final AsyncValue<JarvisCloudDeviceState>
+        asyncCloud = ref.watch(
+      jarvisCloudDeviceStateProvider,
+    );
+
+    final JarvisCloudDeviceState cloudState =
+        asyncCloud.valueOrNull ??
+            cloud.state;
+
+    JarvisCloudDevice? activeDevice;
+    for (final JarvisCloudDevice device
+        in cloudState.devices) {
+      if (device.activeAvatar) {
+        activeDevice = device;
+        break;
+      }
+    }
+
+    final bool noAssignedDevice =
+        activeDevice == null;
+
+    final bool jarvisHere =
+        noAssignedDevice ||
+        activeDevice.deviceId ==
+            cloudState.deviceId ||
+        cloudState.activeAvatar;
+
+    final String activeDeviceName =
+        activeDevice?.deviceName ?? '';
 
     final String stateLabel =
         switch (voice.status) {
@@ -54,23 +90,44 @@ class JarvisPresenceScreen
             child: Stack(
               fit: StackFit.expand,
               children: <Widget>[
-                const ModelViewer(
-                  src:
-                      'assets/models/CesiumMan.glb',
-                  alt:
-                      'Animated 3D Jarvis humanoid',
-                  autoPlay: true,
-                  autoRotate: true,
-                  cameraControls: true,
-                  disableZoom: false,
-                  backgroundColor:
-                      Colors.transparent,
-                  loading: Loading.eager,
-                  reveal: Reveal.auto,
-                  interactionPrompt:
-                      InteractionPrompt.none,
-                  cameraOrbit:
-                      '0deg 75deg 2.2m',
+                AnimatedSlide(
+                  duration:
+                      const Duration(
+                    milliseconds: 850,
+                  ),
+                  curve: Curves.easeInOutCubic,
+                  offset: jarvisHere
+                      ? Offset.zero
+                      : const Offset(1.15, 0),
+                  child: AnimatedOpacity(
+                    duration:
+                        const Duration(
+                      milliseconds: 550,
+                    ),
+                    opacity:
+                        jarvisHere ? 1 : 0,
+                    child:
+                        const ModelViewer(
+                      src:
+                          'assets/models/CesiumMan.glb',
+                      alt:
+                          'Animated 3D Jarvis humanoid',
+                      autoPlay: true,
+                      autoRotate: true,
+                      cameraControls: true,
+                      disableZoom: false,
+                      backgroundColor:
+                          Colors.transparent,
+                      loading:
+                          Loading.eager,
+                      reveal: Reveal.auto,
+                      interactionPrompt:
+                          InteractionPrompt
+                              .none,
+                      cameraOrbit:
+                          '0deg 75deg 2.2m',
+                    ),
+                  ),
                 ),
                 IgnorePointer(
                   child: DecoratedBox(
@@ -96,6 +153,86 @@ class JarvisPresenceScreen
                     ),
                   ),
                 ),
+                if (!jarvisHere)
+                  Center(
+                    child: Card(
+                      color: Colors.black
+                          .withValues(
+                        alpha: 0.78,
+                      ),
+                      child: Padding(
+                        padding:
+                            const EdgeInsets
+                                .all(18),
+                        child: Column(
+                          mainAxisSize:
+                              MainAxisSize
+                                  .min,
+                          children: <Widget>[
+                            const Icon(
+                              Icons
+                                  .devices_other,
+                              color: Colors
+                                  .lightBlueAccent,
+                              size: 36,
+                            ),
+                            const SizedBox(
+                              height: 10,
+                            ),
+                            Text(
+                              activeDeviceName
+                                      .isEmpty
+                                  ? 'Jarvis is active on another device'
+                                  : 'Jarvis moved to ' +
+                                      activeDeviceName,
+                              textAlign:
+                                  TextAlign
+                                      .center,
+                              style:
+                                  const TextStyle(
+                                color:
+                                    Colors.white,
+                                fontWeight:
+                                    FontWeight
+                                        .bold,
+                              ),
+                            ),
+                            const SizedBox(
+                              height: 12,
+                            ),
+                            FilledButton.icon(
+                              onPressed:
+                                  cloudState
+                                          .deviceId
+                                          .isEmpty
+                                      ? null
+                                      : () async {
+                                          try {
+                                            await cloud
+                                                .handoffJarvisTo(
+                                              cloudState
+                                                  .deviceId,
+                                            );
+                                          } on Object {
+                                            // Network state exposes
+                                            // the failure message.
+                                          }
+                                        },
+                              icon:
+                                  const Icon(
+                                Icons
+                                    .login,
+                              ),
+                              label:
+                                  const Text(
+                                'Bring Jarvis Here',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 Positioned(
                   left: 18,
                   right: 18,
@@ -176,9 +313,11 @@ class JarvisPresenceScreen
             ),
             child: Column(
               children: <Widget>[
-                const Text(
-                  'JARVIS ONLINE',
-                  style: TextStyle(
+                Text(
+                  jarvisHere
+                      ? 'JARVIS ONLINE'
+                      : 'JARVIS REMOTE',
+                  style: const TextStyle(
                     color: Colors.white,
                     fontWeight:
                         FontWeight.bold,
@@ -187,10 +326,16 @@ class JarvisPresenceScreen
                   ),
                 ),
                 const SizedBox(height: 6),
-                const Text(
-                  'Standalone 3D companion • voice • vision • memory • autonomous tools',
+                Text(
+                  jarvisHere
+                      ? 'Standalone 3D companion • voice • vision • memory • autonomous tools'
+                      : (activeDeviceName.isEmpty
+                          ? 'Jarvis is active on another cloud-connected device'
+                          : 'Active on ' +
+                              activeDeviceName +
+                              ' through the Jarvis cloud network'),
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: const TextStyle(
                     color: Colors.white60,
                   ),
                 ),
