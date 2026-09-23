@@ -779,6 +779,37 @@ async def realtime_client_secret(
                         "additionalProperties": False,
                     },
                 },
+                {
+                    "type": "function",
+                    "name": "system_tap",
+                    "description": "Tap a screen coordinate after user approval.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"},
+                        },
+                        "required": ["x", "y"],
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "system_swipe",
+                    "description": "Swipe between screen coordinates after user approval.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "start_x": {"type": "number"},
+                            "start_y": {"type": "number"},
+                            "end_x": {"type": "number"},
+                            "end_y": {"type": "number"},
+                            "duration_ms": {"type": "integer"},
+                        },
+                        "required": ["start_x", "start_y", "end_x", "end_y"],
+                        "additionalProperties": False,
+                    },
+                },
             ],
         }
     }
