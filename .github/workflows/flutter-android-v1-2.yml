@@ -59,6 +59,25 @@ jobs:
           test "$(stat -c %s assets/models/CesiumMan.glb)" -eq 438044
           flutter pub get
 
+      - name: Bundle offline avatar renderer
+        working-directory: jarvis_app
+        run: |
+          set -euo pipefail
+          mkdir -p assets/avatar/vendor/loaders assets/avatar/vendor/utils
+          curl --fail --location --retry 5 --retry-delay 3 \
+            https://raw.githubusercontent.com/mrdoob/three.js/r180/build/three.module.js \
+            --output assets/avatar/vendor/three.module.js
+          curl --fail --location --retry 5 --retry-delay 3 \
+            https://raw.githubusercontent.com/mrdoob/three.js/r180/examples/jsm/loaders/GLTFLoader.js \
+            --output assets/avatar/vendor/loaders/GLTFLoader.js
+          curl --fail --location --retry 5 --retry-delay 3 \
+            https://raw.githubusercontent.com/mrdoob/three.js/r180/examples/jsm/utils/BufferGeometryUtils.js \
+            --output assets/avatar/vendor/utils/BufferGeometryUtils.js
+          test -s assets/avatar/vendor/three.module.js
+          test -s assets/avatar/vendor/loaders/GLTFLoader.js
+          test -s assets/avatar/vendor/utils/BufferGeometryUtils.js
+          flutter pub get
+
       - name: Bundle photoreal human Jarvis assets
         working-directory: jarvis_app
         run: |
