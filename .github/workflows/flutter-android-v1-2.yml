@@ -108,7 +108,16 @@ jobs:
             "https://raw.githubusercontent.com/aralde/react-ai-avatar/425860b7d82bea42d946d2d1171ae912c30fd7fa/tools/rocketbox-asset/embed-textures.mjs" \
             --output "$WORK/embed-textures.mjs"
 
-          sed -i 's/f001_/m002_/g' "$WORK/embed-textures.mjs"
+          python - "$WORK/embed-textures.mjs" <<'PY'
+          from pathlib import Path
+          import sys
+
+          path = Path(sys.argv[1])
+          text = path.read_text()
+          text = text.replace("f001_", "m002_")
+          text = text.replace(r"/^f\d+_/", r"/^m\d+_/")
+          path.write_text(text)
+          PY
 
           pushd "$WORK"
           npm init -y >/dev/null 2>&1
