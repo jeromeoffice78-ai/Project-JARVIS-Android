@@ -93,6 +93,7 @@ class HealthResponse(BaseModel):
 class FrontierQueryRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=40_000)
     mode: str = Field(default="reason", min_length=1, max_length=32)
+    image_base64: str | None = Field(default=None, max_length=20_000_000)
 
 
 class FrontierQueryResponse(BaseModel):
@@ -334,10 +335,31 @@ async def frontier_query(
         f"Authenticated application role: {authenticated_role}."
     )
 
+    input_payload: object = payload.prompt.strip()
+    if payload.image_base64:
+        input_payload = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": payload.prompt.strip(),
+                    },
+                    {
+                        "type": "input_image",
+                        "image_url": (
+                            "data:image/png;base64,"
+                            + payload.image_base64.strip()
+                        ),
+                    },
+                ],
+            }
+        ]
+
     request_kwargs: dict[str, object] = {
         "model": FRONTIER_MODEL,
         "instructions": instructions,
-        "input": payload.prompt.strip(),
+        "input": input_payload,
         "reasoning": {"effort": reasoning_effort},
     }
     if tools:
