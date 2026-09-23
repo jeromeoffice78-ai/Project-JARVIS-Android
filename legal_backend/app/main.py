@@ -23,6 +23,13 @@ GATEWAY_MODEL = os.getenv("AI_GATEWAY_MODEL", f"openai/{OPENAI_MODEL}").strip() 
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip() or "llama-3.3-70b-versatile"
 CHAIRMAN_TOKEN = os.getenv("JARVIS_CHAIRMAN_TOKEN", "").strip()
 CLIENT_TOKEN = os.getenv("JARVIS_CLIENT_TOKEN", "").strip()
+WATCH_PHONE_BASE = (
+    os.getenv(
+        "JARVIS_WATCH_PHONE_BASE",
+        "https://jarvis-watch-bridge-api.onrender.com",
+    ).strip().rstrip("/")
+)
+PHONE_BRIDGE_TOKEN = os.getenv("JARVIS_PHONE_BRIDGE_TOKEN", "").strip()
 
 LEGAL_INSTRUCTIONS = """You are JARVIS Legal Enterprise, a legal research, analysis, organization, and drafting system.
 
@@ -239,6 +246,44 @@ def _extract_web_sources(response: object) -> list[dict[str, str]]:
     return sources
 
 
+async def _watch_phone_bridge_get(path: str) -> dict[str, object]:
+    if not PHONE_BRIDGE_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Shared JARVIS phone bridge is not configured.",
+        )
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.get(
+                f"{WATCH_PHONE_BASE}{path}",
+                headers={
+                    "Authorization": f"Bearer {PHONE_BRIDGE_TOKEN}",
+                    "Accept": "application/json",
+                },
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Shared JARVIS phone bridge is unavailable: {type(exc).__name__}",
+        ) from exc
+
+    if response.status_code < 200 or response.status_code >= 300:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Shared JARVIS phone bridge rejected the request.",
+        )
+
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Shared JARVIS phone bridge returned an invalid response.",
+        )
+
+    return payload
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     return HealthResponse(
@@ -296,6 +341,22 @@ async def auth_check(
         authenticated=True,
         role=authenticated_role,
     )
+
+
+@app.get("/v1/phone/status")
+async def shared_phone_status(
+    authenticated_role: Annotated[str, Depends(authenticate_request)],
+) -> dict[str, object]:
+    del authenticated_role
+    return await _watch_phone_bridge_get("/phone/bridge/status")
+
+
+@app.get("/v1/phone/messages")
+async def shared_phone_messages(
+    authenticated_role: Annotated[str, Depends(authenticate_request)],
+) -> dict[str, object]:
+    del authenticated_role
+    return await _watch_phone_bridge_get("/phone/bridge/messages")
 
 
 @app.post("/v1/realtime/client-secret")
