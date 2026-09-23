@@ -69,6 +69,7 @@ let blinkStart=-1;
 let nextBlink=performance.now()+1200+Math.random()*2200;
 let lastActive=true;
 let speakingPhase=0;
+let groundY=0;
 
 const state={
   active:true,
@@ -290,6 +291,7 @@ function fitCamera(){
   const size=box.getSize(new THREE.Vector3());
   const h=Math.max(size.y,1);
   root.position.y-=box.min.y;
+  groundY=root.position.y;
   camera.position.set(0,h*.58,Math.max(3.0,h*1.55));
   camera.lookAt(0,h*.54,0);
 }
@@ -389,9 +391,9 @@ function autonomousMotion(now,dt){
   // The body GLB includes a real Walk clip. Add only a subtle root bob here so
   // locomotion reads as grounded without accumulating rotations on skeleton bones.
   if(moving){
-    root.position.y=Math.abs(Math.sin(now*.008))*0.012;
+    root.position.y=groundY+Math.abs(Math.sin(now*.008))*0.012;
   }else{
-    root.position.y=THREE.MathUtils.lerp(root.position.y,0,.18);
+    root.position.y=THREE.MathUtils.lerp(root.position.y,groundY,.18);
   }
 }
 const clock=new THREE.Clock();
