@@ -266,6 +266,15 @@ class JarvisPrintRouter {
                 ? null
                 : 'usb_otg',
         'capabilities': <String, dynamic>{
+          'jarvis_app': true,
+          'ai_chat': true,
+          'persistent_memory': true,
+          'autonomous_agent': true,
+          'realtime_voice': true,
+          'camera_vision': true,
+          'frontier_ai': true,
+          'bluetooth_ble': true,
+          'screen_control': true,
           'text_print': true,
           'android_print_framework': true,
           'usb_printer_detection': true,
