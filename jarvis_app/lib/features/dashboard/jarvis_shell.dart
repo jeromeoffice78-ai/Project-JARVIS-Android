@@ -12,6 +12,7 @@ import '../devices/jarvis_devices_screen.dart';
 import '../frontier/jarvis_frontier_screen.dart';
 import '../presence/jarvis_presence_screen.dart';
 import '../memory/jarvis_memory_screen.dart';
+import '../music/jarvis_music_now_playing.dart';
 import '../people/people_memory_screen.dart';
 import '../system/jarvis_system_screen.dart';
 import '../vision/jarvis_vision_screen.dart';
@@ -256,6 +257,7 @@ class _JarvisShellState
             state: connection,
           ),
           const _MemoryBanner(),
+          const JarvisMusicNowPlaying(),
           Expanded(
             child: IndexedStack(
               index: _index,
