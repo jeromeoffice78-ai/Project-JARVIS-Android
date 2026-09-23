@@ -18,6 +18,8 @@ class _PeopleMemoryScreenState
   bool _loading = false;
   String? _error;
   String? _confirmedPersonId;
+  Set<String> _voiceProfileIds =
+      const <String>{};
 
   @override
   void initState() {
@@ -34,12 +36,19 @@ class _PeopleMemoryScreenState
     try {
       final people =
           await ref.read(jarvisApiServiceProvider).listPeople();
+      final Set<String> voiceProfileIds =
+          await ref
+              .read(jarvisVoiceIdentityServiceProvider)
+              .listVoiceProfileIds();
 
       if (!mounted) {
         return;
       }
 
-      setState(() => _people = people);
+      setState(() {
+        _people = people;
+        _voiceProfileIds = voiceProfileIds;
+      });
     } on Object catch (error) {
       if (!mounted) {
         return;
@@ -49,6 +58,201 @@ class _PeopleMemoryScreenState
     } finally {
       if (mounted) {
         setState(() => _loading = false);
+      }
+    }
+  }
+
+  Future<void> _enrollVoice(
+    PersonProfile person,
+  ) async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Voice enrollment for ${person.displayName}: speak naturally for about 3 seconds.',
+        ),
+      ),
+    );
+
+    try {
+      await ref
+          .read(jarvisVoiceIdentityServiceProvider)
+          .enrollVoice(person.personId);
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _voiceProfileIds =
+            <String>{
+          ..._voiceProfileIds,
+          person.personId,
+        };
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Jarvis now has an encrypted voice profile for ${person.displayName}.',
+          ),
+        ),
+      );
+    } on Object catch (error) {
+      if (mounted) {
+        setState(() {
+          _error = error.toString();
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _forgetVoice(
+    PersonProfile person,
+  ) async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      await ref
+          .read(jarvisVoiceIdentityServiceProvider)
+          .deleteVoiceProfile(person.personId);
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _voiceProfileIds =
+            <String>{
+          ..._voiceProfileIds,
+        }..remove(person.personId);
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Voice profile removed for ${person.displayName}.',
+          ),
+        ),
+      );
+    } on Object catch (error) {
+      if (mounted) {
+        setState(() {
+          _error = error.toString();
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _identifySpeaker() async {
+    if (_voiceProfileIds.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Enroll at least one voice profile first.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Speaker check: talk naturally for about 3 seconds.',
+        ),
+      ),
+    );
+
+    try {
+      final match = await ref
+          .read(jarvisVoiceIdentityServiceProvider)
+          .identifySpeaker();
+
+      if (!mounted) {
+        return;
+      }
+
+      if (!match.matched ||
+          match.personId.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Jarvis could not identify the speaker confidently. '
+              'Best similarity: ${match.similarity.toStringAsFixed(2)}.',
+            ),
+          ),
+        );
+        return;
+      }
+
+      PersonProfile? person;
+      for (final PersonProfile candidate
+          in _people) {
+        if (candidate.personId ==
+            match.personId) {
+          person = candidate;
+          break;
+        }
+      }
+
+      if (person == null) {
+        throw StateError(
+          'The matched voice profile is no longer linked to a saved person.',
+        );
+      }
+
+      await _confirm(person);
+
+      await ref
+          .read(jarvisRealtimeVoiceServiceProvider)
+          .setActiveSpeaker(person);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Speaker identified as ${person.displayName} '
+              '(similarity ${match.similarity.toStringAsFixed(2)}).',
+            ),
+          ),
+        );
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        setState(() {
+          _error = error.toString();
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
       }
     }
   }
@@ -233,12 +437,20 @@ class _PeopleMemoryScreenState
 
     try {
       await ref
+          .read(jarvisVoiceIdentityServiceProvider)
+          .deleteVoiceProfile(person.personId);
+
+      await ref
           .read(jarvisApiServiceProvider)
           .deletePerson(person.personId);
 
       if (_confirmedPersonId == person.personId) {
         _confirmedPersonId = null;
       }
+
+      _voiceProfileIds =
+          <String>{..._voiceProfileIds}
+            ..remove(person.personId);
 
       await _loadPeople();
     } on Object catch (error) {
@@ -280,6 +492,16 @@ class _PeopleMemoryScreenState
                         onPressed: _loading ? null : _createPerson,
                         icon: const Icon(Icons.person_add_alt_1),
                         label: const Text('Add Person'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed:
+                            _loading ? null : _identifySpeaker,
+                        icon: const Icon(
+                          Icons.record_voice_over_outlined,
+                        ),
+                        label: const Text(
+                          'Identify Speaker',
+                        ),
                       ),
                       OutlinedButton.icon(
                         onPressed: _loading ? null : _clearPresence,
@@ -324,12 +546,30 @@ class _PeopleMemoryScreenState
               padding: const EdgeInsets.only(bottom: 10),
               child: Card(
                 child: ListTile(
-                  leading: CircleAvatar(
-                    child: Text(
-                      person.displayName.isEmpty
-                          ? '?'
-                          : person.displayName[0].toUpperCase(),
-                    ),
+                  leading: Stack(
+                    clipBehavior: Clip.none,
+                    children: <Widget>[
+                      CircleAvatar(
+                        child: Text(
+                          person.displayName.isEmpty
+                              ? '?'
+                              : person.displayName[0].toUpperCase(),
+                        ),
+                      ),
+                      if (_voiceProfileIds
+                          .contains(person.personId))
+                        const Positioned(
+                          right: -5,
+                          bottom: -4,
+                          child: CircleAvatar(
+                            radius: 9,
+                            child: Icon(
+                              Icons.mic,
+                              size: 11,
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                   title: Text(person.displayName),
                   subtitle: Text(
@@ -338,6 +578,10 @@ class _PeopleMemoryScreenState
                         person.relationship,
                       if (person.notes.isNotEmpty)
                         person.notes,
+                      if (_voiceProfileIds.contains(
+                        person.personId,
+                      ))
+                        'Voice profile enrolled',
                       if (person.lastSeenAt != null)
                         'Last confirmed: ${person.lastSeenAt}',
                     ].join('\n'),
@@ -349,6 +593,10 @@ class _PeopleMemoryScreenState
                     onSelected: (String action) {
                       if (action == 'present') {
                         _confirm(person);
+                      } else if (action == 'enroll_voice') {
+                        _enrollVoice(person);
+                      } else if (action == 'forget_voice') {
+                        _forgetVoice(person);
                       } else if (action == 'delete') {
                         _delete(person);
                       }
@@ -358,6 +606,18 @@ class _PeopleMemoryScreenState
                       const PopupMenuItem<String>(
                         value: 'present',
                         child: Text('Confirm Present'),
+                      ),
+                      PopupMenuItem<String>(
+                        value: _voiceProfileIds
+                                .contains(person.personId)
+                            ? 'forget_voice'
+                            : 'enroll_voice',
+                        child: Text(
+                          _voiceProfileIds
+                                  .contains(person.personId)
+                              ? 'Forget Voice'
+                              : 'Enroll Voice',
+                        ),
                       ),
                       const PopupMenuItem<String>(
                         value: 'delete',
@@ -376,11 +636,12 @@ class _PeopleMemoryScreenState
             child: Padding(
               padding: EdgeInsets.all(16),
               child: Text(
-                'Privacy design: Camera Vision may detect that one or more '
-                'faces are present, but Project Jarvis does not store face '
-                'templates or automatically identify a person from facial '
-                'biometrics. Identity is attached only after you confirm '
-                'the saved profile.',
+                'Privacy design: voice recognition is opt-in per saved person. '
+                'Jarvis keeps an encrypted numeric speaker embedding on this '
+                'Android device and discards the 3-second enrollment recording. '
+                'A voice is named only when the match clears a confidence '
+                'threshold and separation margin; uncertain matches remain unknown. '
+                'Camera Vision still does not store face templates.',
               ),
             ),
           ),
