@@ -86,6 +86,18 @@ class JarvisPhoneService {
       !kIsWeb &&
       defaultTargetPlatform == TargetPlatform.android;
 
+  Future<String> consumeLaunchTarget() async {
+    if (!isSupported) return '';
+    try {
+      return await _channel.invokeMethod<String>(
+            'consumeLaunchTarget',
+          ) ??
+          '';
+    } on PlatformException {
+      return '';
+    }
+  }
+
   Future<bool> isDefaultDialer() async {
     if (!isSupported) return false;
     try {
