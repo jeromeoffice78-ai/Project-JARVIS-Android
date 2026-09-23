@@ -1,89 +1,92 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:url_launcher/url_launcher.dart';
 
-class JarvisShareScreen extends StatelessWidget {
+class JarvisShareScreen
+    extends StatefulWidget {
   const JarvisShareScreen({super.key});
 
-  static const String apkUrl =
-      'https://github.com/jeromeoffice78-ai/Project-JARVIS-Android/releases/download/jarvis-latest/JARVIS-v1.2-debug.apk';
+  @override
+  State<JarvisShareScreen> createState() =>
+      _JarvisShareScreenState();
+}
 
-  static const String releaseUrl =
-      'https://github.com/jeromeoffice78-ai/Project-JARVIS-Android/releases/tag/jarvis-latest';
+class _JarvisShareScreenState
+    extends State<JarvisShareScreen> {
+  static const MethodChannel _channel =
+      MethodChannel(
+        'jarvis.app_distribution',
+      );
 
-  Future<void> _share(BuildContext context) async {
-    final RenderBox? box =
-        context.findRenderObject() as RenderBox?;
+  bool _sharing = false;
+  String? _error;
 
-    await SharePlus.instance.share(
-      ShareParams(
-        title: 'Install JARVIS',
-        subject: 'JARVIS Android installer',
-        text:
-            'Install the latest verified JARVIS Android build:\n$apkUrl',
-        sharePositionOrigin: box == null
-            ? null
-            : box.localToGlobal(Offset.zero) &
-                box.size,
-      ),
-    );
-  }
-
-  Future<void> _openInstaller(
-    BuildContext context,
+  Future<void> _shareInstalledApk(
+    BuildContext buttonContext,
   ) async {
-    final bool opened = await launchUrl(
-      Uri.parse(apkUrl),
-      mode: LaunchMode.externalApplication,
-    );
+    if (_sharing) return;
 
-    if (!opened && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Unable to open the installer link.',
-          ),
+    setState(() {
+      _sharing = true;
+      _error = null;
+    });
+
+    try {
+      final String? path =
+          await _channel.invokeMethod<String>(
+        'exportInstalledApk',
+      );
+
+      if (path == null || path.isEmpty) {
+        throw StateError(
+          'Android returned no APK file.',
+        );
+      }
+
+      final RenderBox? box =
+          buttonContext.findRenderObject()
+              as RenderBox?;
+
+      await SharePlus.instance.share(
+        ShareParams(
+          title: 'Send JARVIS',
+          subject:
+              'JARVIS Android installer',
+          text:
+              'JARVIS Android installer. Send this only to devices you control.',
+          files: <XFile>[
+            XFile(
+              path,
+              mimeType:
+                  'application/vnd.android.package-archive',
+              name:
+                  'JARVIS-current.apk',
+            ),
+          ],
+          fileNameOverrides:
+              const <String>[
+            'JARVIS-current.apk',
+          ],
+          sharePositionOrigin: box == null
+              ? null
+              : box.localToGlobal(
+                    Offset.zero,
+                  ) &
+                  box.size,
         ),
       );
-    }
-  }
-
-  Future<void> _openRelease(
-    BuildContext context,
-  ) async {
-    final bool opened = await launchUrl(
-      Uri.parse(releaseUrl),
-      mode: LaunchMode.externalApplication,
-    );
-
-    if (!opened && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Unable to open the JARVIS release page.',
-          ),
-        ),
-      );
-    }
-  }
-
-  Future<void> _copyLink(
-    BuildContext context,
-  ) async {
-    await Clipboard.setData(
-      const ClipboardData(text: apkUrl),
-    );
-
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'JARVIS installer link copied.',
-          ),
-        ),
-      );
+    } on Object catch (error) {
+      if (mounted) {
+        setState(() {
+          _error = error.toString();
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _sharing = false;
+        });
+      }
     }
   }
 
@@ -91,97 +94,148 @@ class JarvisShareScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Send JARVIS'),
+        title: const Text(
+          'Send JARVIS',
+        ),
       ),
       body: ListView(
-        padding: const EdgeInsets.all(20),
+        padding:
+            const EdgeInsets.all(20),
         children: <Widget>[
           Text(
-            'Install JARVIS on another device',
+            'Send JARVIS to another Android device',
             style: Theme.of(context)
                 .textTheme
                 .headlineSmall
                 ?.copyWith(
-                  fontWeight: FontWeight.bold,
+                  fontWeight:
+                      FontWeight.bold,
                 ),
           ),
           const SizedBox(height: 8),
           const Text(
-            'The other Android device does not need Bluetooth or direct pairing. '
-            'Open the installer link or scan the QR code, install JARVIS, then the '
-            'new device can register itself on the cloud device network.',
+            'Jarvis exports the exact APK currently installed on this device, '
+            'then opens Android sharing. You can use Quick Share, Google Drive, '
+            'email, Messages, or another file-transfer target.',
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 18),
           Card(
             child: Padding(
-              padding: const EdgeInsets.all(20),
+              padding:
+                  const EdgeInsets.all(18),
               child: Column(
+                crossAxisAlignment:
+                    CrossAxisAlignment.start,
                 children: <Widget>[
-                  Container(
-                    padding:
-                        const EdgeInsets.all(14),
-                    color: Colors.white,
-                    child: const QrImageView(
-                      data: apkUrl,
-                      version: QrVersions.auto,
-                      size: 220,
-                    ),
+                  const Row(
+                    children: <Widget>[
+                      Icon(
+                        Icons.install_mobile,
+                      ),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Private device transfer',
+                          style: TextStyle(
+                            fontWeight:
+                                FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 10),
                   const Text(
-                    'Scan this QR code with the other device.',
-                    textAlign: TextAlign.center,
+                    '1. Tap Share Installed APK.\n'
+                    '2. Pick Quick Share, Drive, or another sharing method.\n'
+                    '3. Open JARVIS-current.apk on the other Android device.\n'
+                    '4. Android may ask for permission to install from that source.\n'
+                    '5. After installation, Jarvis can register that device on the cloud network.',
+                  ),
+                  const SizedBox(height: 16),
+                  Builder(
+                    builder: (
+                      BuildContext buttonContext,
+                    ) {
+                      return SizedBox(
+                        width:
+                            double.infinity,
+                        child:
+                            FilledButton.icon(
+                          onPressed: _sharing
+                              ? null
+                              : () =>
+                                  _shareInstalledApk(
+                                    buttonContext,
+                                  ),
+                          icon: _sharing
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child:
+                                      CircularProgressIndicator(
+                                    strokeWidth:
+                                        2,
+                                  ),
+                                )
+                              : const Icon(
+                                  Icons
+                                      .share_outlined,
+                                ),
+                          label: Text(
+                            _sharing
+                                ? 'Preparing APK...'
+                                : 'Share Installed APK',
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 ],
               ),
             ),
           ),
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Card(
+              child: ListTile(
+                leading: Icon(
+                  Icons.warning_amber,
+                  color: Theme.of(context)
+                      .colorScheme
+                      .error,
+                ),
+                title: const Text(
+                  'APK sharing failed',
+                ),
+                subtitle: Text(_error!),
+              ),
+            ),
+          ],
           const SizedBox(height: 14),
-          FilledButton.icon(
-            onPressed: () => _openInstaller(context),
-            icon:
-                const Icon(Icons.download_outlined),
-            label: const Text(
-              'Download Latest APK',
-            ),
-          ),
-          const SizedBox(height: 10),
-          OutlinedButton.icon(
-            onPressed: () => _share(context),
-            icon: const Icon(Icons.share_outlined),
-            label: const Text(
-              'Share Installer Link',
-            ),
-          ),
-          const SizedBox(height: 10),
-          OutlinedButton.icon(
-            onPressed: () => _copyLink(context),
-            icon:
-                const Icon(Icons.content_copy),
-            label: const Text(
-              'Copy Installer Link',
-            ),
-          ),
-          const SizedBox(height: 10),
-          TextButton.icon(
-            onPressed: () => _openRelease(context),
-            icon:
-                const Icon(Icons.open_in_new),
-            label: const Text(
-              'Open Release Page',
-            ),
-          ),
-          const SizedBox(height: 18),
           const Card(
             child: ListTile(
               leading:
-                  Icon(Icons.security_outlined),
+                  Icon(Icons.security),
               title: Text(
-                'Android installation note',
+                'Keep this build private',
               ),
               subtitle: Text(
-                'Android may ask you to allow installs from your browser or file manager. '
-                'Only use the JARVIS release link shown in this app.',
+                'This is your configured JARVIS build. Send it only to devices you control rather than posting the APK publicly.',
+              ),
+            ),
+          ),
+          const Card(
+            child: ListTile(
+              leading:
+                  Icon(Icons.bluetooth),
+              title: Text(
+                'Bluetooth remains available',
+              ),
+              subtitle: Text(
+                'Installing Jarvis on another device does not replace Bluetooth. '
+                'The cloud network handles Jarvis-to-Jarvis communication over the internet, '
+                'while Bluetooth continues to handle nearby compatible hardware.',
               ),
             ),
           ),
