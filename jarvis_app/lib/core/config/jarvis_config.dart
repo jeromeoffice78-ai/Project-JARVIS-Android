@@ -4,12 +4,14 @@ class JarvisConfig {
     required this.wsUrl,
     required this.clientToken,
     required this.printGatewayUrl,
+    required this.watchBridgeBaseUrl,
   });
 
   final String httpBaseUrl;
   final String wsUrl;
   final String clientToken;
   final String printGatewayUrl;
+  final String watchBridgeBaseUrl;
 
   factory JarvisConfig.fromEnvironment() {
     return const JarvisConfig(
@@ -29,6 +31,11 @@ class JarvisConfig {
         'JARVIS_PRINT_GATEWAY_URL',
         defaultValue:
             'https://idpneeyysraraznqmiio.supabase.co/functions/v1/jarvis-print-gateway',
+      ),
+      watchBridgeBaseUrl: String.fromEnvironment(
+        'JARVIS_WATCH_BRIDGE_URL',
+        defaultValue:
+            'https://jarvis-watch-bridge-api.onrender.com',
       ),
     );
   }
