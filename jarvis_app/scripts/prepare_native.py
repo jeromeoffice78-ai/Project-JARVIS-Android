@@ -415,7 +415,7 @@ class MainActivity : FlutterFragmentActivity() {{
 }}
 
 class JarvisTextPrintAdapter(
-    context: Context,
+    private val context: Context,
     private val text: String,
 ) : PrintDocumentAdapter() {{
     private var pdf: PrintedPdfDocument? = null
