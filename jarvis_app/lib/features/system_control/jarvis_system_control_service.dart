@@ -133,6 +133,46 @@ class JarvisSystemControlService {
     }
   }
 
+  Future<bool> typeIntoFocusedField(
+    String text,
+  ) async {
+    if (!isSupported || text.isEmpty) {
+      return false;
+    }
+
+    try {
+      return await _channel.invokeMethod<bool>(
+            'typeText',
+            <String, dynamic>{'text': text},
+          ) ??
+          false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  Future<bool> launchAppPackage(
+    String packageName,
+  ) async {
+    final String normalized =
+        packageName.trim();
+    if (!isSupported || normalized.isEmpty) {
+      return false;
+    }
+
+    try {
+      return await _channel.invokeMethod<bool>(
+            'launchApp',
+            <String, dynamic>{
+              'packageName': normalized,
+            },
+          ) ??
+          false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
   Future<String> captureScreenshot() async {
     if (!isSupported) {
       throw StateError(
