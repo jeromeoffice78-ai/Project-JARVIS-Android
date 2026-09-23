@@ -57,7 +57,7 @@ const texLoader = new THREE.TextureLoader();
 const root = new THREE.Group();
 scene.add(root);
 
-let body=null, head=null, hair=null, mixer=null, headBone=null;
+let body=null, head=null, hair=null, mixer=null, headBone=null, headPivot=null;
 let leftUpperArm=null,rightUpperArm=null,leftUpperLeg=null,rightUpperLeg=null;
 let morphMeshes=[];
 let actions={};
@@ -69,6 +69,7 @@ let blinkStart=-1;
 let nextBlink=performance.now()+1200+Math.random()*2200;
 let lastActive=true;
 let speakingPhase=0;
+let groundY=0;
 
 const state={
   active:true,
@@ -128,8 +129,9 @@ function configureHead(node){
     if(o.morphTargetDictionary && Object.keys(o.morphTargetDictionary).length){
       morphMeshes.push(o);
     }
-    const mats=Array.isArray(o.material)?o.material:[o.material];
-    o.material=mats.map(m=>{
+    const multi=Array.isArray(o.material);
+    const mats=multi?o.material:[o.material];
+    const mapped=mats.map(m=>{
       const n=materialName(m);
       if(n==='VitSkin' || n.includes('Skin')) return skinMat;
       if(n==='VitMouth' || n.includes('Mouth')) return mouthMat;
@@ -139,22 +141,23 @@ function configureHead(node){
       if(n.includes('Scalp')) return new THREE.MeshStandardMaterial({color:0x2a1d15,roughness:.8});
       return m || skinMat;
     });
-    if(!Array.isArray(o.material)) o.material=o.material[0];
+    o.material=multi?mapped:mapped[0];
   });
 }
 function configureBody(node){
   node.traverse(o=>{
     if(!o.isMesh) return;
     o.castShadow=true; o.receiveShadow=true;
-    const mats=Array.isArray(o.material)?o.material:[o.material];
-    o.material=mats.map(m=>{
+    const multi=Array.isArray(o.material);
+    const mats=multi?o.material:[o.material];
+    const mapped=mats.map(m=>{
       const n=materialName(m);
       if(n.includes('Shirt')) return new THREE.MeshStandardMaterial({color:0x111827,roughness:.72});
       if(n.includes('Pants')) return new THREE.MeshStandardMaterial({color:0x0b0f16,roughness:.78});
       if(n.includes('Shoes')) return new THREE.MeshStandardMaterial({color:0x090909,roughness:.45});
       return new THREE.MeshStandardMaterial({color:0x825f4a,roughness:.62});
     });
-    if(!Array.isArray(o.material)) o.material=o.material[0];
+    o.material=multi?mapped:mapped[0];
   });
 }
 function configureHair(node){
@@ -290,6 +293,7 @@ function fitCamera(){
   const size=box.getSize(new THREE.Vector3());
   const h=Math.max(size.y,1);
   root.position.y-=box.min.y;
+  groundY=root.position.y;
   camera.position.set(0,h*.58,Math.max(3.0,h*1.55));
   camera.lookAt(0,h*.54,0);
 }
@@ -312,8 +316,15 @@ async function load(){
     rightUpperLeg=findByContains(body,'RightUpLeg');
 
     if(headBone){
-      attachWorldAuthored(head,headBone);
-      attachWorldAuthored(hair,headBone);
+      headPivot=new THREE.Group();
+      headPivot.name='JarvisHeadLookPivot';
+      headBone.add(headPivot);
+      headPivot.position.set(0,0,0);
+      headPivot.rotation.set(0,0,0);
+      headPivot.scale.set(1,1,1);
+      headPivot.updateWorldMatrix(true,false);
+      attachWorldAuthored(head,headPivot);
+      attachWorldAuthored(hair,headPivot);
     }else{
       root.add(head); root.add(hair);
     }
@@ -372,16 +383,19 @@ function autonomousMotion(now,dt){
     }
   }
 
-  if(headBone){
+  if(headPivot){
     const yaw=.035*Math.sin(now*.00072) + (state.activity==='thinking'?.055:0);
     const pitch=.018*Math.sin(now*.00105);
-    headBone.rotation.y += yaw;
-    headBone.rotation.x += pitch;
+    const nod=state.activity==='speaking' ? .016*Math.sin(now*.0048) : 0;
+    headPivot.rotation.set(pitch+nod,yaw,0);
   }
-  if(state.activity==='speaking'){
-    const g=.05*Math.sin(now*.004);
-    if(leftUpperArm) leftUpperArm.rotation.z += g;
-    if(rightUpperArm) rightUpperArm.rotation.z -= g*.7;
+
+  // The body GLB includes a real Walk clip. Add only a subtle root bob here so
+  // locomotion reads as grounded without accumulating rotations on skeleton bones.
+  if(moving){
+    root.position.y=groundY+Math.abs(Math.sin(now*.008))*0.012;
+  }else{
+    root.position.y=THREE.MathUtils.lerp(root.position.y,groundY,.18);
   }
 }
 const clock=new THREE.Clock();

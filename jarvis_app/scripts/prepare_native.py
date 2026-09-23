@@ -997,7 +997,6 @@ class JarvisInCallService : InCallService() {{
     override fun onCallAdded(call: Call) {{
         super.onCallAdded(call)
         activeCall = call
-        super.onCallAdded(call)
 
         if (!isIncoming(call)) {{
             return

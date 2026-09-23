@@ -45,6 +45,7 @@ class JarvisCloudRelayService :
 
         private const val CHANNEL_ID = "jarvis_cloud_link"
         private const val NOTIFICATION_ID = 14031
+        private const val PREFS_NAME = "jarvis_cloud_relay"
     }
 
     private val executor =
@@ -63,6 +64,25 @@ class JarvisCloudRelayService :
 
     override fun onCreate() {
         super.onCreate()
+
+        val prefs = getSharedPreferences(
+            PREFS_NAME,
+            Context.MODE_PRIVATE,
+        )
+        gatewayUrl =
+            prefs.getString("gateway_url", "") ?: ""
+        token =
+            prefs.getString("token", "") ?: ""
+        deviceId =
+            prefs.getString("device_id", "") ?: ""
+        deviceName =
+            prefs.getString(
+                "device_name",
+                "Jarvis Android",
+            ) ?: "Jarvis Android"
+        pollingEnabled =
+            prefs.getBoolean("polling", false)
+
         createNotificationChannel()
         tts = TextToSpeech(this, this)
         running = true
@@ -84,6 +104,13 @@ class JarvisCloudRelayService :
     ): Int {
         when (intent?.action) {
             ACTION_STOP -> {
+                getSharedPreferences(
+                    PREFS_NAME,
+                    Context.MODE_PRIVATE,
+                ).edit()
+                    .putBoolean("polling", false)
+                    .apply()
+                pollingEnabled = false
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -91,6 +118,12 @@ class JarvisCloudRelayService :
             ACTION_SET_POLLING -> {
                 pollingEnabled =
                     intent.getBooleanExtra(EXTRA_POLLING, false)
+                getSharedPreferences(
+                    PREFS_NAME,
+                    Context.MODE_PRIVATE,
+                ).edit()
+                    .putBoolean("polling", pollingEnabled)
+                    .apply()
                 updateNotification()
                 return START_STICKY
             }
@@ -113,6 +146,17 @@ class JarvisCloudRelayService :
                         EXTRA_POLLING,
                         pollingEnabled,
                     ) ?: pollingEnabled
+
+                getSharedPreferences(
+                    PREFS_NAME,
+                    Context.MODE_PRIVATE,
+                ).edit()
+                    .putString("gateway_url", gatewayUrl)
+                    .putString("token", token)
+                    .putString("device_id", deviceId)
+                    .putString("device_name", deviceName)
+                    .putBoolean("polling", pollingEnabled)
+                    .apply()
             }
         }
 
