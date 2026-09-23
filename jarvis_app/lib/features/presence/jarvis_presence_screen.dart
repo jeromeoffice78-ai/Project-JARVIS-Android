@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:model_viewer_plus/model_viewer_plus.dart';
-
 import '../../core/network/providers.dart';
 import '../devices/jarvis_cloud_device_network.dart';
+import 'jarvis_human_avatar_view.dart';
 import '../realtime/jarvis_realtime_voice_screen.dart';
 import '../realtime/jarvis_realtime_voice_service.dart';
 import '../voice/jarvis_voice_screen.dart';
@@ -90,44 +89,9 @@ class JarvisPresenceScreen
             child: Stack(
               fit: StackFit.expand,
               children: <Widget>[
-                AnimatedSlide(
-                  duration:
-                      const Duration(
-                    milliseconds: 850,
-                  ),
-                  curve: Curves.easeInOutCubic,
-                  offset: jarvisHere
-                      ? Offset.zero
-                      : const Offset(1.15, 0),
-                  child: AnimatedOpacity(
-                    duration:
-                        const Duration(
-                      milliseconds: 550,
-                    ),
-                    opacity:
-                        jarvisHere ? 1 : 0,
-                    child:
-                        const ModelViewer(
-                      src:
-                          'assets/models/CesiumMan.glb',
-                      alt:
-                          'Animated 3D Jarvis humanoid',
-                      autoPlay: true,
-                      autoRotate: true,
-                      cameraControls: true,
-                      disableZoom: false,
-                      backgroundColor:
-                          Colors.transparent,
-                      loading:
-                          Loading.eager,
-                      reveal: Reveal.auto,
-                      interactionPrompt:
-                          InteractionPrompt
-                              .none,
-                      cameraOrbit:
-                          '0deg 75deg 2.2m',
-                    ),
-                  ),
+                JarvisHumanAvatarView(
+                  voiceState: voice,
+                  active: jarvisHere,
                 ),
                 IgnorePointer(
                   child: DecoratedBox(
@@ -391,7 +355,7 @@ class JarvisPresenceScreen
                 ),
                 const SizedBox(height: 10),
                 const Text(
-                  'Drag to rotate • pinch to zoom • rigged animation plays automatically',
+                  'Autonomous human presence • facial expressions • lip motion • walking • device handoff',
                   style: TextStyle(
                     color: Colors.white38,
                     fontSize: 12,
