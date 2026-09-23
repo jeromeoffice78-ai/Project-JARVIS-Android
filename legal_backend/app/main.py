@@ -267,11 +267,21 @@ async def lifespan(app: FastAPI):
     app.state.frontier_openai = frontier_client
     app.state.phone_webhook_secret = PHONE_WEBHOOK_SECRET
     app.state.phone_webhook_id = ""
-    app.state.phone_webhook_provision_task = asyncio.create_task(
-        _delayed_phone_webhook_provision()
-    )
+    app.state.phone_webhook_provision_task = None
+    if frontier_key and not frontier_key.startswith("test-"):
+        app.state.phone_webhook_provision_task = asyncio.create_task(
+            _delayed_phone_webhook_provision()
+        )
 
     yield
+
+    provision_task = getattr(
+        app.state,
+        "phone_webhook_provision_task",
+        None,
+    )
+    if provision_task is not None and not provision_task.done():
+        provision_task.cancel()
 
     if client is not None:
         await client.close()
