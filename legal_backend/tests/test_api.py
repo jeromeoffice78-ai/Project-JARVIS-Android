@@ -369,6 +369,10 @@ class _FakeRealtimeHttpClient:
         assert kwargs["headers"]["Authorization"] == "Bearer test-openai-key"
         assert kwargs["headers"]["OpenAI-Safety-Identifier"]
         assert kwargs["json"]["session"]["model"] == api.REALTIME_MODEL
+        assert kwargs["json"]["session"]["audio"]["output"]["voice"] == "cedar"
+        assert kwargs["json"]["session"]["audio"]["input"]["transcription"]["model"] == "gpt-live-transcribe"
+        assert "Recent conversation with Marcus." in kwargs["json"]["session"]["instructions"]
+        assert "Listen first" in kwargs["json"]["session"]["instructions"]
         return _FakeRealtimeHttpResponse()
 
 
@@ -383,6 +387,11 @@ def test_realtime_client_secret_proxies_ephemeral_credential(monkeypatch):
         response = client.post(
             "/v1/realtime/client-secret",
             headers={"Authorization": "Bearer test-client-token"},
+            json={
+                "voice": "cedar",
+                "mood": "companion",
+                "context": "Recent conversation with Marcus.",
+            },
         )
 
         assert response.status_code == 200
