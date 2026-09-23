@@ -194,6 +194,7 @@ class JarvisCloudDeviceNetwork
   bool _refreshing = false;
   bool _foreground = true;
   bool _activeAvatar = false;
+  bool _autoHandoffInFlight = false;
 
   Stream<JarvisCloudDeviceState> get stateStream =>
       _stateController.stream;
@@ -254,8 +255,69 @@ class JarvisCloudDeviceNetwork
         foreground: _foreground,
       ),
     );
-    if (isConfigured) {
+
+    if (!isConfigured) {
+      return;
+    }
+
+    if (_foreground) {
+      unawaited(_syncForegroundPresence());
+    } else {
       unawaited(refreshHeartbeat());
+    }
+  }
+
+  Future<void> _syncForegroundPresence() async {
+    await refreshHeartbeat();
+    await refreshDevices();
+
+    if (_disposed ||
+        !_foreground ||
+        _autoHandoffInFlight ||
+        _state.deviceId.isEmpty) {
+      return;
+    }
+
+    JarvisCloudDevice? activeDevice;
+    for (final JarvisCloudDevice device
+        in _state.devices) {
+      if (device.activeAvatar) {
+        activeDevice = device;
+        break;
+      }
+    }
+
+    if (activeDevice == null ||
+        activeDevice.deviceId ==
+            _state.deviceId) {
+      return;
+    }
+
+    // Do not make two devices that are both actively in use
+    // fight over the avatar. Jarvis follows only when the
+    // previous host is backgrounded or offline.
+    if (activeDevice.online &&
+        activeDevice.foreground) {
+      return;
+    }
+
+    _autoHandoffInFlight = true;
+    try {
+      await handoffJarvisTo(
+        _state.deviceId,
+      );
+      await pollCommands();
+      await refreshDevices();
+    } on Object catch (error) {
+      _emit(
+        _state.copyWith(
+          errorMessage:
+              'Automatic Jarvis handoff failed: ' +
+                  error.toString(),
+        ),
+      );
+    } finally {
+      _autoHandoffInFlight = false;
     }
   }
 
