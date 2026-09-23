@@ -74,6 +74,9 @@ final jarvisCapabilityServiceProvider =
     approvalService: ref.watch(
       jarvisActionApprovalServiceProvider,
     ),
+    printRouter: ref.watch(
+      jarvisPrintRouterProvider,
+    ),
   );
 
   ref.onDispose(service.dispose);
