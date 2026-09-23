@@ -1090,8 +1090,7 @@ class JarvisAccessibilityService : AccessibilityService() {{
     android:accessibilityFeedbackType="feedbackGeneric"
     android:notificationTimeout="100"
     android:canPerformGestures="true"
-    android:canRetrieveWindowContent="false"
-    android:description="@string/app_name" />
+    android:canRetrieveWindowContent="false" />
 """,
         encoding="utf-8",
     )
