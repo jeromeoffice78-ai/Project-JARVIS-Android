@@ -31,6 +31,7 @@ dependencies:
   model_viewer_plus: ^1.10.0
   youtube_player_iframe: ^6.0.2
   share_plus: ^13.3.0
+  webview_flutter: ^4.14.1
 
 dev_dependencies:
   flutter_test:
@@ -44,3 +45,14 @@ flutter:
     - assets/models/SPEAKER-ECAPA-LICENSE.md
     - assets/models/CesiumMan.glb
     - assets/models/CesiumMan-LICENSE.md
+    - assets/avatar/jarvis_human_avatar.html
+    - assets/avatar/VITRUVIAN-NOTICE.md
+    - assets/models/vitruvian_body.glb
+    - assets/models/vitruvian_head.glb
+    - assets/models/hairtool_cards.glb
+    - assets/models/vit_face_bc.png
+    - assets/models/vit_mouth.png
+    - assets/models/vit_sclera.png
+    - assets/models/vit_iris.png
+    - assets/models/vit_hair_atlas.png
+    - assets/models/vit_hair_opacity.png
