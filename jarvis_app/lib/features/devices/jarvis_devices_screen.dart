@@ -312,6 +312,23 @@ class _JarvisDevicesScreenState
                   ),
                 ],
                 const SizedBox(height: 12),
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  value: cloudState.autoRoam,
+                  onChanged: cloudState.configured
+                      ? cloudNetwork.setAutoRoam
+                      : null,
+                  secondary: const Icon(
+                    Icons.multiple_stop,
+                  ),
+                  title: const Text(
+                    'Auto-Roam Jarvis',
+                  ),
+                  subtitle: const Text(
+                    'When this Jarvis device comes to the foreground, it automatically becomes the active avatar and conversation device.',
+                  ),
+                ),
+                const SizedBox(height: 4),
                 OutlinedButton.icon(
                   onPressed: cloudState.configured
                       ? () => _checkBackgroundRelay(
