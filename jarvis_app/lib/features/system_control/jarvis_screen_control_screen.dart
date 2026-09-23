@@ -19,11 +19,23 @@ class JarvisScreenControlScreen
 class _JarvisScreenControlScreenState
     extends ConsumerState<
         JarvisScreenControlScreen> {
+  final TextEditingController _textController =
+      TextEditingController();
+  final TextEditingController _packageController =
+      TextEditingController();
+
   bool _loading = true;
   bool _accessibilityEnabled = false;
   List<JarvisBondedBluetoothDevice> _bonded =
       const <JarvisBondedBluetoothDevice>[];
   String? _status;
+
+  @override
+  void dispose() {
+    _textController.dispose();
+    _packageController.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -104,6 +116,44 @@ class _JarvisScreenControlScreenState
         });
       }
     }
+  }
+
+  Future<void> _typeFocusedText() async {
+    final String text =
+        _textController.text;
+    if (text.isEmpty) return;
+
+    final bool ok = await ref
+        .read(
+          jarvisSystemControlServiceProvider,
+        )
+        .typeIntoFocusedField(text);
+
+    if (!mounted) return;
+    setState(() {
+      _status = ok
+          ? 'Text entered into the focused field.'
+          : 'No editable focused field was available.';
+    });
+  }
+
+  Future<void> _launchPackage() async {
+    final String packageName =
+        _packageController.text.trim();
+    if (packageName.isEmpty) return;
+
+    final bool ok = await ref
+        .read(
+          jarvisSystemControlServiceProvider,
+        )
+        .launchAppPackage(packageName);
+
+    if (!mounted) return;
+    setState(() {
+      _status = ok
+          ? 'Opened $packageName.'
+          : 'Android could not launch $packageName.';
+    });
   }
 
   Future<void> _globalAction(
@@ -280,6 +330,74 @@ class _JarvisScreenControlScreenState
                       ),
                     ),
                   ],
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  'Focused-field control',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium,
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Jarvis can type only into the field currently focused by you. The accessibility service does not log or store screen text.',
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _textController,
+                  decoration:
+                      const InputDecoration(
+                    border:
+                        OutlineInputBorder(),
+                    labelText:
+                        'Text to enter',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                FilledButton.tonalIcon(
+                  onPressed:
+                      _accessibilityEnabled
+                          ? _typeFocusedText
+                          : null,
+                  icon: const Icon(
+                    Icons.keyboard,
+                  ),
+                  label: const Text(
+                    'Type Into Focused Field',
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  'Launch installed app',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium,
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Use an Android package name, for example com.android.settings. Jarvis does not enumerate installed apps.',
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _packageController,
+                  autocorrect: false,
+                  decoration:
+                      const InputDecoration(
+                    border:
+                        OutlineInputBorder(),
+                    labelText:
+                        'Android package name',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                FilledButton.tonalIcon(
+                  onPressed: _launchPackage,
+                  icon: const Icon(
+                    Icons.open_in_new,
+                  ),
+                  label: const Text(
+                    'Launch App',
+                  ),
                 ),
                 if (_status != null) ...[
                   const SizedBox(
