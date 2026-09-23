@@ -45,6 +45,8 @@ class _JarvisShellState
     // cross-device commands even when the Devices tab is not open.
     ref.read(jarvisCloudDeviceNetworkProvider);
 
+    ref.read(jarvisVoiceControllerProvider);
+
     _approvalSubscription = ref
         .read(
           jarvisActionApprovalServiceProvider,
