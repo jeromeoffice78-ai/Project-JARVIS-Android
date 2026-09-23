@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - feature/jarvis-wake-pass-cloud-wake
+      - feature/jarvis-human-behavior
     paths:
       - 'jarvis_app/**'
       - '.github/workflows/flutter-android-v1-2.yml'
