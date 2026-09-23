@@ -8,6 +8,7 @@ import '../../features/capabilities/jarvis_action_approval_service.dart';
 import '../../features/capabilities/jarvis_capability_service.dart';
 import '../../features/devices/jarvis_bluetooth_manager.dart';
 import '../../features/phone/jarvis_phone_service.dart';
+import '../../features/people/jarvis_voice_identity_service.dart';
 import '../../features/printer/jarvis_printer_service.dart';
 import '../../features/printer/jarvis_print_router.dart';
 import '../../features/realtime/jarvis_realtime_voice_service.dart';
@@ -112,6 +113,13 @@ final jarvisPhoneServiceProvider =
   return JarvisPhoneService();
 });
 
+final jarvisVoiceIdentityServiceProvider =
+    Provider<JarvisVoiceIdentityService>(
+  (Ref ref) {
+    return JarvisVoiceIdentityService();
+  },
+);
+
 final jarvisPrinterServiceProvider =
     Provider<JarvisPrinterService>((Ref ref) {
   return JarvisPrinterService();
@@ -194,6 +202,9 @@ final jarvisRealtimeVoiceServiceProvider =
         JarvisRealtimeVoiceService(
       apiService: ref.watch(
         jarvisApiServiceProvider,
+      ),
+      voiceIdentityService: ref.watch(
+        jarvisVoiceIdentityServiceProvider,
       ),
     );
 
