@@ -53,7 +53,10 @@ def patch_manifest() -> None:
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-permission android:name="android.permission.WRITE_CALL_LOG" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
 
@@ -70,7 +73,10 @@ def patch_manifest() -> None:
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-permission android:name="android.permission.WRITE_CALL_LOG" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
 
     <application""",
             1,
@@ -184,6 +190,20 @@ def patch_manifest() -> None:
             1,
         )
 
+
+    if "JarvisCloudRelayService" not in text:
+        cloud_relay_service = """\
+        <service
+            android:name=".JarvisCloudRelayService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+"""
+        text = text.replace(
+            "    </application>",
+            cloud_relay_service + "    </application>",
+            1,
+        )
+
     path.write_text(text, encoding="utf-8")
 
 
@@ -250,6 +270,10 @@ class MainActivity : FlutterFragmentActivity() {{
             flutterEngine,
         )
         JarvisAppDistributionBridge.register(
+            this,
+            flutterEngine,
+        )
+        JarvisCloudRelayBridge.register(
             this,
             flutterEngine,
         )
@@ -789,6 +813,44 @@ class JarvisTextPrintAdapter(
 
     (path.parent / "JarvisAppDistributionBridge.kt").write_text(
         app_distribution_text,
+        encoding="utf-8",
+    )
+
+
+    cloud_relay_bridge_template = (
+        ROOT
+        / "scripts"
+        / "native"
+        / "JarvisCloudRelayBridge.kt.template"
+    )
+    cloud_relay_service_template = (
+        ROOT
+        / "scripts"
+        / "native"
+        / "JarvisCloudRelayService.kt.template"
+    )
+    if not cloud_relay_bridge_template.exists():
+        raise RuntimeError(
+            "JarvisCloudRelayBridge.kt.template is missing"
+        )
+    if not cloud_relay_service_template.exists():
+        raise RuntimeError(
+            "JarvisCloudRelayService.kt.template is missing"
+        )
+
+    cloud_relay_bridge_text = cloud_relay_bridge_template.read_text(
+        encoding="utf-8"
+    ).replace("__PACKAGE__", package_name)
+    cloud_relay_service_text = cloud_relay_service_template.read_text(
+        encoding="utf-8"
+    ).replace("__PACKAGE__", package_name)
+
+    (path.parent / "JarvisCloudRelayBridge.kt").write_text(
+        cloud_relay_bridge_text,
+        encoding="utf-8",
+    )
+    (path.parent / "JarvisCloudRelayService.kt").write_text(
+        cloud_relay_service_text,
         encoding="utf-8",
     )
 
