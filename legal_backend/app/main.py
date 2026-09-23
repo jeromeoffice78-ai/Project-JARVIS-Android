@@ -5,7 +5,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, status
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
@@ -386,6 +386,98 @@ async def frontier_query(
         mode=mode,
         sources=_extract_web_sources(response) if mode == "research" else [],
     )
+
+
+@app.post("/v1/frontier/file", response_model=FrontierQueryResponse)
+async def frontier_file(
+    document: UploadFile = File(...),
+    prompt: str = Form(default="Analyze this file and summarize the important information."),
+    authenticated_role: Annotated[str, Depends(authenticate_request)] = "client",
+) -> FrontierQueryResponse:
+    client: AsyncOpenAI | None = getattr(app.state, "frontier_openai", None)
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Document intelligence requires OPENAI_API_KEY on the server.",
+        )
+
+    filename = (document.filename or "document").strip()[:255] or "document"
+    data = await document.read()
+    if not data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The selected file is empty.",
+        )
+    if len(data) > 50 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Files must be 50 MB or smaller.",
+        )
+
+    uploaded = None
+    try:
+        uploaded = await client.files.create(
+            file=(
+                filename,
+                data,
+                document.content_type or "application/octet-stream",
+            ),
+            purpose="user_data",
+        )
+
+        response = await client.responses.create(
+            model=FRONTIER_MODEL,
+            instructions=(
+                "You are JARVIS Document Intelligence. Analyze the supplied file "
+                "carefully. Distinguish what is in the file from your own analysis. "
+                "Do not invent missing text, tables, signatures, dates, or figures. "
+                f"Authenticated application role: {authenticated_role}."
+            ),
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_file",
+                            "file_id": uploaded.id,
+                        },
+                        {
+                            "type": "input_text",
+                            "text": prompt.strip()
+                            or "Analyze this file and summarize the important information.",
+                        },
+                    ],
+                }
+            ],
+            reasoning={"effort": "high"},
+        )
+
+        answer = (response.output_text or "").strip()
+        if not answer:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Document intelligence returned no usable output.",
+            )
+
+        return FrontierQueryResponse(
+            answer=answer,
+            model=FRONTIER_MODEL,
+            mode="file",
+            sources=[],
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Document intelligence failed: {type(exc).__name__}",
+        ) from exc
+    finally:
+        if uploaded is not None:
+            try:
+                await client.files.delete(uploaded.id)
+            except Exception:
+                pass
 
 
 @app.post("/v1/frontier/image", response_model=FrontierImageResponse)
