@@ -85,6 +85,15 @@ final jarvisCapabilityServiceProvider =
     deviceNetwork: ref.watch(
       jarvisCloudDeviceNetworkProvider,
     ),
+    musicService: ref.watch(
+      jarvisMusicServiceProvider,
+    ),
+    visionService: ref.watch(
+      jarvisVisionServiceProvider,
+    ),
+    voiceService: ref.watch(
+      jarvisVoiceServiceProvider,
+    ),
   );
 
   ref.onDispose(service.dispose);
