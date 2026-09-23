@@ -13,6 +13,7 @@ import 'package:timezone/timezone.dart' as tz;
 import 'package:url_launcher/url_launcher.dart';
 
 import 'jarvis_action_approval_service.dart';
+import '../printer/jarvis_print_router.dart';
 
 class JarvisCapabilityResult {
   const JarvisCapabilityResult({
@@ -29,8 +30,10 @@ class JarvisCapabilityResult {
 class JarvisCapabilityService {
   JarvisCapabilityService({
     required JarvisActionApprovalService approvalService,
+    required JarvisPrintRouter printRouter,
     http.Client? httpClient,
   })  : _approvalService = approvalService,
+        _printRouter = printRouter,
         _httpClient = httpClient ?? http.Client() {
     tz_data.initializeTimeZones();
   }
@@ -39,6 +42,7 @@ class JarvisCapabilityService {
       'jarvis.smart_home.webhook';
 
   final JarvisActionApprovalService _approvalService;
+  final JarvisPrintRouter _printRouter;
   final http.Client _httpClient;
   final DeviceCalendarPlugin _calendar =
       DeviceCalendarPlugin();
@@ -88,6 +92,9 @@ class JarvisCapabilityService {
 
         case 'open_web_url':
           return _openWebUrl(parameters);
+
+        case 'create_and_print_document':
+          return _createAndPrintDocument(parameters);
 
         default:
           return JarvisCapabilityResult(
@@ -705,6 +712,69 @@ class JarvisCapabilityService {
           ? null
           : 'Smart-home webhook returned HTTP ${response.statusCode}.',
     );
+  }
+
+  Future<JarvisCapabilityResult> _createAndPrintDocument(
+    Map<String, dynamic> parameters,
+  ) async {
+    final String title =
+        parameters['title']?.toString().trim() ??
+            'Jarvis Document';
+
+    final String body =
+        parameters['document_text']
+                ?.toString()
+                .trim() ??
+            parameters['body']
+                ?.toString()
+                .trim() ??
+            '';
+
+    final int copies =
+        (parameters['copies'] as num?)
+                ?.toInt()
+                .clamp(1, 99) ??
+            1;
+
+    if (body.isEmpty) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error:
+            'The generated document has no printable content.',
+      );
+    }
+
+    try {
+      final JarvisPrintRouteResult route =
+          await _printRouter.queueDocument(
+        title: title.isEmpty
+            ? 'Jarvis Document'
+            : title,
+        text: body,
+        copies: copies,
+      );
+
+      return JarvisCapabilityResult(
+        ok: true,
+        result: <String, dynamic>{
+          'job_id': route.jobId,
+          'target_device_id':
+              route.targetDeviceId,
+          'target_device_name':
+              route.targetDeviceName,
+          'printer_name': route.printerName,
+          'status': 'queued',
+          'verification':
+              'The job was routed to a live printer-host device. Physical printing is confirmed separately by Android/printer status.',
+        },
+      );
+    } on Object catch (error) {
+      return JarvisCapabilityResult(
+        ok: false,
+        error:
+            'Jarvis could not route the document to an available printer: $error',
+      );
+    }
   }
 
   Future<JarvisCapabilityResult> _openWebUrl(
