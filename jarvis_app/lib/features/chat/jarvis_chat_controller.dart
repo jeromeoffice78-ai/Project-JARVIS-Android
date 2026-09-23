@@ -112,6 +112,29 @@ class JarvisChatController {
       return null;
     }
 
+    final String? localRequestId =
+        _tryHandleIntegratedCommand(normalized);
+
+    if (localRequestId != null) {
+      return localRequestId;
+    }
+
+    if (_looksLikeVisionRequest(normalized)) {
+      final String requestId =
+          _newLocalRequestId('vision');
+      unawaited(
+        _refreshVisionThenAsk(
+          requestId,
+          normalized,
+        ),
+      );
+      return requestId;
+    }
+
+    return _sendRemoteQuery(normalized);
+  }
+
+  String? _sendRemoteQuery(String normalized) {
     if (_activeRequestId != null && _state.isGenerating) {
       cancelCurrentResponse();
     }
@@ -167,6 +190,3810 @@ class JarvisChatController {
 
       return null;
     }
+  }
+
+  String? _tryHandleIntegratedCommand(
+    String query,
+  ) {
+    final String cleaned = query
+        .replaceFirst(
+          RegExp(
+            r'^jarvis[,:]?\s*',
+            caseSensitive: false,
+          ),
+          '',
+        )
+        .trim();
+
+    final String lower = cleaned.toLowerCase();
+
+    if (RegExp(
+      r'^(pause|stop)\s+(the\s+)?(music|song|track)
+    final String lower =
+        query.toLowerCase();
+
+    if (!RegExp(r'\bprint\b')
+        .hasMatch(lower)) {
+      return false;
+    }
+
+    final bool informationalQuestion =
+        RegExp(
+      r'\b(how (do|can|should) i|how to|what is|why does|where do i)\b',
+    ).hasMatch(lower);
+
+    if (informationalQuestion) {
+      return false;
+    }
+
+    final bool hasDocumentObject = RegExp(
+      r'\b(document|letter|invoice|receipt|estimate|proposal|report|contract|agreement|form|notice|memo|page|it|this|that)\b',
+    ).hasMatch(lower);
+
+    final bool hasCreationIntent = RegExp(
+      r'\b(create|make|write|draft|prepare|generate|compose)\b',
+    ).hasMatch(lower);
+
+    final bool directPrintIntent = RegExp(
+      r'\bprint\s+(this|it|that|the|my|a|an)\b',
+    ).hasMatch(lower);
+
+    return hasDocumentObject &&
+        (hasCreationIntent ||
+            directPrintIntent);
+  }
+
+  String _buildAutoPrintQuery(
+    String original,
+  ) {
+    return '''
+${original}
+
+JARVIS PRINT EXECUTION INSTRUCTION:
+The user explicitly asked for a document to be printed. Create the finished document now. Output only the finished printable artifact with no explanation before or after it. Put a first line exactly in this format:
+PRINT_TITLE: <short document title>
+
+Then add one blank line and the complete document body. Do not include markdown code fences.
+''';
+  }
+
+  Future<void>
+      _routeCompletedDocumentForPrinting({
+    required String requestId,
+    required String rawResponse,
+  }) async {
+    final String normalized =
+        rawResponse.trim();
+
+    if (normalized.isEmpty) {
+      return;
+    }
+
+    String title = 'Jarvis Document';
+    String body = normalized;
+
+    final List<String> lines =
+        normalized.split('\n');
+
+    if (lines.isNotEmpty &&
+        lines.first
+            .trimLeft()
+            .startsWith('PRINT_TITLE:')) {
+      final String parsedTitle =
+          lines.first
+              .substring(
+                lines.first.indexOf(':') + 1,
+              )
+              .trim();
+
+      if (parsedTitle.isNotEmpty) {
+        title = parsedTitle;
+      }
+
+      body = lines
+          .skip(1)
+          .join('\n')
+          .trim();
+    }
+
+    if (body.isEmpty) {
+      return;
+    }
+
+    final JarvisCapabilityResult result =
+        await _capabilityService.execute(
+      requestId: requestId,
+      callId: 'auto-print-${requestId}',
+      action:
+          'create_and_print_document',
+      parameters: <String, dynamic>{
+        'title': title,
+        'document_text': body,
+        'copies': 1,
+      },
+    );
+
+    if (_disposed) {
+      return;
+    }
+
+    final String statusText;
+    if (result.ok) {
+      final String target =
+          result.result['target_device_name']
+                  ?.toString() ??
+              'printer host';
+      final String printer =
+          result.result['printer_name']
+                  ?.toString() ??
+              'printer';
+
+      statusText =
+          '\n\nJarvis print routing: sent to ${target} → ${printer}.';
+    } else {
+      statusText =
+          '\n\nJarvis print routing failed: ${result.error ?? 'No printer-ready Android device is available.'}';
+    }
+
+    _currentResponseBuffer =
+        body + statusText;
+    _emitResponseBuffer();
+
+    _emitState(
+      JarvisChatState(
+        status: result.ok
+            ? JarvisChatStatus.completed
+            : JarvisChatStatus.error,
+        responseText:
+            _currentResponseBuffer,
+        requestId: requestId,
+        errorMessage:
+            result.ok ? null : result.error,
+        retryable: !result.ok,
+      ),
+    );
+  }
+
+  void cancelCurrentResponse() {
+    _ensureNotDisposed();
+
+    final String? requestId = _activeRequestId;
+    if (requestId == null) {
+      return;
+    }
+
+    _wsService.sendJson(
+      CancelResponseEvent(
+        requestId: requestId,
+      ).toJson(),
+    );
+  }
+
+  Future<void> _handleIncomingMessage(
+    Map<String, dynamic> rawMap,
+  ) async {
+    if (_disposed) {
+      return;
+    }
+
+    try {
+      final JarvisEvent event = JarvisEventParser.parse(rawMap);
+
+      if (event is SystemCommandEvent) {
+        await _executeLocalDeviceCommand(event);
+        return;
+      }
+
+      if (event is AgentTextChunkEvent) {
+        _handleAgentTextChunk(event);
+        return;
+      }
+
+      if (event is JarvisErrorEvent) {
+        _handleJarvisError(event);
+        return;
+      }
+
+      if (event is ResponseCancelledEvent) {
+        _handleResponseCancelled(event);
+      }
+    } on JarvisProtocolException catch (error) {
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.error,
+          responseText: _currentResponseBuffer,
+          requestId: _activeRequestId,
+          errorMessage: error.message,
+          retryable: false,
+        ),
+      );
+    } on Object catch (error) {
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.error,
+          responseText: _currentResponseBuffer,
+          requestId: _activeRequestId,
+          errorMessage: 'Unexpected Jarvis protocol error: $error',
+          retryable: false,
+        ),
+      );
+    }
+  }
+
+  void _handleAgentTextChunk(AgentTextChunkEvent event) {
+    if (event.requestId != _activeRequestId) {
+      return;
+    }
+
+    if (event.chunkIndex < _expectedChunkIndex) {
+      return;
+    }
+
+    if (event.chunkIndex > _expectedChunkIndex) {
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.error,
+          responseText: _currentResponseBuffer,
+          requestId: event.requestId,
+          errorMessage:
+              'Streaming sequence interrupted. Expected chunk '
+              '$_expectedChunkIndex but received ${event.chunkIndex}.',
+          retryable: true,
+        ),
+      );
+      return;
+    }
+
+    if (event.textChunk.isNotEmpty) {
+      _currentResponseBuffer += event.textChunk;
+      _emitResponseBuffer();
+    }
+
+    _expectedChunkIndex++;
+
+    if (event.isFinal) {
+      final bool autoPrint =
+          _autoPrintRequestIds.remove(
+        event.requestId,
+      );
+
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.completed,
+          responseText: _currentResponseBuffer,
+          requestId: event.requestId,
+        ),
+      );
+
+      if (autoPrint) {
+        unawaited(
+          _routeCompletedDocumentForPrinting(
+            requestId: event.requestId,
+            rawResponse:
+                _currentResponseBuffer,
+          ),
+        );
+      }
+
+      _activeRequestId = null;
+      _expectedChunkIndex = 0;
+      return;
+    }
+
+    _emitState(
+      JarvisChatState(
+        status: JarvisChatStatus.streaming,
+        responseText: _currentResponseBuffer,
+        requestId: event.requestId,
+      ),
+    );
+  }
+
+  void _handleJarvisError(JarvisErrorEvent event) {
+    if (event.requestId != null &&
+        _activeRequestId != null &&
+        event.requestId != _activeRequestId) {
+      return;
+    }
+
+    _emitState(
+      JarvisChatState(
+        status: JarvisChatStatus.error,
+        responseText: _currentResponseBuffer,
+        requestId: event.requestId ?? _activeRequestId,
+        errorMessage: event.message,
+        retryable: event.retryable,
+      ),
+    );
+
+    if (event.requestId != null) {
+      _autoPrintRequestIds.remove(
+        event.requestId,
+      );
+    }
+
+    if (event.requestId == null ||
+        event.requestId == _activeRequestId) {
+      _activeRequestId = null;
+      _expectedChunkIndex = 0;
+    }
+  }
+
+  void _handleResponseCancelled(
+    ResponseCancelledEvent event,
+  ) {
+    if (event.requestId != null &&
+        _activeRequestId != null &&
+        event.requestId != _activeRequestId) {
+      return;
+    }
+
+    _emitState(
+      JarvisChatState(
+        status: JarvisChatStatus.cancelled,
+        responseText: _currentResponseBuffer,
+        requestId: event.requestId ?? _activeRequestId,
+      ),
+    );
+
+    if (event.requestId != null) {
+      _autoPrintRequestIds.remove(
+        event.requestId,
+      );
+    }
+
+    _activeRequestId = null;
+    _expectedChunkIndex = 0;
+  }
+
+  Future<void> _executeLocalDeviceCommand(
+    SystemCommandEvent event,
+  ) async {
+    final String cacheKey =
+        '${event.requestId}:${event.callId}';
+
+    final ToolResultEvent? cached =
+        _completedToolCalls[cacheKey];
+
+    if (cached != null) {
+      _wsService.sendJson(cached.toJson());
+      return;
+    }
+
+    final ToolResultEvent result;
+
+    if (event.action == 'toggle_flashlight') {
+      result = await _executeFlashlightCommand(event);
+    } else if (event.action == 'change_system_theme') {
+      result = _executeThemeCommand(event);
+    } else {
+      final JarvisCapabilityResult capability =
+          await _capabilityService.execute(
+        requestId: event.requestId,
+        callId: event.callId,
+        action: event.action,
+        parameters: event.parameters,
+      );
+
+      result = ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: capability.ok,
+        result: capability.result,
+        error: capability.error,
+      );
+    }
+
+    _completedToolCalls[cacheKey] = result;
+    _trimToolResultCache();
+
+    try {
+      _wsService.sendJson(result.toJson());
+    } on Object catch (error) {
+      debugPrint(
+        'Unable to return Jarvis tool result: $error',
+      );
+    }
+  }
+
+  Future<ToolResultEvent> _executeFlashlightCommand(
+    SystemCommandEvent event,
+  ) async {
+    final Object? requestedState =
+        event.parameters['state'];
+
+    if (requestedState != 'on' &&
+        requestedState != 'off') {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{},
+        error: 'Invalid flashlight state.',
+      );
+    }
+
+    if (!_supportsNativeTorch) {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{
+          'supported': false,
+        },
+        error: 'Flashlight control is unavailable on this platform.',
+      );
+    }
+
+    try {
+      final bool available =
+          await TorchLight.isTorchAvailable();
+
+      if (!available) {
+        return ToolResultEvent(
+          requestId: event.requestId,
+          callId: event.callId,
+          ok: false,
+          result: const <String, dynamic>{
+            'supported': false,
+          },
+          error: 'This device has no available flashlight.',
+        );
+      }
+
+      if (requestedState == 'on') {
+        await TorchLight.enableTorch();
+      } else {
+        await TorchLight.disableTorch();
+      }
+
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: true,
+        result: <String, dynamic>{
+          'supported': true,
+          'state': requestedState,
+        },
+      );
+    } on Object catch (error) {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{},
+        error:
+            'Flashlight operation failed: ${error.runtimeType}',
+      );
+    }
+  }
+
+  ToolResultEvent _executeThemeCommand(
+    SystemCommandEvent event,
+  ) {
+    final Object? requestedTheme =
+        event.parameters['theme'];
+
+    if (requestedTheme != 'light' &&
+        requestedTheme != 'dark') {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{},
+        error: 'Invalid application theme.',
+      );
+    }
+
+    final ThemeMode mode =
+        requestedTheme == 'dark'
+            ? ThemeMode.dark
+            : ThemeMode.light;
+
+    if (!_themeModeController.isClosed) {
+      _themeModeController.add(mode);
+    }
+
+    return ToolResultEvent(
+      requestId: event.requestId,
+      callId: event.callId,
+      ok: true,
+      result: <String, dynamic>{
+        'theme': requestedTheme,
+      },
+    );
+  }
+
+  bool get _supportsNativeTorch {
+    if (kIsWeb) {
+      return false;
+    }
+
+    return defaultTargetPlatform ==
+            TargetPlatform.android ||
+        defaultTargetPlatform ==
+            TargetPlatform.iOS;
+  }
+
+  void _trimToolResultCache() {
+    const int maximumEntries = 100;
+
+    while (_completedToolCalls.length >
+        maximumEntries) {
+      _completedToolCalls.remove(
+        _completedToolCalls.keys.first,
+      );
+    }
+  }
+
+  void _emitResponseBuffer() {
+    if (!_disposed &&
+        !_responseBufferController.isClosed) {
+      _responseBufferController.add(
+        _currentResponseBuffer,
+      );
+    }
+  }
+
+  void _emitState(JarvisChatState state) {
+    if (_disposed || _stateController.isClosed) {
+      return;
+    }
+
+    _state = state;
+    _stateController.add(state);
+  }
+
+  void _ensureNotDisposed() {
+    if (_disposed) {
+      throw StateError(
+        'JarvisChatController has been disposed.',
+      );
+    }
+  }
+
+  Future<void> dispose() async {
+    if (_disposed) {
+      return;
+    }
+
+    _disposed = true;
+
+    await _messageSubscription?.cancel();
+    _messageSubscription = null;
+
+    _completedToolCalls.clear();
+    _autoPrintRequestIds.clear();
+
+    await Future.wait<void>(<Future<void>>[
+      _stateController.close(),
+      _responseBufferController.close(),
+      _themeModeController.close(),
+    ]);
+  }
+}
+,
+    ).hasMatch(lower)) {
+      return _runIntegratedCapability(
+        action: 'pause_music',
+        parameters:
+            const <String, dynamic>{},
+        successText: (_) =>
+            'Music paused.',
+      );
+    }
+
+    if (RegExp(
+      r'^(resume|continue)\s+(the\s+)?(music|song|track)
+    final String lower =
+        query.toLowerCase();
+
+    if (!RegExp(r'\bprint\b')
+        .hasMatch(lower)) {
+      return false;
+    }
+
+    final bool informationalQuestion =
+        RegExp(
+      r'\b(how (do|can|should) i|how to|what is|why does|where do i)\b',
+    ).hasMatch(lower);
+
+    if (informationalQuestion) {
+      return false;
+    }
+
+    final bool hasDocumentObject = RegExp(
+      r'\b(document|letter|invoice|receipt|estimate|proposal|report|contract|agreement|form|notice|memo|page|it|this|that)\b',
+    ).hasMatch(lower);
+
+    final bool hasCreationIntent = RegExp(
+      r'\b(create|make|write|draft|prepare|generate|compose)\b',
+    ).hasMatch(lower);
+
+    final bool directPrintIntent = RegExp(
+      r'\bprint\s+(this|it|that|the|my|a|an)\b',
+    ).hasMatch(lower);
+
+    return hasDocumentObject &&
+        (hasCreationIntent ||
+            directPrintIntent);
+  }
+
+  String _buildAutoPrintQuery(
+    String original,
+  ) {
+    return '''
+${original}
+
+JARVIS PRINT EXECUTION INSTRUCTION:
+The user explicitly asked for a document to be printed. Create the finished document now. Output only the finished printable artifact with no explanation before or after it. Put a first line exactly in this format:
+PRINT_TITLE: <short document title>
+
+Then add one blank line and the complete document body. Do not include markdown code fences.
+''';
+  }
+
+  Future<void>
+      _routeCompletedDocumentForPrinting({
+    required String requestId,
+    required String rawResponse,
+  }) async {
+    final String normalized =
+        rawResponse.trim();
+
+    if (normalized.isEmpty) {
+      return;
+    }
+
+    String title = 'Jarvis Document';
+    String body = normalized;
+
+    final List<String> lines =
+        normalized.split('\n');
+
+    if (lines.isNotEmpty &&
+        lines.first
+            .trimLeft()
+            .startsWith('PRINT_TITLE:')) {
+      final String parsedTitle =
+          lines.first
+              .substring(
+                lines.first.indexOf(':') + 1,
+              )
+              .trim();
+
+      if (parsedTitle.isNotEmpty) {
+        title = parsedTitle;
+      }
+
+      body = lines
+          .skip(1)
+          .join('\n')
+          .trim();
+    }
+
+    if (body.isEmpty) {
+      return;
+    }
+
+    final JarvisCapabilityResult result =
+        await _capabilityService.execute(
+      requestId: requestId,
+      callId: 'auto-print-${requestId}',
+      action:
+          'create_and_print_document',
+      parameters: <String, dynamic>{
+        'title': title,
+        'document_text': body,
+        'copies': 1,
+      },
+    );
+
+    if (_disposed) {
+      return;
+    }
+
+    final String statusText;
+    if (result.ok) {
+      final String target =
+          result.result['target_device_name']
+                  ?.toString() ??
+              'printer host';
+      final String printer =
+          result.result['printer_name']
+                  ?.toString() ??
+              'printer';
+
+      statusText =
+          '\n\nJarvis print routing: sent to ${target} → ${printer}.';
+    } else {
+      statusText =
+          '\n\nJarvis print routing failed: ${result.error ?? 'No printer-ready Android device is available.'}';
+    }
+
+    _currentResponseBuffer =
+        body + statusText;
+    _emitResponseBuffer();
+
+    _emitState(
+      JarvisChatState(
+        status: result.ok
+            ? JarvisChatStatus.completed
+            : JarvisChatStatus.error,
+        responseText:
+            _currentResponseBuffer,
+        requestId: requestId,
+        errorMessage:
+            result.ok ? null : result.error,
+        retryable: !result.ok,
+      ),
+    );
+  }
+
+  void cancelCurrentResponse() {
+    _ensureNotDisposed();
+
+    final String? requestId = _activeRequestId;
+    if (requestId == null) {
+      return;
+    }
+
+    _wsService.sendJson(
+      CancelResponseEvent(
+        requestId: requestId,
+      ).toJson(),
+    );
+  }
+
+  Future<void> _handleIncomingMessage(
+    Map<String, dynamic> rawMap,
+  ) async {
+    if (_disposed) {
+      return;
+    }
+
+    try {
+      final JarvisEvent event = JarvisEventParser.parse(rawMap);
+
+      if (event is SystemCommandEvent) {
+        await _executeLocalDeviceCommand(event);
+        return;
+      }
+
+      if (event is AgentTextChunkEvent) {
+        _handleAgentTextChunk(event);
+        return;
+      }
+
+      if (event is JarvisErrorEvent) {
+        _handleJarvisError(event);
+        return;
+      }
+
+      if (event is ResponseCancelledEvent) {
+        _handleResponseCancelled(event);
+      }
+    } on JarvisProtocolException catch (error) {
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.error,
+          responseText: _currentResponseBuffer,
+          requestId: _activeRequestId,
+          errorMessage: error.message,
+          retryable: false,
+        ),
+      );
+    } on Object catch (error) {
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.error,
+          responseText: _currentResponseBuffer,
+          requestId: _activeRequestId,
+          errorMessage: 'Unexpected Jarvis protocol error: $error',
+          retryable: false,
+        ),
+      );
+    }
+  }
+
+  void _handleAgentTextChunk(AgentTextChunkEvent event) {
+    if (event.requestId != _activeRequestId) {
+      return;
+    }
+
+    if (event.chunkIndex < _expectedChunkIndex) {
+      return;
+    }
+
+    if (event.chunkIndex > _expectedChunkIndex) {
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.error,
+          responseText: _currentResponseBuffer,
+          requestId: event.requestId,
+          errorMessage:
+              'Streaming sequence interrupted. Expected chunk '
+              '$_expectedChunkIndex but received ${event.chunkIndex}.',
+          retryable: true,
+        ),
+      );
+      return;
+    }
+
+    if (event.textChunk.isNotEmpty) {
+      _currentResponseBuffer += event.textChunk;
+      _emitResponseBuffer();
+    }
+
+    _expectedChunkIndex++;
+
+    if (event.isFinal) {
+      final bool autoPrint =
+          _autoPrintRequestIds.remove(
+        event.requestId,
+      );
+
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.completed,
+          responseText: _currentResponseBuffer,
+          requestId: event.requestId,
+        ),
+      );
+
+      if (autoPrint) {
+        unawaited(
+          _routeCompletedDocumentForPrinting(
+            requestId: event.requestId,
+            rawResponse:
+                _currentResponseBuffer,
+          ),
+        );
+      }
+
+      _activeRequestId = null;
+      _expectedChunkIndex = 0;
+      return;
+    }
+
+    _emitState(
+      JarvisChatState(
+        status: JarvisChatStatus.streaming,
+        responseText: _currentResponseBuffer,
+        requestId: event.requestId,
+      ),
+    );
+  }
+
+  void _handleJarvisError(JarvisErrorEvent event) {
+    if (event.requestId != null &&
+        _activeRequestId != null &&
+        event.requestId != _activeRequestId) {
+      return;
+    }
+
+    _emitState(
+      JarvisChatState(
+        status: JarvisChatStatus.error,
+        responseText: _currentResponseBuffer,
+        requestId: event.requestId ?? _activeRequestId,
+        errorMessage: event.message,
+        retryable: event.retryable,
+      ),
+    );
+
+    if (event.requestId != null) {
+      _autoPrintRequestIds.remove(
+        event.requestId,
+      );
+    }
+
+    if (event.requestId == null ||
+        event.requestId == _activeRequestId) {
+      _activeRequestId = null;
+      _expectedChunkIndex = 0;
+    }
+  }
+
+  void _handleResponseCancelled(
+    ResponseCancelledEvent event,
+  ) {
+    if (event.requestId != null &&
+        _activeRequestId != null &&
+        event.requestId != _activeRequestId) {
+      return;
+    }
+
+    _emitState(
+      JarvisChatState(
+        status: JarvisChatStatus.cancelled,
+        responseText: _currentResponseBuffer,
+        requestId: event.requestId ?? _activeRequestId,
+      ),
+    );
+
+    if (event.requestId != null) {
+      _autoPrintRequestIds.remove(
+        event.requestId,
+      );
+    }
+
+    _activeRequestId = null;
+    _expectedChunkIndex = 0;
+  }
+
+  Future<void> _executeLocalDeviceCommand(
+    SystemCommandEvent event,
+  ) async {
+    final String cacheKey =
+        '${event.requestId}:${event.callId}';
+
+    final ToolResultEvent? cached =
+        _completedToolCalls[cacheKey];
+
+    if (cached != null) {
+      _wsService.sendJson(cached.toJson());
+      return;
+    }
+
+    final ToolResultEvent result;
+
+    if (event.action == 'toggle_flashlight') {
+      result = await _executeFlashlightCommand(event);
+    } else if (event.action == 'change_system_theme') {
+      result = _executeThemeCommand(event);
+    } else {
+      final JarvisCapabilityResult capability =
+          await _capabilityService.execute(
+        requestId: event.requestId,
+        callId: event.callId,
+        action: event.action,
+        parameters: event.parameters,
+      );
+
+      result = ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: capability.ok,
+        result: capability.result,
+        error: capability.error,
+      );
+    }
+
+    _completedToolCalls[cacheKey] = result;
+    _trimToolResultCache();
+
+    try {
+      _wsService.sendJson(result.toJson());
+    } on Object catch (error) {
+      debugPrint(
+        'Unable to return Jarvis tool result: $error',
+      );
+    }
+  }
+
+  Future<ToolResultEvent> _executeFlashlightCommand(
+    SystemCommandEvent event,
+  ) async {
+    final Object? requestedState =
+        event.parameters['state'];
+
+    if (requestedState != 'on' &&
+        requestedState != 'off') {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{},
+        error: 'Invalid flashlight state.',
+      );
+    }
+
+    if (!_supportsNativeTorch) {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{
+          'supported': false,
+        },
+        error: 'Flashlight control is unavailable on this platform.',
+      );
+    }
+
+    try {
+      final bool available =
+          await TorchLight.isTorchAvailable();
+
+      if (!available) {
+        return ToolResultEvent(
+          requestId: event.requestId,
+          callId: event.callId,
+          ok: false,
+          result: const <String, dynamic>{
+            'supported': false,
+          },
+          error: 'This device has no available flashlight.',
+        );
+      }
+
+      if (requestedState == 'on') {
+        await TorchLight.enableTorch();
+      } else {
+        await TorchLight.disableTorch();
+      }
+
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: true,
+        result: <String, dynamic>{
+          'supported': true,
+          'state': requestedState,
+        },
+      );
+    } on Object catch (error) {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{},
+        error:
+            'Flashlight operation failed: ${error.runtimeType}',
+      );
+    }
+  }
+
+  ToolResultEvent _executeThemeCommand(
+    SystemCommandEvent event,
+  ) {
+    final Object? requestedTheme =
+        event.parameters['theme'];
+
+    if (requestedTheme != 'light' &&
+        requestedTheme != 'dark') {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{},
+        error: 'Invalid application theme.',
+      );
+    }
+
+    final ThemeMode mode =
+        requestedTheme == 'dark'
+            ? ThemeMode.dark
+            : ThemeMode.light;
+
+    if (!_themeModeController.isClosed) {
+      _themeModeController.add(mode);
+    }
+
+    return ToolResultEvent(
+      requestId: event.requestId,
+      callId: event.callId,
+      ok: true,
+      result: <String, dynamic>{
+        'theme': requestedTheme,
+      },
+    );
+  }
+
+  bool get _supportsNativeTorch {
+    if (kIsWeb) {
+      return false;
+    }
+
+    return defaultTargetPlatform ==
+            TargetPlatform.android ||
+        defaultTargetPlatform ==
+            TargetPlatform.iOS;
+  }
+
+  void _trimToolResultCache() {
+    const int maximumEntries = 100;
+
+    while (_completedToolCalls.length >
+        maximumEntries) {
+      _completedToolCalls.remove(
+        _completedToolCalls.keys.first,
+      );
+    }
+  }
+
+  void _emitResponseBuffer() {
+    if (!_disposed &&
+        !_responseBufferController.isClosed) {
+      _responseBufferController.add(
+        _currentResponseBuffer,
+      );
+    }
+  }
+
+  void _emitState(JarvisChatState state) {
+    if (_disposed || _stateController.isClosed) {
+      return;
+    }
+
+    _state = state;
+    _stateController.add(state);
+  }
+
+  void _ensureNotDisposed() {
+    if (_disposed) {
+      throw StateError(
+        'JarvisChatController has been disposed.',
+      );
+    }
+  }
+
+  Future<void> dispose() async {
+    if (_disposed) {
+      return;
+    }
+
+    _disposed = true;
+
+    await _messageSubscription?.cancel();
+    _messageSubscription = null;
+
+    _completedToolCalls.clear();
+    _autoPrintRequestIds.clear();
+
+    await Future.wait<void>(<Future<void>>[
+      _stateController.close(),
+      _responseBufferController.close(),
+      _themeModeController.close(),
+    ]);
+  }
+}
+,
+    ).hasMatch(lower)) {
+      return _runIntegratedCapability(
+        action: 'resume_music',
+        parameters:
+            const <String, dynamic>{},
+        successText: (_) =>
+            'Music resumed.',
+      );
+    }
+
+    final RegExp remotePlay = RegExp(
+      r'^play\s+(.+?)\s+on\s+(?:my\s+)?(.+)
+    final String lower =
+        query.toLowerCase();
+
+    if (!RegExp(r'\bprint\b')
+        .hasMatch(lower)) {
+      return false;
+    }
+
+    final bool informationalQuestion =
+        RegExp(
+      r'\b(how (do|can|should) i|how to|what is|why does|where do i)\b',
+    ).hasMatch(lower);
+
+    if (informationalQuestion) {
+      return false;
+    }
+
+    final bool hasDocumentObject = RegExp(
+      r'\b(document|letter|invoice|receipt|estimate|proposal|report|contract|agreement|form|notice|memo|page|it|this|that)\b',
+    ).hasMatch(lower);
+
+    final bool hasCreationIntent = RegExp(
+      r'\b(create|make|write|draft|prepare|generate|compose)\b',
+    ).hasMatch(lower);
+
+    final bool directPrintIntent = RegExp(
+      r'\bprint\s+(this|it|that|the|my|a|an)\b',
+    ).hasMatch(lower);
+
+    return hasDocumentObject &&
+        (hasCreationIntent ||
+            directPrintIntent);
+  }
+
+  String _buildAutoPrintQuery(
+    String original,
+  ) {
+    return '''
+${original}
+
+JARVIS PRINT EXECUTION INSTRUCTION:
+The user explicitly asked for a document to be printed. Create the finished document now. Output only the finished printable artifact with no explanation before or after it. Put a first line exactly in this format:
+PRINT_TITLE: <short document title>
+
+Then add one blank line and the complete document body. Do not include markdown code fences.
+''';
+  }
+
+  Future<void>
+      _routeCompletedDocumentForPrinting({
+    required String requestId,
+    required String rawResponse,
+  }) async {
+    final String normalized =
+        rawResponse.trim();
+
+    if (normalized.isEmpty) {
+      return;
+    }
+
+    String title = 'Jarvis Document';
+    String body = normalized;
+
+    final List<String> lines =
+        normalized.split('\n');
+
+    if (lines.isNotEmpty &&
+        lines.first
+            .trimLeft()
+            .startsWith('PRINT_TITLE:')) {
+      final String parsedTitle =
+          lines.first
+              .substring(
+                lines.first.indexOf(':') + 1,
+              )
+              .trim();
+
+      if (parsedTitle.isNotEmpty) {
+        title = parsedTitle;
+      }
+
+      body = lines
+          .skip(1)
+          .join('\n')
+          .trim();
+    }
+
+    if (body.isEmpty) {
+      return;
+    }
+
+    final JarvisCapabilityResult result =
+        await _capabilityService.execute(
+      requestId: requestId,
+      callId: 'auto-print-${requestId}',
+      action:
+          'create_and_print_document',
+      parameters: <String, dynamic>{
+        'title': title,
+        'document_text': body,
+        'copies': 1,
+      },
+    );
+
+    if (_disposed) {
+      return;
+    }
+
+    final String statusText;
+    if (result.ok) {
+      final String target =
+          result.result['target_device_name']
+                  ?.toString() ??
+              'printer host';
+      final String printer =
+          result.result['printer_name']
+                  ?.toString() ??
+              'printer';
+
+      statusText =
+          '\n\nJarvis print routing: sent to ${target} → ${printer}.';
+    } else {
+      statusText =
+          '\n\nJarvis print routing failed: ${result.error ?? 'No printer-ready Android device is available.'}';
+    }
+
+    _currentResponseBuffer =
+        body + statusText;
+    _emitResponseBuffer();
+
+    _emitState(
+      JarvisChatState(
+        status: result.ok
+            ? JarvisChatStatus.completed
+            : JarvisChatStatus.error,
+        responseText:
+            _currentResponseBuffer,
+        requestId: requestId,
+        errorMessage:
+            result.ok ? null : result.error,
+        retryable: !result.ok,
+      ),
+    );
+  }
+
+  void cancelCurrentResponse() {
+    _ensureNotDisposed();
+
+    final String? requestId = _activeRequestId;
+    if (requestId == null) {
+      return;
+    }
+
+    _wsService.sendJson(
+      CancelResponseEvent(
+        requestId: requestId,
+      ).toJson(),
+    );
+  }
+
+  Future<void> _handleIncomingMessage(
+    Map<String, dynamic> rawMap,
+  ) async {
+    if (_disposed) {
+      return;
+    }
+
+    try {
+      final JarvisEvent event = JarvisEventParser.parse(rawMap);
+
+      if (event is SystemCommandEvent) {
+        await _executeLocalDeviceCommand(event);
+        return;
+      }
+
+      if (event is AgentTextChunkEvent) {
+        _handleAgentTextChunk(event);
+        return;
+      }
+
+      if (event is JarvisErrorEvent) {
+        _handleJarvisError(event);
+        return;
+      }
+
+      if (event is ResponseCancelledEvent) {
+        _handleResponseCancelled(event);
+      }
+    } on JarvisProtocolException catch (error) {
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.error,
+          responseText: _currentResponseBuffer,
+          requestId: _activeRequestId,
+          errorMessage: error.message,
+          retryable: false,
+        ),
+      );
+    } on Object catch (error) {
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.error,
+          responseText: _currentResponseBuffer,
+          requestId: _activeRequestId,
+          errorMessage: 'Unexpected Jarvis protocol error: $error',
+          retryable: false,
+        ),
+      );
+    }
+  }
+
+  void _handleAgentTextChunk(AgentTextChunkEvent event) {
+    if (event.requestId != _activeRequestId) {
+      return;
+    }
+
+    if (event.chunkIndex < _expectedChunkIndex) {
+      return;
+    }
+
+    if (event.chunkIndex > _expectedChunkIndex) {
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.error,
+          responseText: _currentResponseBuffer,
+          requestId: event.requestId,
+          errorMessage:
+              'Streaming sequence interrupted. Expected chunk '
+              '$_expectedChunkIndex but received ${event.chunkIndex}.',
+          retryable: true,
+        ),
+      );
+      return;
+    }
+
+    if (event.textChunk.isNotEmpty) {
+      _currentResponseBuffer += event.textChunk;
+      _emitResponseBuffer();
+    }
+
+    _expectedChunkIndex++;
+
+    if (event.isFinal) {
+      final bool autoPrint =
+          _autoPrintRequestIds.remove(
+        event.requestId,
+      );
+
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.completed,
+          responseText: _currentResponseBuffer,
+          requestId: event.requestId,
+        ),
+      );
+
+      if (autoPrint) {
+        unawaited(
+          _routeCompletedDocumentForPrinting(
+            requestId: event.requestId,
+            rawResponse:
+                _currentResponseBuffer,
+          ),
+        );
+      }
+
+      _activeRequestId = null;
+      _expectedChunkIndex = 0;
+      return;
+    }
+
+    _emitState(
+      JarvisChatState(
+        status: JarvisChatStatus.streaming,
+        responseText: _currentResponseBuffer,
+        requestId: event.requestId,
+      ),
+    );
+  }
+
+  void _handleJarvisError(JarvisErrorEvent event) {
+    if (event.requestId != null &&
+        _activeRequestId != null &&
+        event.requestId != _activeRequestId) {
+      return;
+    }
+
+    _emitState(
+      JarvisChatState(
+        status: JarvisChatStatus.error,
+        responseText: _currentResponseBuffer,
+        requestId: event.requestId ?? _activeRequestId,
+        errorMessage: event.message,
+        retryable: event.retryable,
+      ),
+    );
+
+    if (event.requestId != null) {
+      _autoPrintRequestIds.remove(
+        event.requestId,
+      );
+    }
+
+    if (event.requestId == null ||
+        event.requestId == _activeRequestId) {
+      _activeRequestId = null;
+      _expectedChunkIndex = 0;
+    }
+  }
+
+  void _handleResponseCancelled(
+    ResponseCancelledEvent event,
+  ) {
+    if (event.requestId != null &&
+        _activeRequestId != null &&
+        event.requestId != _activeRequestId) {
+      return;
+    }
+
+    _emitState(
+      JarvisChatState(
+        status: JarvisChatStatus.cancelled,
+        responseText: _currentResponseBuffer,
+        requestId: event.requestId ?? _activeRequestId,
+      ),
+    );
+
+    if (event.requestId != null) {
+      _autoPrintRequestIds.remove(
+        event.requestId,
+      );
+    }
+
+    _activeRequestId = null;
+    _expectedChunkIndex = 0;
+  }
+
+  Future<void> _executeLocalDeviceCommand(
+    SystemCommandEvent event,
+  ) async {
+    final String cacheKey =
+        '${event.requestId}:${event.callId}';
+
+    final ToolResultEvent? cached =
+        _completedToolCalls[cacheKey];
+
+    if (cached != null) {
+      _wsService.sendJson(cached.toJson());
+      return;
+    }
+
+    final ToolResultEvent result;
+
+    if (event.action == 'toggle_flashlight') {
+      result = await _executeFlashlightCommand(event);
+    } else if (event.action == 'change_system_theme') {
+      result = _executeThemeCommand(event);
+    } else {
+      final JarvisCapabilityResult capability =
+          await _capabilityService.execute(
+        requestId: event.requestId,
+        callId: event.callId,
+        action: event.action,
+        parameters: event.parameters,
+      );
+
+      result = ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: capability.ok,
+        result: capability.result,
+        error: capability.error,
+      );
+    }
+
+    _completedToolCalls[cacheKey] = result;
+    _trimToolResultCache();
+
+    try {
+      _wsService.sendJson(result.toJson());
+    } on Object catch (error) {
+      debugPrint(
+        'Unable to return Jarvis tool result: $error',
+      );
+    }
+  }
+
+  Future<ToolResultEvent> _executeFlashlightCommand(
+    SystemCommandEvent event,
+  ) async {
+    final Object? requestedState =
+        event.parameters['state'];
+
+    if (requestedState != 'on' &&
+        requestedState != 'off') {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{},
+        error: 'Invalid flashlight state.',
+      );
+    }
+
+    if (!_supportsNativeTorch) {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{
+          'supported': false,
+        },
+        error: 'Flashlight control is unavailable on this platform.',
+      );
+    }
+
+    try {
+      final bool available =
+          await TorchLight.isTorchAvailable();
+
+      if (!available) {
+        return ToolResultEvent(
+          requestId: event.requestId,
+          callId: event.callId,
+          ok: false,
+          result: const <String, dynamic>{
+            'supported': false,
+          },
+          error: 'This device has no available flashlight.',
+        );
+      }
+
+      if (requestedState == 'on') {
+        await TorchLight.enableTorch();
+      } else {
+        await TorchLight.disableTorch();
+      }
+
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: true,
+        result: <String, dynamic>{
+          'supported': true,
+          'state': requestedState,
+        },
+      );
+    } on Object catch (error) {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{},
+        error:
+            'Flashlight operation failed: ${error.runtimeType}',
+      );
+    }
+  }
+
+  ToolResultEvent _executeThemeCommand(
+    SystemCommandEvent event,
+  ) {
+    final Object? requestedTheme =
+        event.parameters['theme'];
+
+    if (requestedTheme != 'light' &&
+        requestedTheme != 'dark') {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{},
+        error: 'Invalid application theme.',
+      );
+    }
+
+    final ThemeMode mode =
+        requestedTheme == 'dark'
+            ? ThemeMode.dark
+            : ThemeMode.light;
+
+    if (!_themeModeController.isClosed) {
+      _themeModeController.add(mode);
+    }
+
+    return ToolResultEvent(
+      requestId: event.requestId,
+      callId: event.callId,
+      ok: true,
+      result: <String, dynamic>{
+        'theme': requestedTheme,
+      },
+    );
+  }
+
+  bool get _supportsNativeTorch {
+    if (kIsWeb) {
+      return false;
+    }
+
+    return defaultTargetPlatform ==
+            TargetPlatform.android ||
+        defaultTargetPlatform ==
+            TargetPlatform.iOS;
+  }
+
+  void _trimToolResultCache() {
+    const int maximumEntries = 100;
+
+    while (_completedToolCalls.length >
+        maximumEntries) {
+      _completedToolCalls.remove(
+        _completedToolCalls.keys.first,
+      );
+    }
+  }
+
+  void _emitResponseBuffer() {
+    if (!_disposed &&
+        !_responseBufferController.isClosed) {
+      _responseBufferController.add(
+        _currentResponseBuffer,
+      );
+    }
+  }
+
+  void _emitState(JarvisChatState state) {
+    if (_disposed || _stateController.isClosed) {
+      return;
+    }
+
+    _state = state;
+    _stateController.add(state);
+  }
+
+  void _ensureNotDisposed() {
+    if (_disposed) {
+      throw StateError(
+        'JarvisChatController has been disposed.',
+      );
+    }
+  }
+
+  Future<void> dispose() async {
+    if (_disposed) {
+      return;
+    }
+
+    _disposed = true;
+
+    await _messageSubscription?.cancel();
+    _messageSubscription = null;
+
+    _completedToolCalls.clear();
+    _autoPrintRequestIds.clear();
+
+    await Future.wait<void>(<Future<void>>[
+      _stateController.close(),
+      _responseBufferController.close(),
+      _themeModeController.close(),
+    ]);
+  }
+}
+,
+      caseSensitive: false,
+    );
+    final RegExpMatch? remotePlayMatch =
+        remotePlay.firstMatch(cleaned);
+
+    if (remotePlayMatch != null) {
+      final String musicQuery =
+          remotePlayMatch.group(1)?.trim() ?? '';
+      final String deviceName =
+          remotePlayMatch.group(2)?.trim() ?? '';
+
+      if (musicQuery.isNotEmpty &&
+          deviceName.isNotEmpty) {
+        return _runIntegratedCapability(
+          action:
+              'send_cloud_device_command',
+          parameters: <String, dynamic>{
+            'target_device_name':
+                deviceName,
+            'action': 'play_music',
+            'parameters':
+                <String, dynamic>{
+              'query': musicQuery,
+            },
+          },
+          successText: (
+            Map<String, dynamic> result,
+          ) =>
+              'Music command sent to ' +
+              (result['target_device_name']
+                      ?.toString() ??
+                  deviceName) +
+              '.',
+        );
+      }
+    }
+
+    final RegExp localPlay = RegExp(
+      r'^play\s+(.+)
+    final String lower =
+        query.toLowerCase();
+
+    if (!RegExp(r'\bprint\b')
+        .hasMatch(lower)) {
+      return false;
+    }
+
+    final bool informationalQuestion =
+        RegExp(
+      r'\b(how (do|can|should) i|how to|what is|why does|where do i)\b',
+    ).hasMatch(lower);
+
+    if (informationalQuestion) {
+      return false;
+    }
+
+    final bool hasDocumentObject = RegExp(
+      r'\b(document|letter|invoice|receipt|estimate|proposal|report|contract|agreement|form|notice|memo|page|it|this|that)\b',
+    ).hasMatch(lower);
+
+    final bool hasCreationIntent = RegExp(
+      r'\b(create|make|write|draft|prepare|generate|compose)\b',
+    ).hasMatch(lower);
+
+    final bool directPrintIntent = RegExp(
+      r'\bprint\s+(this|it|that|the|my|a|an)\b',
+    ).hasMatch(lower);
+
+    return hasDocumentObject &&
+        (hasCreationIntent ||
+            directPrintIntent);
+  }
+
+  String _buildAutoPrintQuery(
+    String original,
+  ) {
+    return '''
+${original}
+
+JARVIS PRINT EXECUTION INSTRUCTION:
+The user explicitly asked for a document to be printed. Create the finished document now. Output only the finished printable artifact with no explanation before or after it. Put a first line exactly in this format:
+PRINT_TITLE: <short document title>
+
+Then add one blank line and the complete document body. Do not include markdown code fences.
+''';
+  }
+
+  Future<void>
+      _routeCompletedDocumentForPrinting({
+    required String requestId,
+    required String rawResponse,
+  }) async {
+    final String normalized =
+        rawResponse.trim();
+
+    if (normalized.isEmpty) {
+      return;
+    }
+
+    String title = 'Jarvis Document';
+    String body = normalized;
+
+    final List<String> lines =
+        normalized.split('\n');
+
+    if (lines.isNotEmpty &&
+        lines.first
+            .trimLeft()
+            .startsWith('PRINT_TITLE:')) {
+      final String parsedTitle =
+          lines.first
+              .substring(
+                lines.first.indexOf(':') + 1,
+              )
+              .trim();
+
+      if (parsedTitle.isNotEmpty) {
+        title = parsedTitle;
+      }
+
+      body = lines
+          .skip(1)
+          .join('\n')
+          .trim();
+    }
+
+    if (body.isEmpty) {
+      return;
+    }
+
+    final JarvisCapabilityResult result =
+        await _capabilityService.execute(
+      requestId: requestId,
+      callId: 'auto-print-${requestId}',
+      action:
+          'create_and_print_document',
+      parameters: <String, dynamic>{
+        'title': title,
+        'document_text': body,
+        'copies': 1,
+      },
+    );
+
+    if (_disposed) {
+      return;
+    }
+
+    final String statusText;
+    if (result.ok) {
+      final String target =
+          result.result['target_device_name']
+                  ?.toString() ??
+              'printer host';
+      final String printer =
+          result.result['printer_name']
+                  ?.toString() ??
+              'printer';
+
+      statusText =
+          '\n\nJarvis print routing: sent to ${target} → ${printer}.';
+    } else {
+      statusText =
+          '\n\nJarvis print routing failed: ${result.error ?? 'No printer-ready Android device is available.'}';
+    }
+
+    _currentResponseBuffer =
+        body + statusText;
+    _emitResponseBuffer();
+
+    _emitState(
+      JarvisChatState(
+        status: result.ok
+            ? JarvisChatStatus.completed
+            : JarvisChatStatus.error,
+        responseText:
+            _currentResponseBuffer,
+        requestId: requestId,
+        errorMessage:
+            result.ok ? null : result.error,
+        retryable: !result.ok,
+      ),
+    );
+  }
+
+  void cancelCurrentResponse() {
+    _ensureNotDisposed();
+
+    final String? requestId = _activeRequestId;
+    if (requestId == null) {
+      return;
+    }
+
+    _wsService.sendJson(
+      CancelResponseEvent(
+        requestId: requestId,
+      ).toJson(),
+    );
+  }
+
+  Future<void> _handleIncomingMessage(
+    Map<String, dynamic> rawMap,
+  ) async {
+    if (_disposed) {
+      return;
+    }
+
+    try {
+      final JarvisEvent event = JarvisEventParser.parse(rawMap);
+
+      if (event is SystemCommandEvent) {
+        await _executeLocalDeviceCommand(event);
+        return;
+      }
+
+      if (event is AgentTextChunkEvent) {
+        _handleAgentTextChunk(event);
+        return;
+      }
+
+      if (event is JarvisErrorEvent) {
+        _handleJarvisError(event);
+        return;
+      }
+
+      if (event is ResponseCancelledEvent) {
+        _handleResponseCancelled(event);
+      }
+    } on JarvisProtocolException catch (error) {
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.error,
+          responseText: _currentResponseBuffer,
+          requestId: _activeRequestId,
+          errorMessage: error.message,
+          retryable: false,
+        ),
+      );
+    } on Object catch (error) {
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.error,
+          responseText: _currentResponseBuffer,
+          requestId: _activeRequestId,
+          errorMessage: 'Unexpected Jarvis protocol error: $error',
+          retryable: false,
+        ),
+      );
+    }
+  }
+
+  void _handleAgentTextChunk(AgentTextChunkEvent event) {
+    if (event.requestId != _activeRequestId) {
+      return;
+    }
+
+    if (event.chunkIndex < _expectedChunkIndex) {
+      return;
+    }
+
+    if (event.chunkIndex > _expectedChunkIndex) {
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.error,
+          responseText: _currentResponseBuffer,
+          requestId: event.requestId,
+          errorMessage:
+              'Streaming sequence interrupted. Expected chunk '
+              '$_expectedChunkIndex but received ${event.chunkIndex}.',
+          retryable: true,
+        ),
+      );
+      return;
+    }
+
+    if (event.textChunk.isNotEmpty) {
+      _currentResponseBuffer += event.textChunk;
+      _emitResponseBuffer();
+    }
+
+    _expectedChunkIndex++;
+
+    if (event.isFinal) {
+      final bool autoPrint =
+          _autoPrintRequestIds.remove(
+        event.requestId,
+      );
+
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.completed,
+          responseText: _currentResponseBuffer,
+          requestId: event.requestId,
+        ),
+      );
+
+      if (autoPrint) {
+        unawaited(
+          _routeCompletedDocumentForPrinting(
+            requestId: event.requestId,
+            rawResponse:
+                _currentResponseBuffer,
+          ),
+        );
+      }
+
+      _activeRequestId = null;
+      _expectedChunkIndex = 0;
+      return;
+    }
+
+    _emitState(
+      JarvisChatState(
+        status: JarvisChatStatus.streaming,
+        responseText: _currentResponseBuffer,
+        requestId: event.requestId,
+      ),
+    );
+  }
+
+  void _handleJarvisError(JarvisErrorEvent event) {
+    if (event.requestId != null &&
+        _activeRequestId != null &&
+        event.requestId != _activeRequestId) {
+      return;
+    }
+
+    _emitState(
+      JarvisChatState(
+        status: JarvisChatStatus.error,
+        responseText: _currentResponseBuffer,
+        requestId: event.requestId ?? _activeRequestId,
+        errorMessage: event.message,
+        retryable: event.retryable,
+      ),
+    );
+
+    if (event.requestId != null) {
+      _autoPrintRequestIds.remove(
+        event.requestId,
+      );
+    }
+
+    if (event.requestId == null ||
+        event.requestId == _activeRequestId) {
+      _activeRequestId = null;
+      _expectedChunkIndex = 0;
+    }
+  }
+
+  void _handleResponseCancelled(
+    ResponseCancelledEvent event,
+  ) {
+    if (event.requestId != null &&
+        _activeRequestId != null &&
+        event.requestId != _activeRequestId) {
+      return;
+    }
+
+    _emitState(
+      JarvisChatState(
+        status: JarvisChatStatus.cancelled,
+        responseText: _currentResponseBuffer,
+        requestId: event.requestId ?? _activeRequestId,
+      ),
+    );
+
+    if (event.requestId != null) {
+      _autoPrintRequestIds.remove(
+        event.requestId,
+      );
+    }
+
+    _activeRequestId = null;
+    _expectedChunkIndex = 0;
+  }
+
+  Future<void> _executeLocalDeviceCommand(
+    SystemCommandEvent event,
+  ) async {
+    final String cacheKey =
+        '${event.requestId}:${event.callId}';
+
+    final ToolResultEvent? cached =
+        _completedToolCalls[cacheKey];
+
+    if (cached != null) {
+      _wsService.sendJson(cached.toJson());
+      return;
+    }
+
+    final ToolResultEvent result;
+
+    if (event.action == 'toggle_flashlight') {
+      result = await _executeFlashlightCommand(event);
+    } else if (event.action == 'change_system_theme') {
+      result = _executeThemeCommand(event);
+    } else {
+      final JarvisCapabilityResult capability =
+          await _capabilityService.execute(
+        requestId: event.requestId,
+        callId: event.callId,
+        action: event.action,
+        parameters: event.parameters,
+      );
+
+      result = ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: capability.ok,
+        result: capability.result,
+        error: capability.error,
+      );
+    }
+
+    _completedToolCalls[cacheKey] = result;
+    _trimToolResultCache();
+
+    try {
+      _wsService.sendJson(result.toJson());
+    } on Object catch (error) {
+      debugPrint(
+        'Unable to return Jarvis tool result: $error',
+      );
+    }
+  }
+
+  Future<ToolResultEvent> _executeFlashlightCommand(
+    SystemCommandEvent event,
+  ) async {
+    final Object? requestedState =
+        event.parameters['state'];
+
+    if (requestedState != 'on' &&
+        requestedState != 'off') {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{},
+        error: 'Invalid flashlight state.',
+      );
+    }
+
+    if (!_supportsNativeTorch) {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{
+          'supported': false,
+        },
+        error: 'Flashlight control is unavailable on this platform.',
+      );
+    }
+
+    try {
+      final bool available =
+          await TorchLight.isTorchAvailable();
+
+      if (!available) {
+        return ToolResultEvent(
+          requestId: event.requestId,
+          callId: event.callId,
+          ok: false,
+          result: const <String, dynamic>{
+            'supported': false,
+          },
+          error: 'This device has no available flashlight.',
+        );
+      }
+
+      if (requestedState == 'on') {
+        await TorchLight.enableTorch();
+      } else {
+        await TorchLight.disableTorch();
+      }
+
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: true,
+        result: <String, dynamic>{
+          'supported': true,
+          'state': requestedState,
+        },
+      );
+    } on Object catch (error) {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{},
+        error:
+            'Flashlight operation failed: ${error.runtimeType}',
+      );
+    }
+  }
+
+  ToolResultEvent _executeThemeCommand(
+    SystemCommandEvent event,
+  ) {
+    final Object? requestedTheme =
+        event.parameters['theme'];
+
+    if (requestedTheme != 'light' &&
+        requestedTheme != 'dark') {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{},
+        error: 'Invalid application theme.',
+      );
+    }
+
+    final ThemeMode mode =
+        requestedTheme == 'dark'
+            ? ThemeMode.dark
+            : ThemeMode.light;
+
+    if (!_themeModeController.isClosed) {
+      _themeModeController.add(mode);
+    }
+
+    return ToolResultEvent(
+      requestId: event.requestId,
+      callId: event.callId,
+      ok: true,
+      result: <String, dynamic>{
+        'theme': requestedTheme,
+      },
+    );
+  }
+
+  bool get _supportsNativeTorch {
+    if (kIsWeb) {
+      return false;
+    }
+
+    return defaultTargetPlatform ==
+            TargetPlatform.android ||
+        defaultTargetPlatform ==
+            TargetPlatform.iOS;
+  }
+
+  void _trimToolResultCache() {
+    const int maximumEntries = 100;
+
+    while (_completedToolCalls.length >
+        maximumEntries) {
+      _completedToolCalls.remove(
+        _completedToolCalls.keys.first,
+      );
+    }
+  }
+
+  void _emitResponseBuffer() {
+    if (!_disposed &&
+        !_responseBufferController.isClosed) {
+      _responseBufferController.add(
+        _currentResponseBuffer,
+      );
+    }
+  }
+
+  void _emitState(JarvisChatState state) {
+    if (_disposed || _stateController.isClosed) {
+      return;
+    }
+
+    _state = state;
+    _stateController.add(state);
+  }
+
+  void _ensureNotDisposed() {
+    if (_disposed) {
+      throw StateError(
+        'JarvisChatController has been disposed.',
+      );
+    }
+  }
+
+  Future<void> dispose() async {
+    if (_disposed) {
+      return;
+    }
+
+    _disposed = true;
+
+    await _messageSubscription?.cancel();
+    _messageSubscription = null;
+
+    _completedToolCalls.clear();
+    _autoPrintRequestIds.clear();
+
+    await Future.wait<void>(<Future<void>>[
+      _stateController.close(),
+      _responseBufferController.close(),
+      _themeModeController.close(),
+    ]);
+  }
+}
+,
+      caseSensitive: false,
+    );
+    final RegExpMatch? localPlayMatch =
+        localPlay.firstMatch(cleaned);
+
+    if (localPlayMatch != null) {
+      String musicQuery =
+          localPlayMatch.group(1)?.trim() ?? '';
+
+      musicQuery = musicQuery.replaceFirst(
+        RegExp(
+          r'^(the\s+)?(song|track|music)\s+',
+          caseSensitive: false,
+        ),
+        '',
+      );
+
+      if (musicQuery.isNotEmpty) {
+        return _runIntegratedCapability(
+          action: 'play_music',
+          parameters: <String, dynamic>{
+            'query': musicQuery,
+          },
+          successText: (
+            Map<String, dynamic> result,
+          ) {
+            final String title =
+                result['title']
+                        ?.toString() ??
+                    musicQuery;
+            final String author =
+                result['author']
+                        ?.toString() ??
+                    '';
+            return author.isEmpty
+                ? 'Playing ' + title + '.'
+                : 'Playing ' +
+                    title +
+                    ' by ' +
+                    author +
+                    '.';
+          },
+        );
+      }
+    }
+
+    final RegExp handoff = RegExp(
+      r'^(?:move|send|go)\s+(?:jarvis\s+|yourself\s+)?(?:to\s+)?(?:my\s+)?(.+)
+    final String lower =
+        query.toLowerCase();
+
+    if (!RegExp(r'\bprint\b')
+        .hasMatch(lower)) {
+      return false;
+    }
+
+    final bool informationalQuestion =
+        RegExp(
+      r'\b(how (do|can|should) i|how to|what is|why does|where do i)\b',
+    ).hasMatch(lower);
+
+    if (informationalQuestion) {
+      return false;
+    }
+
+    final bool hasDocumentObject = RegExp(
+      r'\b(document|letter|invoice|receipt|estimate|proposal|report|contract|agreement|form|notice|memo|page|it|this|that)\b',
+    ).hasMatch(lower);
+
+    final bool hasCreationIntent = RegExp(
+      r'\b(create|make|write|draft|prepare|generate|compose)\b',
+    ).hasMatch(lower);
+
+    final bool directPrintIntent = RegExp(
+      r'\bprint\s+(this|it|that|the|my|a|an)\b',
+    ).hasMatch(lower);
+
+    return hasDocumentObject &&
+        (hasCreationIntent ||
+            directPrintIntent);
+  }
+
+  String _buildAutoPrintQuery(
+    String original,
+  ) {
+    return '''
+${original}
+
+JARVIS PRINT EXECUTION INSTRUCTION:
+The user explicitly asked for a document to be printed. Create the finished document now. Output only the finished printable artifact with no explanation before or after it. Put a first line exactly in this format:
+PRINT_TITLE: <short document title>
+
+Then add one blank line and the complete document body. Do not include markdown code fences.
+''';
+  }
+
+  Future<void>
+      _routeCompletedDocumentForPrinting({
+    required String requestId,
+    required String rawResponse,
+  }) async {
+    final String normalized =
+        rawResponse.trim();
+
+    if (normalized.isEmpty) {
+      return;
+    }
+
+    String title = 'Jarvis Document';
+    String body = normalized;
+
+    final List<String> lines =
+        normalized.split('\n');
+
+    if (lines.isNotEmpty &&
+        lines.first
+            .trimLeft()
+            .startsWith('PRINT_TITLE:')) {
+      final String parsedTitle =
+          lines.first
+              .substring(
+                lines.first.indexOf(':') + 1,
+              )
+              .trim();
+
+      if (parsedTitle.isNotEmpty) {
+        title = parsedTitle;
+      }
+
+      body = lines
+          .skip(1)
+          .join('\n')
+          .trim();
+    }
+
+    if (body.isEmpty) {
+      return;
+    }
+
+    final JarvisCapabilityResult result =
+        await _capabilityService.execute(
+      requestId: requestId,
+      callId: 'auto-print-${requestId}',
+      action:
+          'create_and_print_document',
+      parameters: <String, dynamic>{
+        'title': title,
+        'document_text': body,
+        'copies': 1,
+      },
+    );
+
+    if (_disposed) {
+      return;
+    }
+
+    final String statusText;
+    if (result.ok) {
+      final String target =
+          result.result['target_device_name']
+                  ?.toString() ??
+              'printer host';
+      final String printer =
+          result.result['printer_name']
+                  ?.toString() ??
+              'printer';
+
+      statusText =
+          '\n\nJarvis print routing: sent to ${target} → ${printer}.';
+    } else {
+      statusText =
+          '\n\nJarvis print routing failed: ${result.error ?? 'No printer-ready Android device is available.'}';
+    }
+
+    _currentResponseBuffer =
+        body + statusText;
+    _emitResponseBuffer();
+
+    _emitState(
+      JarvisChatState(
+        status: result.ok
+            ? JarvisChatStatus.completed
+            : JarvisChatStatus.error,
+        responseText:
+            _currentResponseBuffer,
+        requestId: requestId,
+        errorMessage:
+            result.ok ? null : result.error,
+        retryable: !result.ok,
+      ),
+    );
+  }
+
+  void cancelCurrentResponse() {
+    _ensureNotDisposed();
+
+    final String? requestId = _activeRequestId;
+    if (requestId == null) {
+      return;
+    }
+
+    _wsService.sendJson(
+      CancelResponseEvent(
+        requestId: requestId,
+      ).toJson(),
+    );
+  }
+
+  Future<void> _handleIncomingMessage(
+    Map<String, dynamic> rawMap,
+  ) async {
+    if (_disposed) {
+      return;
+    }
+
+    try {
+      final JarvisEvent event = JarvisEventParser.parse(rawMap);
+
+      if (event is SystemCommandEvent) {
+        await _executeLocalDeviceCommand(event);
+        return;
+      }
+
+      if (event is AgentTextChunkEvent) {
+        _handleAgentTextChunk(event);
+        return;
+      }
+
+      if (event is JarvisErrorEvent) {
+        _handleJarvisError(event);
+        return;
+      }
+
+      if (event is ResponseCancelledEvent) {
+        _handleResponseCancelled(event);
+      }
+    } on JarvisProtocolException catch (error) {
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.error,
+          responseText: _currentResponseBuffer,
+          requestId: _activeRequestId,
+          errorMessage: error.message,
+          retryable: false,
+        ),
+      );
+    } on Object catch (error) {
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.error,
+          responseText: _currentResponseBuffer,
+          requestId: _activeRequestId,
+          errorMessage: 'Unexpected Jarvis protocol error: $error',
+          retryable: false,
+        ),
+      );
+    }
+  }
+
+  void _handleAgentTextChunk(AgentTextChunkEvent event) {
+    if (event.requestId != _activeRequestId) {
+      return;
+    }
+
+    if (event.chunkIndex < _expectedChunkIndex) {
+      return;
+    }
+
+    if (event.chunkIndex > _expectedChunkIndex) {
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.error,
+          responseText: _currentResponseBuffer,
+          requestId: event.requestId,
+          errorMessage:
+              'Streaming sequence interrupted. Expected chunk '
+              '$_expectedChunkIndex but received ${event.chunkIndex}.',
+          retryable: true,
+        ),
+      );
+      return;
+    }
+
+    if (event.textChunk.isNotEmpty) {
+      _currentResponseBuffer += event.textChunk;
+      _emitResponseBuffer();
+    }
+
+    _expectedChunkIndex++;
+
+    if (event.isFinal) {
+      final bool autoPrint =
+          _autoPrintRequestIds.remove(
+        event.requestId,
+      );
+
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.completed,
+          responseText: _currentResponseBuffer,
+          requestId: event.requestId,
+        ),
+      );
+
+      if (autoPrint) {
+        unawaited(
+          _routeCompletedDocumentForPrinting(
+            requestId: event.requestId,
+            rawResponse:
+                _currentResponseBuffer,
+          ),
+        );
+      }
+
+      _activeRequestId = null;
+      _expectedChunkIndex = 0;
+      return;
+    }
+
+    _emitState(
+      JarvisChatState(
+        status: JarvisChatStatus.streaming,
+        responseText: _currentResponseBuffer,
+        requestId: event.requestId,
+      ),
+    );
+  }
+
+  void _handleJarvisError(JarvisErrorEvent event) {
+    if (event.requestId != null &&
+        _activeRequestId != null &&
+        event.requestId != _activeRequestId) {
+      return;
+    }
+
+    _emitState(
+      JarvisChatState(
+        status: JarvisChatStatus.error,
+        responseText: _currentResponseBuffer,
+        requestId: event.requestId ?? _activeRequestId,
+        errorMessage: event.message,
+        retryable: event.retryable,
+      ),
+    );
+
+    if (event.requestId != null) {
+      _autoPrintRequestIds.remove(
+        event.requestId,
+      );
+    }
+
+    if (event.requestId == null ||
+        event.requestId == _activeRequestId) {
+      _activeRequestId = null;
+      _expectedChunkIndex = 0;
+    }
+  }
+
+  void _handleResponseCancelled(
+    ResponseCancelledEvent event,
+  ) {
+    if (event.requestId != null &&
+        _activeRequestId != null &&
+        event.requestId != _activeRequestId) {
+      return;
+    }
+
+    _emitState(
+      JarvisChatState(
+        status: JarvisChatStatus.cancelled,
+        responseText: _currentResponseBuffer,
+        requestId: event.requestId ?? _activeRequestId,
+      ),
+    );
+
+    if (event.requestId != null) {
+      _autoPrintRequestIds.remove(
+        event.requestId,
+      );
+    }
+
+    _activeRequestId = null;
+    _expectedChunkIndex = 0;
+  }
+
+  Future<void> _executeLocalDeviceCommand(
+    SystemCommandEvent event,
+  ) async {
+    final String cacheKey =
+        '${event.requestId}:${event.callId}';
+
+    final ToolResultEvent? cached =
+        _completedToolCalls[cacheKey];
+
+    if (cached != null) {
+      _wsService.sendJson(cached.toJson());
+      return;
+    }
+
+    final ToolResultEvent result;
+
+    if (event.action == 'toggle_flashlight') {
+      result = await _executeFlashlightCommand(event);
+    } else if (event.action == 'change_system_theme') {
+      result = _executeThemeCommand(event);
+    } else {
+      final JarvisCapabilityResult capability =
+          await _capabilityService.execute(
+        requestId: event.requestId,
+        callId: event.callId,
+        action: event.action,
+        parameters: event.parameters,
+      );
+
+      result = ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: capability.ok,
+        result: capability.result,
+        error: capability.error,
+      );
+    }
+
+    _completedToolCalls[cacheKey] = result;
+    _trimToolResultCache();
+
+    try {
+      _wsService.sendJson(result.toJson());
+    } on Object catch (error) {
+      debugPrint(
+        'Unable to return Jarvis tool result: $error',
+      );
+    }
+  }
+
+  Future<ToolResultEvent> _executeFlashlightCommand(
+    SystemCommandEvent event,
+  ) async {
+    final Object? requestedState =
+        event.parameters['state'];
+
+    if (requestedState != 'on' &&
+        requestedState != 'off') {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{},
+        error: 'Invalid flashlight state.',
+      );
+    }
+
+    if (!_supportsNativeTorch) {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{
+          'supported': false,
+        },
+        error: 'Flashlight control is unavailable on this platform.',
+      );
+    }
+
+    try {
+      final bool available =
+          await TorchLight.isTorchAvailable();
+
+      if (!available) {
+        return ToolResultEvent(
+          requestId: event.requestId,
+          callId: event.callId,
+          ok: false,
+          result: const <String, dynamic>{
+            'supported': false,
+          },
+          error: 'This device has no available flashlight.',
+        );
+      }
+
+      if (requestedState == 'on') {
+        await TorchLight.enableTorch();
+      } else {
+        await TorchLight.disableTorch();
+      }
+
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: true,
+        result: <String, dynamic>{
+          'supported': true,
+          'state': requestedState,
+        },
+      );
+    } on Object catch (error) {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{},
+        error:
+            'Flashlight operation failed: ${error.runtimeType}',
+      );
+    }
+  }
+
+  ToolResultEvent _executeThemeCommand(
+    SystemCommandEvent event,
+  ) {
+    final Object? requestedTheme =
+        event.parameters['theme'];
+
+    if (requestedTheme != 'light' &&
+        requestedTheme != 'dark') {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{},
+        error: 'Invalid application theme.',
+      );
+    }
+
+    final ThemeMode mode =
+        requestedTheme == 'dark'
+            ? ThemeMode.dark
+            : ThemeMode.light;
+
+    if (!_themeModeController.isClosed) {
+      _themeModeController.add(mode);
+    }
+
+    return ToolResultEvent(
+      requestId: event.requestId,
+      callId: event.callId,
+      ok: true,
+      result: <String, dynamic>{
+        'theme': requestedTheme,
+      },
+    );
+  }
+
+  bool get _supportsNativeTorch {
+    if (kIsWeb) {
+      return false;
+    }
+
+    return defaultTargetPlatform ==
+            TargetPlatform.android ||
+        defaultTargetPlatform ==
+            TargetPlatform.iOS;
+  }
+
+  void _trimToolResultCache() {
+    const int maximumEntries = 100;
+
+    while (_completedToolCalls.length >
+        maximumEntries) {
+      _completedToolCalls.remove(
+        _completedToolCalls.keys.first,
+      );
+    }
+  }
+
+  void _emitResponseBuffer() {
+    if (!_disposed &&
+        !_responseBufferController.isClosed) {
+      _responseBufferController.add(
+        _currentResponseBuffer,
+      );
+    }
+  }
+
+  void _emitState(JarvisChatState state) {
+    if (_disposed || _stateController.isClosed) {
+      return;
+    }
+
+    _state = state;
+    _stateController.add(state);
+  }
+
+  void _ensureNotDisposed() {
+    if (_disposed) {
+      throw StateError(
+        'JarvisChatController has been disposed.',
+      );
+    }
+  }
+
+  Future<void> dispose() async {
+    if (_disposed) {
+      return;
+    }
+
+    _disposed = true;
+
+    await _messageSubscription?.cancel();
+    _messageSubscription = null;
+
+    _completedToolCalls.clear();
+    _autoPrintRequestIds.clear();
+
+    await Future.wait<void>(<Future<void>>[
+      _stateController.close(),
+      _responseBufferController.close(),
+      _themeModeController.close(),
+    ]);
+  }
+}
+,
+      caseSensitive: false,
+    );
+    final RegExpMatch? handoffMatch =
+        handoff.firstMatch(cleaned);
+
+    if (handoffMatch != null &&
+        (lower.startsWith('move ') ||
+            lower.startsWith('send jarvis') ||
+            lower.startsWith('go to'))) {
+      final String target =
+          handoffMatch.group(1)?.trim() ?? '';
+
+      if (target.isNotEmpty) {
+        return _runIntegratedCapability(
+          action: 'handoff_jarvis_device',
+          parameters: <String, dynamic>{
+            'target_device_name': target,
+          },
+          successText: (
+            Map<String, dynamic> result,
+          ) =>
+              'Jarvis handoff sent to ' +
+              (result['target_device_name']
+                      ?.toString() ??
+                  target) +
+              '.',
+        );
+      }
+    }
+
+    final RegExp sayOnDevice = RegExp(
+      r'^(?:say|speak)\s+(.+?)\s+on\s+(?:my\s+)?(.+)
+    final String lower =
+        query.toLowerCase();
+
+    if (!RegExp(r'\bprint\b')
+        .hasMatch(lower)) {
+      return false;
+    }
+
+    final bool informationalQuestion =
+        RegExp(
+      r'\b(how (do|can|should) i|how to|what is|why does|where do i)\b',
+    ).hasMatch(lower);
+
+    if (informationalQuestion) {
+      return false;
+    }
+
+    final bool hasDocumentObject = RegExp(
+      r'\b(document|letter|invoice|receipt|estimate|proposal|report|contract|agreement|form|notice|memo|page|it|this|that)\b',
+    ).hasMatch(lower);
+
+    final bool hasCreationIntent = RegExp(
+      r'\b(create|make|write|draft|prepare|generate|compose)\b',
+    ).hasMatch(lower);
+
+    final bool directPrintIntent = RegExp(
+      r'\bprint\s+(this|it|that|the|my|a|an)\b',
+    ).hasMatch(lower);
+
+    return hasDocumentObject &&
+        (hasCreationIntent ||
+            directPrintIntent);
+  }
+
+  String _buildAutoPrintQuery(
+    String original,
+  ) {
+    return '''
+${original}
+
+JARVIS PRINT EXECUTION INSTRUCTION:
+The user explicitly asked for a document to be printed. Create the finished document now. Output only the finished printable artifact with no explanation before or after it. Put a first line exactly in this format:
+PRINT_TITLE: <short document title>
+
+Then add one blank line and the complete document body. Do not include markdown code fences.
+''';
+  }
+
+  Future<void>
+      _routeCompletedDocumentForPrinting({
+    required String requestId,
+    required String rawResponse,
+  }) async {
+    final String normalized =
+        rawResponse.trim();
+
+    if (normalized.isEmpty) {
+      return;
+    }
+
+    String title = 'Jarvis Document';
+    String body = normalized;
+
+    final List<String> lines =
+        normalized.split('\n');
+
+    if (lines.isNotEmpty &&
+        lines.first
+            .trimLeft()
+            .startsWith('PRINT_TITLE:')) {
+      final String parsedTitle =
+          lines.first
+              .substring(
+                lines.first.indexOf(':') + 1,
+              )
+              .trim();
+
+      if (parsedTitle.isNotEmpty) {
+        title = parsedTitle;
+      }
+
+      body = lines
+          .skip(1)
+          .join('\n')
+          .trim();
+    }
+
+    if (body.isEmpty) {
+      return;
+    }
+
+    final JarvisCapabilityResult result =
+        await _capabilityService.execute(
+      requestId: requestId,
+      callId: 'auto-print-${requestId}',
+      action:
+          'create_and_print_document',
+      parameters: <String, dynamic>{
+        'title': title,
+        'document_text': body,
+        'copies': 1,
+      },
+    );
+
+    if (_disposed) {
+      return;
+    }
+
+    final String statusText;
+    if (result.ok) {
+      final String target =
+          result.result['target_device_name']
+                  ?.toString() ??
+              'printer host';
+      final String printer =
+          result.result['printer_name']
+                  ?.toString() ??
+              'printer';
+
+      statusText =
+          '\n\nJarvis print routing: sent to ${target} → ${printer}.';
+    } else {
+      statusText =
+          '\n\nJarvis print routing failed: ${result.error ?? 'No printer-ready Android device is available.'}';
+    }
+
+    _currentResponseBuffer =
+        body + statusText;
+    _emitResponseBuffer();
+
+    _emitState(
+      JarvisChatState(
+        status: result.ok
+            ? JarvisChatStatus.completed
+            : JarvisChatStatus.error,
+        responseText:
+            _currentResponseBuffer,
+        requestId: requestId,
+        errorMessage:
+            result.ok ? null : result.error,
+        retryable: !result.ok,
+      ),
+    );
+  }
+
+  void cancelCurrentResponse() {
+    _ensureNotDisposed();
+
+    final String? requestId = _activeRequestId;
+    if (requestId == null) {
+      return;
+    }
+
+    _wsService.sendJson(
+      CancelResponseEvent(
+        requestId: requestId,
+      ).toJson(),
+    );
+  }
+
+  Future<void> _handleIncomingMessage(
+    Map<String, dynamic> rawMap,
+  ) async {
+    if (_disposed) {
+      return;
+    }
+
+    try {
+      final JarvisEvent event = JarvisEventParser.parse(rawMap);
+
+      if (event is SystemCommandEvent) {
+        await _executeLocalDeviceCommand(event);
+        return;
+      }
+
+      if (event is AgentTextChunkEvent) {
+        _handleAgentTextChunk(event);
+        return;
+      }
+
+      if (event is JarvisErrorEvent) {
+        _handleJarvisError(event);
+        return;
+      }
+
+      if (event is ResponseCancelledEvent) {
+        _handleResponseCancelled(event);
+      }
+    } on JarvisProtocolException catch (error) {
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.error,
+          responseText: _currentResponseBuffer,
+          requestId: _activeRequestId,
+          errorMessage: error.message,
+          retryable: false,
+        ),
+      );
+    } on Object catch (error) {
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.error,
+          responseText: _currentResponseBuffer,
+          requestId: _activeRequestId,
+          errorMessage: 'Unexpected Jarvis protocol error: $error',
+          retryable: false,
+        ),
+      );
+    }
+  }
+
+  void _handleAgentTextChunk(AgentTextChunkEvent event) {
+    if (event.requestId != _activeRequestId) {
+      return;
+    }
+
+    if (event.chunkIndex < _expectedChunkIndex) {
+      return;
+    }
+
+    if (event.chunkIndex > _expectedChunkIndex) {
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.error,
+          responseText: _currentResponseBuffer,
+          requestId: event.requestId,
+          errorMessage:
+              'Streaming sequence interrupted. Expected chunk '
+              '$_expectedChunkIndex but received ${event.chunkIndex}.',
+          retryable: true,
+        ),
+      );
+      return;
+    }
+
+    if (event.textChunk.isNotEmpty) {
+      _currentResponseBuffer += event.textChunk;
+      _emitResponseBuffer();
+    }
+
+    _expectedChunkIndex++;
+
+    if (event.isFinal) {
+      final bool autoPrint =
+          _autoPrintRequestIds.remove(
+        event.requestId,
+      );
+
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.completed,
+          responseText: _currentResponseBuffer,
+          requestId: event.requestId,
+        ),
+      );
+
+      if (autoPrint) {
+        unawaited(
+          _routeCompletedDocumentForPrinting(
+            requestId: event.requestId,
+            rawResponse:
+                _currentResponseBuffer,
+          ),
+        );
+      }
+
+      _activeRequestId = null;
+      _expectedChunkIndex = 0;
+      return;
+    }
+
+    _emitState(
+      JarvisChatState(
+        status: JarvisChatStatus.streaming,
+        responseText: _currentResponseBuffer,
+        requestId: event.requestId,
+      ),
+    );
+  }
+
+  void _handleJarvisError(JarvisErrorEvent event) {
+    if (event.requestId != null &&
+        _activeRequestId != null &&
+        event.requestId != _activeRequestId) {
+      return;
+    }
+
+    _emitState(
+      JarvisChatState(
+        status: JarvisChatStatus.error,
+        responseText: _currentResponseBuffer,
+        requestId: event.requestId ?? _activeRequestId,
+        errorMessage: event.message,
+        retryable: event.retryable,
+      ),
+    );
+
+    if (event.requestId != null) {
+      _autoPrintRequestIds.remove(
+        event.requestId,
+      );
+    }
+
+    if (event.requestId == null ||
+        event.requestId == _activeRequestId) {
+      _activeRequestId = null;
+      _expectedChunkIndex = 0;
+    }
+  }
+
+  void _handleResponseCancelled(
+    ResponseCancelledEvent event,
+  ) {
+    if (event.requestId != null &&
+        _activeRequestId != null &&
+        event.requestId != _activeRequestId) {
+      return;
+    }
+
+    _emitState(
+      JarvisChatState(
+        status: JarvisChatStatus.cancelled,
+        responseText: _currentResponseBuffer,
+        requestId: event.requestId ?? _activeRequestId,
+      ),
+    );
+
+    if (event.requestId != null) {
+      _autoPrintRequestIds.remove(
+        event.requestId,
+      );
+    }
+
+    _activeRequestId = null;
+    _expectedChunkIndex = 0;
+  }
+
+  Future<void> _executeLocalDeviceCommand(
+    SystemCommandEvent event,
+  ) async {
+    final String cacheKey =
+        '${event.requestId}:${event.callId}';
+
+    final ToolResultEvent? cached =
+        _completedToolCalls[cacheKey];
+
+    if (cached != null) {
+      _wsService.sendJson(cached.toJson());
+      return;
+    }
+
+    final ToolResultEvent result;
+
+    if (event.action == 'toggle_flashlight') {
+      result = await _executeFlashlightCommand(event);
+    } else if (event.action == 'change_system_theme') {
+      result = _executeThemeCommand(event);
+    } else {
+      final JarvisCapabilityResult capability =
+          await _capabilityService.execute(
+        requestId: event.requestId,
+        callId: event.callId,
+        action: event.action,
+        parameters: event.parameters,
+      );
+
+      result = ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: capability.ok,
+        result: capability.result,
+        error: capability.error,
+      );
+    }
+
+    _completedToolCalls[cacheKey] = result;
+    _trimToolResultCache();
+
+    try {
+      _wsService.sendJson(result.toJson());
+    } on Object catch (error) {
+      debugPrint(
+        'Unable to return Jarvis tool result: $error',
+      );
+    }
+  }
+
+  Future<ToolResultEvent> _executeFlashlightCommand(
+    SystemCommandEvent event,
+  ) async {
+    final Object? requestedState =
+        event.parameters['state'];
+
+    if (requestedState != 'on' &&
+        requestedState != 'off') {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{},
+        error: 'Invalid flashlight state.',
+      );
+    }
+
+    if (!_supportsNativeTorch) {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{
+          'supported': false,
+        },
+        error: 'Flashlight control is unavailable on this platform.',
+      );
+    }
+
+    try {
+      final bool available =
+          await TorchLight.isTorchAvailable();
+
+      if (!available) {
+        return ToolResultEvent(
+          requestId: event.requestId,
+          callId: event.callId,
+          ok: false,
+          result: const <String, dynamic>{
+            'supported': false,
+          },
+          error: 'This device has no available flashlight.',
+        );
+      }
+
+      if (requestedState == 'on') {
+        await TorchLight.enableTorch();
+      } else {
+        await TorchLight.disableTorch();
+      }
+
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: true,
+        result: <String, dynamic>{
+          'supported': true,
+          'state': requestedState,
+        },
+      );
+    } on Object catch (error) {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{},
+        error:
+            'Flashlight operation failed: ${error.runtimeType}',
+      );
+    }
+  }
+
+  ToolResultEvent _executeThemeCommand(
+    SystemCommandEvent event,
+  ) {
+    final Object? requestedTheme =
+        event.parameters['theme'];
+
+    if (requestedTheme != 'light' &&
+        requestedTheme != 'dark') {
+      return ToolResultEvent(
+        requestId: event.requestId,
+        callId: event.callId,
+        ok: false,
+        result: const <String, dynamic>{},
+        error: 'Invalid application theme.',
+      );
+    }
+
+    final ThemeMode mode =
+        requestedTheme == 'dark'
+            ? ThemeMode.dark
+            : ThemeMode.light;
+
+    if (!_themeModeController.isClosed) {
+      _themeModeController.add(mode);
+    }
+
+    return ToolResultEvent(
+      requestId: event.requestId,
+      callId: event.callId,
+      ok: true,
+      result: <String, dynamic>{
+        'theme': requestedTheme,
+      },
+    );
+  }
+
+  bool get _supportsNativeTorch {
+    if (kIsWeb) {
+      return false;
+    }
+
+    return defaultTargetPlatform ==
+            TargetPlatform.android ||
+        defaultTargetPlatform ==
+            TargetPlatform.iOS;
+  }
+
+  void _trimToolResultCache() {
+    const int maximumEntries = 100;
+
+    while (_completedToolCalls.length >
+        maximumEntries) {
+      _completedToolCalls.remove(
+        _completedToolCalls.keys.first,
+      );
+    }
+  }
+
+  void _emitResponseBuffer() {
+    if (!_disposed &&
+        !_responseBufferController.isClosed) {
+      _responseBufferController.add(
+        _currentResponseBuffer,
+      );
+    }
+  }
+
+  void _emitState(JarvisChatState state) {
+    if (_disposed || _stateController.isClosed) {
+      return;
+    }
+
+    _state = state;
+    _stateController.add(state);
+  }
+
+  void _ensureNotDisposed() {
+    if (_disposed) {
+      throw StateError(
+        'JarvisChatController has been disposed.',
+      );
+    }
+  }
+
+  Future<void> dispose() async {
+    if (_disposed) {
+      return;
+    }
+
+    _disposed = true;
+
+    await _messageSubscription?.cancel();
+    _messageSubscription = null;
+
+    _completedToolCalls.clear();
+    _autoPrintRequestIds.clear();
+
+    await Future.wait<void>(<Future<void>>[
+      _stateController.close(),
+      _responseBufferController.close(),
+      _themeModeController.close(),
+    ]);
+  }
+}
+,
+      caseSensitive: false,
+    );
+    final RegExpMatch? sayMatch =
+        sayOnDevice.firstMatch(cleaned);
+
+    if (sayMatch != null) {
+      final String text =
+          sayMatch.group(1)?.trim() ?? '';
+      final String device =
+          sayMatch.group(2)?.trim() ?? '';
+
+      if (text.isNotEmpty &&
+          device.isNotEmpty) {
+        return _runIntegratedCapability(
+          action:
+              'send_cloud_device_command',
+          parameters: <String, dynamic>{
+            'target_device_name': device,
+            'action': 'speak_text',
+            'parameters':
+                <String, dynamic>{
+              'text': text,
+            },
+          },
+          successText: (
+            Map<String, dynamic> result,
+          ) =>
+              'Speech command sent to ' +
+              (result['target_device_name']
+                      ?.toString() ??
+                  device) +
+              '.',
+        );
+      }
+    }
+
+    if (RegExp(
+      r'^(list|show|what|which).*(cloud|jarvis).*(device|devices)',
+    ).hasMatch(lower)) {
+      return _runIntegratedCapability(
+        action: 'list_cloud_devices',
+        parameters:
+            const <String, dynamic>{},
+        successText: (
+          Map<String, dynamic> result,
+        ) {
+          final Object? raw =
+              result['devices'];
+
+          if (raw is! List || raw.isEmpty) {
+            return 'No Jarvis cloud devices are registered yet.';
+          }
+
+          final List<String> labels =
+              <String>[];
+
+          for (final Object? item in raw) {
+            if (item is! Map) {
+              continue;
+            }
+
+            final String name =
+                item['device_name']
+                        ?.toString() ??
+                    'Jarvis device';
+            final bool online =
+                item['online'] == true;
+            final bool active =
+                item['active_avatar'] == true;
+
+            labels.add(
+              name +
+                  (online
+                      ? ' (online'
+                      : ' (offline') +
+                  (active
+                      ? ', Jarvis active here)'
+                      : ')'),
+            );
+          }
+
+          return labels.isEmpty
+              ? 'No Jarvis cloud devices are registered yet.'
+              : 'Jarvis devices: ' +
+                  labels.join(', ') +
+                  '.';
+        },
+      );
+    }
+
+    return null;
+  }
+
+  bool _looksLikeVisionRequest(
+    String query,
+  ) {
+    final String lower =
+        query.toLowerCase();
+
+    return RegExp(
+      r'\b(what do you see|what am i looking at|look at this|look at that|read this|read that|see what i see|use (the )?camera|through (the )?camera|camera vision)\b',
+    ).hasMatch(lower);
+  }
+
+  String _newLocalRequestId(
+    String prefix,
+  ) {
+    return prefix +
+        '-' +
+        DateTime.now()
+            .microsecondsSinceEpoch
+            .toString();
+  }
+
+  String _runIntegratedCapability({
+    required String action,
+    required Map<String, dynamic> parameters,
+    required String Function(
+      Map<String, dynamic> result,
+    ) successText,
+  }) {
+    final String requestId =
+        _newLocalRequestId('local');
+
+    _activeRequestId = requestId;
+    _currentResponseBuffer = '';
+
+    _emitState(
+      JarvisChatState(
+        status: JarvisChatStatus.thinking,
+        responseText: '',
+        requestId: requestId,
+      ),
+    );
+    _emitResponseBuffer();
+
+    unawaited(
+      _executeIntegratedCapability(
+        requestId: requestId,
+        action: action,
+        parameters: parameters,
+        successText: successText,
+      ),
+    );
+
+    return requestId;
+  }
+
+  Future<void> _executeIntegratedCapability({
+    required String requestId,
+    required String action,
+    required Map<String, dynamic> parameters,
+    required String Function(
+      Map<String, dynamic> result,
+    ) successText,
+  }) async {
+    final JarvisCapabilityResult result =
+        await _capabilityService.execute(
+      requestId: requestId,
+      callId:
+          'local-' + requestId,
+      action: action,
+      parameters: parameters,
+    );
+
+    if (_disposed ||
+        _activeRequestId != requestId) {
+      return;
+    }
+
+    final String response = result.ok
+        ? successText(result.result)
+        : (result.error ??
+            'Jarvis could not complete that action.');
+
+    _currentResponseBuffer = response;
+    _emitResponseBuffer();
+
+    _emitState(
+      JarvisChatState(
+        status: result.ok
+            ? JarvisChatStatus.completed
+            : JarvisChatStatus.error,
+        responseText: response,
+        requestId: requestId,
+        errorMessage:
+            result.ok ? null : result.error,
+        retryable: !result.ok,
+      ),
+    );
+
+    _activeRequestId = null;
+    _expectedChunkIndex = 0;
+  }
+
+  Future<void> _refreshVisionThenAsk(
+    String preparationRequestId,
+    String query,
+  ) async {
+    _activeRequestId =
+        preparationRequestId;
+    _currentResponseBuffer =
+        'Updating camera vision...';
+
+    _emitResponseBuffer();
+    _emitState(
+      JarvisChatState(
+        status: JarvisChatStatus.thinking,
+        responseText:
+            _currentResponseBuffer,
+        requestId:
+            preparationRequestId,
+      ),
+    );
+
+    final JarvisCapabilityResult vision =
+        await _capabilityService.execute(
+      requestId:
+          preparationRequestId,
+      callId:
+          'vision-' +
+              preparationRequestId,
+      action: 'vision_refresh',
+      parameters:
+          const <String, dynamic>{},
+    );
+
+    if (_disposed ||
+        _activeRequestId !=
+            preparationRequestId) {
+      return;
+    }
+
+    if (!vision.ok) {
+      final String error = vision.error ??
+          'Camera vision could not be refreshed.';
+
+      _currentResponseBuffer = error;
+      _emitResponseBuffer();
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.error,
+          responseText: error,
+          requestId:
+              preparationRequestId,
+          errorMessage: error,
+          retryable: true,
+        ),
+      );
+      _activeRequestId = null;
+      return;
+    }
+
+    _activeRequestId = null;
+    _sendRemoteQuery(
+      query +
+          '\n\nJARVIS VISION CONTEXT: Use the latest camera frame currently available to Jarvis to answer this request.',
+    );
   }
 
   bool _shouldAutoPrint(String query) {
