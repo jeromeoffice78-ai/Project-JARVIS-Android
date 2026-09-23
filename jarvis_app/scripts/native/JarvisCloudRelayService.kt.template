@@ -1,0 +1,544 @@
+package __PACKAGE__
+
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
+import android.os.Build
+import android.os.IBinder
+import android.speech.tts.TextToSpeech
+import androidx.core.app.NotificationCompat
+import java.io.BufferedReader
+import java.io.OutputStreamWriter
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.Locale
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import org.json.JSONArray
+import org.json.JSONObject
+
+class JarvisCloudRelayService :
+    Service(),
+    TextToSpeech.OnInitListener {
+
+    companion object {
+        const val ACTION_START = "jarvis.cloud.START"
+        const val ACTION_SET_POLLING = "jarvis.cloud.SET_POLLING"
+        const val ACTION_STOP = "jarvis.cloud.STOP"
+
+        const val EXTRA_GATEWAY_URL = "gateway_url"
+        const val EXTRA_TOKEN = "token"
+        const val EXTRA_DEVICE_ID = "device_id"
+        const val EXTRA_DEVICE_NAME = "device_name"
+        const val EXTRA_POLLING = "polling"
+
+        @Volatile var running: Boolean = false
+            private set
+        @Volatile var pollingEnabled: Boolean = false
+            private set
+
+        private const val CHANNEL_ID = "jarvis_cloud_link"
+        private const val NOTIFICATION_ID = 14031
+    }
+
+    private val executor =
+        Executors.newSingleThreadScheduledExecutor()
+    private var task: ScheduledFuture<*>? = null
+    private val busy = AtomicBoolean(false)
+
+    private var gatewayUrl = ""
+    private var token = ""
+    private var deviceId = ""
+    private var deviceName = "Jarvis Android"
+    private var lastHeartbeatAt = 0L
+
+    private var tts: TextToSpeech? = null
+    @Volatile private var ttsReady = false
+
+    override fun onCreate() {
+        super.onCreate()
+        createNotificationChannel()
+        tts = TextToSpeech(this, this)
+        running = true
+    }
+
+    override fun onInit(status: Int) {
+        ttsReady = status == TextToSpeech.SUCCESS
+        if (ttsReady) {
+            tts?.language = Locale.US
+            tts?.setSpeechRate(0.95f)
+            tts?.setPitch(0.9f)
+        }
+    }
+
+    override fun onStartCommand(
+        intent: Intent?,
+        flags: Int,
+        startId: Int,
+    ): Int {
+        when (intent?.action) {
+            ACTION_STOP -> {
+                stopSelf()
+                return START_NOT_STICKY
+            }
+
+            ACTION_SET_POLLING -> {
+                pollingEnabled =
+                    intent.getBooleanExtra(EXTRA_POLLING, false)
+                updateNotification()
+                return START_STICKY
+            }
+
+            ACTION_START, null -> {
+                intent?.getStringExtra(EXTRA_GATEWAY_URL)
+                    ?.trim()?.takeIf { it.isNotEmpty() }
+                    ?.let { gatewayUrl = it }
+                intent?.getStringExtra(EXTRA_TOKEN)
+                    ?.trim()?.takeIf { it.isNotEmpty() }
+                    ?.let { token = it }
+                intent?.getStringExtra(EXTRA_DEVICE_ID)
+                    ?.trim()?.takeIf { it.isNotEmpty() }
+                    ?.let { deviceId = it }
+                intent?.getStringExtra(EXTRA_DEVICE_NAME)
+                    ?.trim()?.takeIf { it.isNotEmpty() }
+                    ?.let { deviceName = it }
+                pollingEnabled =
+                    intent?.getBooleanExtra(
+                        EXTRA_POLLING,
+                        pollingEnabled,
+                    ) ?: pollingEnabled
+            }
+        }
+
+        startForeground(
+            NOTIFICATION_ID,
+            buildNotification(),
+        )
+        ensureScheduler()
+        return START_STICKY
+    }
+
+    private fun ensureScheduler() {
+        if (task != null) return
+
+        task = executor.scheduleWithFixedDelay(
+            {
+                if (
+                    pollingEnabled &&
+                    configured() &&
+                    busy.compareAndSet(false, true)
+                ) {
+                    try {
+                        backgroundPass()
+                    } catch (_: Throwable) {
+                        // Retry on the next pass.
+                    } finally {
+                        busy.set(false)
+                    }
+                }
+            },
+            1,
+            6,
+            TimeUnit.SECONDS,
+        )
+    }
+
+    private fun configured(): Boolean =
+        gatewayUrl.isNotBlank() &&
+            token.isNotBlank() &&
+            deviceId.isNotBlank()
+
+    private fun backgroundPass() {
+        val now = System.currentTimeMillis()
+
+        if (now - lastHeartbeatAt >= 20_000L) {
+            post(
+                JSONObject()
+                    .put("operation", "heartbeat")
+                    .put("device_id", deviceId)
+                    .put("device_name", deviceName)
+                    .put("platform", "android")
+                    .put("app_version", "1.3.0")
+                    .put("foreground", false)
+                    .put("active_avatar", false)
+                    .put(
+                        "capabilities",
+                        JSONObject()
+                            .put("cloud_background_relay", true)
+                            .put("speech", true)
+                            .put("flashlight", true)
+                            .put("avatar_handoff", true),
+                    ),
+            )
+            lastHeartbeatAt = now
+        }
+
+        val allowed = JSONArray()
+            .put("ping")
+            .put("speak_text")
+            .put("flashlight_on")
+            .put("flashlight_off")
+            .put("avatar_handoff")
+            .put("wake_jarvis")
+
+        val response = post(
+            JSONObject()
+                .put("operation", "claim_commands")
+                .put("device_id", deviceId)
+                .put("allowed_actions", allowed),
+        )
+
+        val commands =
+            response.optJSONArray("commands") ?: return
+
+        for (index in 0 until commands.length()) {
+            val command =
+                commands.optJSONObject(index) ?: continue
+            executeCommand(command)
+        }
+    }
+
+    private fun executeCommand(command: JSONObject) {
+        val id = command.optString("id")
+        val action = command.optString("action")
+        val parameters =
+            command.optJSONObject("parameters") ?: JSONObject()
+
+        if (id.isBlank()) return
+
+        updateCommand(
+            id,
+            "executing",
+            JSONObject(),
+            null,
+        )
+
+        try {
+            val result = when (action) {
+                "ping" ->
+                    JSONObject()
+                        .put("online", true)
+                        .put("device_id", deviceId)
+                        .put("background_relay", true)
+
+                "speak_text" -> {
+                    val text =
+                        parameters.optString("text").trim()
+                    if (text.isBlank()) {
+                        throw IllegalArgumentException(
+                            "speak_text requires text",
+                        )
+                    }
+                    speak(text)
+                    JSONObject()
+                        .put("speech_accepted", true)
+                        .put("text", text)
+                }
+
+                "flashlight_on" -> {
+                    setTorch(true)
+                    JSONObject().put("state", "on")
+                }
+
+                "flashlight_off" -> {
+                    setTorch(false)
+                    JSONObject().put("state", "off")
+                }
+
+                "avatar_handoff" -> {
+                    postJarvisNotification(
+                        "Jarvis moved to this device",
+                        "Open JARVIS to continue the conversation here.",
+                        "presence",
+                    )
+                    JSONObject()
+                        .put("active_avatar", true)
+                        .put("notification_posted", true)
+                }
+
+                "wake_jarvis" -> {
+                    val responseText =
+                        parameters
+                            .optString("response", "Yes?")
+                            .trim()
+                    if (responseText.isNotBlank()) {
+                        speak(responseText)
+                    }
+                    postJarvisNotification(
+                        "Jarvis is ready",
+                        "Tap to open Voice and continue.",
+                        "voice",
+                    )
+                    JSONObject()
+                        .put("awake", true)
+                        .put("notification_posted", true)
+                }
+
+                else ->
+                    throw IllegalArgumentException(
+                        "Unsupported background action: " + action,
+                    )
+            }
+
+            updateCommand(
+                id,
+                "completed",
+                result,
+                null,
+            )
+        } catch (error: Throwable) {
+            updateCommand(
+                id,
+                "failed",
+                JSONObject(),
+                error.message
+                    ?: error.javaClass.simpleName,
+            )
+        }
+    }
+
+    private fun speak(text: String) {
+        if (!ttsReady) {
+            throw IllegalStateException(
+                "Android speech engine is not ready.",
+            )
+        }
+
+        val utteranceId =
+            "jarvis-cloud-" +
+                System.nanoTime().toString()
+
+        val result = tts?.speak(
+            text,
+            TextToSpeech.QUEUE_FLUSH,
+            null,
+            utteranceId,
+        )
+
+        if (result != TextToSpeech.SUCCESS) {
+            throw IllegalStateException(
+                "Android speech engine rejected the request.",
+            )
+        }
+    }
+
+    private fun setTorch(enabled: Boolean) {
+        val manager =
+            getSystemService(
+                Context.CAMERA_SERVICE,
+            ) as CameraManager
+
+        val cameraId =
+            manager.cameraIdList.firstOrNull {
+                val characteristics =
+                    manager.getCameraCharacteristics(it)
+                characteristics.get(
+                    CameraCharacteristics.FLASH_INFO_AVAILABLE,
+                ) == true
+            } ?: throw IllegalStateException(
+                "No flashlight is available.",
+            )
+
+        manager.setTorchMode(cameraId, enabled)
+    }
+
+    private fun updateCommand(
+        commandId: String,
+        status: String,
+        result: JSONObject,
+        error: String?,
+    ) {
+        val payload =
+            JSONObject()
+                .put("operation", "update_command")
+                .put("device_id", deviceId)
+                .put("command_id", commandId)
+                .put("status", status)
+                .put("result", result)
+
+        if (!error.isNullOrBlank()) {
+            payload.put(
+                "error",
+                error.take(4000),
+            )
+        }
+
+        post(payload)
+    }
+
+    private fun post(payload: JSONObject): JSONObject {
+        val connection =
+            URL(gatewayUrl)
+                .openConnection() as HttpURLConnection
+
+        try {
+            connection.requestMethod = "POST"
+            connection.connectTimeout = 12_000
+            connection.readTimeout = 12_000
+            connection.doOutput = true
+            connection.setRequestProperty(
+                "Content-Type",
+                "application/json",
+            )
+            connection.setRequestProperty(
+                "Authorization",
+                "Bearer " + token,
+            )
+
+            OutputStreamWriter(
+                connection.outputStream,
+                Charsets.UTF_8,
+            ).use { writer ->
+                writer.write(payload.toString())
+            }
+
+            val code = connection.responseCode
+            val stream =
+                if (code in 200..299) {
+                    connection.inputStream
+                } else {
+                    connection.errorStream
+                }
+
+            val body =
+                stream?.bufferedReader()
+                    ?.use(BufferedReader::readText)
+                    .orEmpty()
+
+            if (code !in 200..299) {
+                throw IllegalStateException(
+                    "Cloud relay HTTP " +
+                        code.toString() +
+                        ": " +
+                        body.take(500),
+                )
+            }
+
+            return if (body.isBlank()) {
+                JSONObject()
+            } else {
+                JSONObject(body)
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun postJarvisNotification(
+        title: String,
+        message: String,
+        launchTarget: String,
+    ) {
+        val manager =
+            getSystemService(
+                Context.NOTIFICATION_SERVICE,
+            ) as NotificationManager
+
+        manager.notify(
+            NOTIFICATION_ID + 1,
+            buildNotification(
+                title,
+                message,
+                launchTarget,
+            ),
+        )
+    }
+
+    private fun buildNotification(
+        title: String = "JARVIS cloud link active",
+        message: String =
+            if (pollingEnabled) {
+                "Listening for commands from your other Jarvis devices."
+            } else {
+                "Cloud relay is ready and activates when Jarvis is backgrounded."
+            },
+        launchTarget: String = "devices",
+    ) =
+        NotificationCompat.Builder(
+            this,
+            CHANNEL_ID,
+        )
+            .setSmallIcon(
+                android.R.drawable.stat_notify_sync,
+            )
+            .setContentTitle(title)
+            .setContentText(message)
+            .setOngoing(
+                title == "JARVIS cloud link active",
+            )
+            .setOnlyAlertOnce(true)
+            .setContentIntent(
+                PendingIntent.getActivity(
+                    this,
+                    14031,
+                    packageManager
+                        .getLaunchIntentForPackage(
+                            packageName,
+                        )
+                        ?.apply {
+                            putExtra(
+                                "jarvis_launch_target",
+                                launchTarget,
+                            )
+                            flags =
+                                Intent.FLAG_ACTIVITY_NEW_TASK or
+                                    Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        },
+                    PendingIntent.FLAG_UPDATE_CURRENT or
+                        PendingIntent.FLAG_IMMUTABLE,
+                ),
+            )
+            .build()
+
+    private fun updateNotification() {
+        if (!running) return
+        val manager =
+            getSystemService(
+                Context.NOTIFICATION_SERVICE,
+            ) as NotificationManager
+        manager.notify(
+            NOTIFICATION_ID,
+            buildNotification(),
+        )
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager =
+                getSystemService(
+                    Context.NOTIFICATION_SERVICE,
+                ) as NotificationManager
+            manager.createNotificationChannel(
+                NotificationChannel(
+                    CHANNEL_ID,
+                    "JARVIS Cloud Link",
+                    NotificationManager.IMPORTANCE_LOW,
+                ).apply {
+                    description =
+                        "Keeps JARVIS connected to your other devices."
+                },
+            )
+        }
+    }
+
+    override fun onDestroy() {
+        running = false
+        pollingEnabled = false
+        task?.cancel(true)
+        task = null
+        executor.shutdownNow()
+        tts?.stop()
+        tts?.shutdown()
+        tts = null
+        super.onDestroy()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+}
