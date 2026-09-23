@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
+import json
 import os
 import re
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Annotated
 
 import httpx
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, status
-from openai import AsyncOpenAI
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile, status
+from openai import AsyncOpenAI, OpenAI
+import websockets
 from pydantic import BaseModel, Field
 
 from .auth_google import auth_ready, issue_session, verify_google_chairman, verify_session
@@ -71,6 +75,14 @@ GATEWAY_MODEL = os.getenv("AI_GATEWAY_MODEL", f"openai/{OPENAI_MODEL}").strip() 
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip() or "llama-3.3-70b-versatile"
 CHAIRMAN_TOKEN = os.getenv("JARVIS_CHAIRMAN_TOKEN", "").strip()
 CLIENT_TOKEN = os.getenv("JARVIS_CLIENT_TOKEN", "").strip()
+PHONE_GATEWAY_URL = os.getenv(
+    "JARVIS_PHONE_GATEWAY_URL",
+    "https://idpneeyysraraznqmiio.supabase.co/functions/v1/jarvis-phone-gateway",
+).strip()
+PHONE_WEBHOOK_SECRET = os.getenv("OPENAI_WEBHOOK_SECRET", "").strip()
+RECEPTIONIST_NUMBER = os.getenv("JARVIS_RECEPTIONIST_NUMBER", "").strip()
+ACTIVE_PHONE_CALLS: dict[str, dict[str, object]] = {}
+PHONE_CALL_TASKS: set[asyncio.Task[None]] = set()
 
 LEGAL_INSTRUCTIONS = """You are JARVIS Legal Enterprise, a legal research, analysis, organization, and drafting system.
 
@@ -182,6 +194,28 @@ class MusicSearchResponse(BaseModel):
     author: str
     thumbnail_url: str
     watch_url: str
+
+
+class PhoneReceptionistStatus(BaseModel):
+    configured: bool
+    provider: str
+    phone_number: str
+    active_calls: int
+
+
+class PhoneReceptionistMessage(BaseModel):
+    call_id: str
+    from_number: str = ""
+    to_number: str = ""
+    caller_name: str = ""
+    callback_number: str = ""
+    urgent: bool = False
+    summary: str = ""
+    transcript: str = ""
+    assistant_transcript: str = ""
+    status: str = "completed"
+    started_at: str | None = None
+    completed_at: str | None = None
 
 
 def _build_ai_client() -> tuple[AsyncOpenAI | None, str, str]:
@@ -362,6 +396,306 @@ async def _validate_youtube_video(
     }
 
 
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _sip_number(headers: list[dict[str, str]], name: str) -> str:
+    wanted = name.strip().lower()
+    for item in headers:
+        if str(item.get("name", "")).strip().lower() != wanted:
+            continue
+        value = str(item.get("value", "") or "").strip()
+        match = re.search(r"(?:sip:|tel:)(\+?[0-9]{7,20})", value, flags=re.IGNORECASE)
+        if match:
+            return match.group(1)
+        return value[:100]
+    return ""
+
+
+async def _phone_gateway_call(
+    operation: str,
+    **payload: object,
+) -> dict[str, object]:
+    if not CLIENT_TOKEN or not PHONE_GATEWAY_URL:
+        raise RuntimeError("Phone message gateway is not configured.")
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(
+            PHONE_GATEWAY_URL,
+            headers={
+                "Authorization": f"Bearer {CLIENT_TOKEN}",
+                "Content-Type": "application/json",
+            },
+            json={"operation": operation, **payload},
+        )
+
+    try:
+        data = response.json()
+    except ValueError:
+        data = {}
+
+    if response.status_code < 200 or response.status_code >= 300:
+        detail = str(data.get("error", "")).strip() if isinstance(data, dict) else ""
+        raise RuntimeError(detail or f"Phone gateway HTTP {response.status_code}.")
+
+    return data if isinstance(data, dict) else {}
+
+
+async def _summarize_phone_call(
+    caller_transcript: str,
+    assistant_transcript: str,
+) -> dict[str, object]:
+    combined = (
+        "CALLER:\n"
+        + caller_transcript.strip()
+        + "\n\nJARVIS:\n"
+        + assistant_transcript.strip()
+    ).strip()
+
+    fallback = {
+        "caller_name": "",
+        "callback_number": "",
+        "urgent": bool(
+            re.search(
+                r"\b(urgent|emergency|as soon as possible|asap|right away)\b",
+                caller_transcript,
+                flags=re.IGNORECASE,
+            )
+        ),
+        "summary": caller_transcript.strip()[:1200]
+        or "Caller ended before leaving a message.",
+    }
+
+    client: AsyncOpenAI | None = getattr(app.state, "frontier_openai", None)
+    if client is None or not combined:
+        return fallback
+
+    try:
+        response = await client.responses.create(
+            model=FRONTIER_MODEL,
+            instructions=(
+                "Summarize a phone message for the owner of JARVIS. "
+                "Return JSON only with keys caller_name, callback_number, urgent, summary. "
+                "Do not invent a name or number. urgent must be true only when the caller "
+                "indicates urgency, emergency, a deadline, or immediate attention."
+            ),
+            input=combined,
+        )
+        raw = (response.output_text or "").strip()
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            return fallback
+        return {
+            "caller_name": str(parsed.get("caller_name", "") or "").strip()[:255],
+            "callback_number": str(parsed.get("callback_number", "") or "").strip()[:100],
+            "urgent": parsed.get("urgent") is True,
+            "summary": str(parsed.get("summary", "") or "").strip()[:8000]
+            or fallback["summary"],
+        }
+    except Exception:
+        return fallback
+
+
+async def _persist_phone_call(
+    call_id: str,
+    record: dict[str, object],
+) -> None:
+    caller_lines = record.get("caller_lines", [])
+    assistant_lines = record.get("assistant_lines", [])
+    caller_text = "\n".join(
+        str(item).strip()
+        for item in caller_lines
+        if str(item).strip()
+    )
+    assistant_text = "\n".join(
+        str(item).strip()
+        for item in assistant_lines
+        if str(item).strip()
+    )
+    summary = await _summarize_phone_call(caller_text, assistant_text)
+
+    try:
+        await _phone_gateway_call(
+            "upsert_message",
+            call_id=call_id,
+            provider="openai_sip",
+            from_number=str(record.get("from_number", "") or ""),
+            to_number=str(record.get("to_number", "") or ""),
+            caller_name=summary.get("caller_name", ""),
+            callback_number=summary.get("callback_number", ""),
+            urgent=summary.get("urgent") is True,
+            summary=summary.get("summary", ""),
+            transcript=caller_text,
+            assistant_transcript=assistant_text,
+            status=str(record.get("status", "completed") or "completed"),
+            started_at=record.get("started_at"),
+            completed_at=record.get("completed_at") or _utc_now(),
+        )
+    except Exception:
+        pass
+
+
+async def _monitor_realtime_phone_call(call_id: str) -> None:
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    record = ACTIVE_PHONE_CALLS.get(call_id)
+    if not api_key or record is None:
+        return
+
+    url = "wss://api.openai.com/v1/realtime?call_id=" + call_id
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "OpenAI-Safety-Identifier": hashlib.sha256(
+            f"jarvis-phone:{call_id}".encode("utf-8")
+        ).hexdigest(),
+    }
+
+    try:
+        async with websockets.connect(
+            url,
+            additional_headers=headers,
+            open_timeout=15,
+            close_timeout=10,
+        ) as websocket:
+            await websocket.send(
+                json.dumps(
+                    {
+                        "type": "response.create",
+                        "response": {
+                            "instructions": (
+                                "Greet the caller as JARVIS, Jerome's AI receptionist. "
+                                "Say Jerome is unavailable right now. Ask for the caller's "
+                                "name, best callback number, reason for calling, and whether "
+                                "the matter is urgent. Listen naturally and confirm the "
+                                "message back briefly before closing."
+                            )
+                        },
+                    }
+                )
+            )
+
+            async for raw in websocket:
+                try:
+                    event = json.loads(raw)
+                except (TypeError, json.JSONDecodeError):
+                    continue
+
+                event_type = str(event.get("type", "") or "")
+
+                if event_type == "conversation.item.input_audio_transcription.completed":
+                    text = str(event.get("transcript", "") or "").strip()
+                    if text:
+                        lines = record.setdefault("caller_lines", [])
+                        if isinstance(lines, list):
+                            lines.append(text)
+
+                elif event_type in {
+                    "response.output_audio_transcript.done",
+                    "response.output_text.done",
+                }:
+                    text = str(
+                        event.get("transcript", "")
+                        or event.get("text", "")
+                        or ""
+                    ).strip()
+                    if text:
+                        lines = record.setdefault("assistant_lines", [])
+                        if isinstance(lines, list):
+                            lines.append(text)
+
+                elif event_type == "error":
+                    error = event.get("error")
+                    record["last_error"] = str(
+                        error.get("message", "")
+                        if isinstance(error, dict)
+                        else "Realtime phone error"
+                    )[:1000]
+
+                elif event_type == "session.closed":
+                    break
+    except Exception as exc:
+        record["last_error"] = f"{type(exc).__name__}: {exc}"[:1000]
+    finally:
+        record["status"] = "completed"
+        record["completed_at"] = _utc_now()
+        await _persist_phone_call(call_id, record)
+        ACTIVE_PHONE_CALLS.pop(call_id, None)
+
+
+async def _accept_openai_sip_call(
+    call_id: str,
+    from_number: str,
+    to_number: str,
+) -> None:
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not configured.")
+
+    instructions = (
+        "You are JARVIS, Jerome's male AI cellular receptionist. "
+        "Use a calm, masculine, cool, professional voice. "
+        "Tell callers that you are JARVIS, an AI receptionist. "
+        "Never pretend to be Jerome or a human employee. "
+        "When Jerome is unavailable, collect the caller's name, callback number, "
+        "reason for calling, important details, and whether it is urgent. "
+        "Ask one question at a time, listen carefully, and confirm the message. "
+        "Do not disclose private information about Jerome, his contacts, schedule, "
+        "location, accounts, or prior conversations. "
+        "Do not make commitments, payments, legal promises, or business agreements. "
+        "If the caller asks for an emergency service, tell them to contact the "
+        "appropriate emergency service directly."
+    )
+
+    session = {
+        "type": "realtime",
+        "model": REALTIME_MODEL,
+        "instructions": instructions,
+        "audio": {
+            "input": {
+                "transcription": {
+                    "model": "gpt-4o-transcribe",
+                    "language": "en",
+                }
+            },
+            "output": {
+                "voice": "cedar",
+                "speed": 0.96,
+            },
+        },
+    }
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.post(
+            f"https://api.openai.com/v1/realtime/calls/{call_id}/accept",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=session,
+        )
+
+    if response.status_code < 200 or response.status_code >= 300:
+        raise RuntimeError(
+            f"OpenAI SIP accept failed with HTTP {response.status_code}."
+        )
+
+    ACTIVE_PHONE_CALLS[call_id] = {
+        "call_id": call_id,
+        "from_number": from_number,
+        "to_number": to_number,
+        "status": "active",
+        "started_at": _utc_now(),
+        "caller_lines": [],
+        "assistant_lines": [],
+    }
+
+    task = asyncio.create_task(_monitor_realtime_phone_call(call_id))
+    PHONE_CALL_TASKS.add(task)
+    task.add_done_callback(PHONE_CALL_TASKS.discard)
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     return HealthResponse(
@@ -419,6 +753,105 @@ async def auth_check(
         authenticated=True,
         role=authenticated_role,
     )
+
+
+
+
+@app.get("/v1/phone/status", response_model=PhoneReceptionistStatus)
+async def phone_receptionist_status(
+    authenticated_role: Annotated[str, Depends(authenticate_request)],
+) -> PhoneReceptionistStatus:
+    del authenticated_role
+    return PhoneReceptionistStatus(
+        configured=bool(
+            os.getenv("OPENAI_API_KEY", "").strip()
+            and PHONE_WEBHOOK_SECRET
+        ),
+        provider="openai_sip",
+        phone_number=RECEPTIONIST_NUMBER,
+        active_calls=len(ACTIVE_PHONE_CALLS),
+    )
+
+
+@app.get("/v1/phone/messages")
+async def phone_receptionist_messages(
+    authenticated_role: Annotated[str, Depends(authenticate_request)],
+) -> dict[str, object]:
+    del authenticated_role
+    try:
+        payload = await _phone_gateway_call("list_messages", limit=100)
+        messages = payload.get("messages", [])
+        return {"messages": messages if isinstance(messages, list) else []}
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Phone message storage unavailable: {type(exc).__name__}",
+        ) from exc
+
+
+@app.post("/v1/phone/openai-webhook", include_in_schema=False)
+async def openai_phone_webhook(request: Request) -> dict[str, bool]:
+    if not PHONE_WEBHOOK_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="OPENAI_WEBHOOK_SECRET is not configured.",
+        )
+
+    raw = await request.body()
+    try:
+        verifier = OpenAI(
+            api_key=os.getenv("OPENAI_API_KEY", "").strip() or "webhook-verification-only",
+            webhook_secret=PHONE_WEBHOOK_SECRET,
+        )
+        event = verifier.webhooks.unwrap(
+            raw,
+            dict(request.headers),
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid OpenAI phone webhook signature.",
+        ) from exc
+
+    event_type = str(getattr(event, "type", "") or "")
+    if event_type != "realtime.call.incoming":
+        return {"ok": True}
+
+    data = getattr(event, "data", None)
+    call_id = str(getattr(data, "call_id", "") or "").strip()
+    raw_headers = getattr(data, "sip_headers", None) or []
+
+    sip_headers: list[dict[str, str]] = []
+    for item in raw_headers:
+        if isinstance(item, dict):
+            sip_headers.append(
+                {
+                    "name": str(item.get("name", "") or ""),
+                    "value": str(item.get("value", "") or ""),
+                }
+            )
+        else:
+            sip_headers.append(
+                {
+                    "name": str(getattr(item, "name", "") or ""),
+                    "value": str(getattr(item, "value", "") or ""),
+                }
+            )
+
+    if not call_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Incoming phone webhook contained no call_id.",
+        )
+
+    from_number = _sip_number(sip_headers, "From")
+    to_number = _sip_number(sip_headers, "To")
+    await _accept_openai_sip_call(
+        call_id,
+        from_number,
+        to_number,
+    )
+    return {"ok": True}
 
 
 @app.post("/v1/music/search", response_model=MusicSearchResponse)

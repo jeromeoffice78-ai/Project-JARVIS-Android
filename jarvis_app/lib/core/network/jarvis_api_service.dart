@@ -49,6 +49,79 @@ class JarvisMusicTrack {
   final String watchUrl;
 }
 
+class JarvisPhoneReceptionistStatus {
+  const JarvisPhoneReceptionistStatus({
+    required this.configured,
+    required this.provider,
+    required this.phoneNumber,
+    required this.activeCalls,
+  });
+
+  final bool configured;
+  final String provider;
+  final String phoneNumber;
+  final int activeCalls;
+}
+
+class JarvisPhoneReceptionistMessage {
+  const JarvisPhoneReceptionistMessage({
+    required this.callId,
+    required this.fromNumber,
+    required this.toNumber,
+    required this.callerName,
+    required this.callbackNumber,
+    required this.urgent,
+    required this.summary,
+    required this.transcript,
+    required this.assistantTranscript,
+    required this.status,
+    required this.startedAt,
+    required this.completedAt,
+  });
+
+  final String callId;
+  final String fromNumber;
+  final String toNumber;
+  final String callerName;
+  final String callbackNumber;
+  final bool urgent;
+  final String summary;
+  final String transcript;
+  final String assistantTranscript;
+  final String status;
+  final DateTime? startedAt;
+  final DateTime? completedAt;
+
+  factory JarvisPhoneReceptionistMessage.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    return JarvisPhoneReceptionistMessage(
+      callId: json['call_id']?.toString() ?? '',
+      fromNumber:
+          json['from_number']?.toString() ?? '',
+      toNumber:
+          json['to_number']?.toString() ?? '',
+      callerName:
+          json['caller_name']?.toString() ?? '',
+      callbackNumber:
+          json['callback_number']?.toString() ?? '',
+      urgent: json['urgent'] == true,
+      summary: json['summary']?.toString() ?? '',
+      transcript:
+          json['transcript']?.toString() ?? '',
+      assistantTranscript:
+          json['assistant_transcript']?.toString() ?? '',
+      status: json['status']?.toString() ?? '',
+      startedAt: DateTime.tryParse(
+        json['started_at']?.toString() ?? '',
+      ),
+      completedAt: DateTime.tryParse(
+        json['completed_at']?.toString() ?? '',
+      ),
+    );
+  }
+}
+
 class JarvisApiService {
   JarvisApiService({
     required JarvisConfig config,
@@ -80,6 +153,90 @@ class JarvisApiService {
     }
 
     return Map<String, dynamic>.from(decoded);
+  }
+
+  Future<JarvisPhoneReceptionistStatus>
+      phoneReceptionistStatus() async {
+    final response = await _client.get(
+      Uri.parse(
+        '${_config.httpBaseUrl}/v1/phone/status',
+      ),
+      headers: _headers,
+    );
+
+    final Object? decoded =
+        jsonDecode(response.body);
+
+    if (response.statusCode != 200) {
+      final String detail = decoded is Map
+          ? decoded['detail']?.toString() ??
+              'Phone receptionist status failed.'
+          : 'Phone receptionist status failed.';
+      throw StateError(detail);
+    }
+
+    if (decoded is! Map) {
+      throw const FormatException(
+        'Invalid phone receptionist status.',
+      );
+    }
+
+    final Map<String, dynamic> data =
+        Map<String, dynamic>.from(decoded);
+
+    return JarvisPhoneReceptionistStatus(
+      configured: data['configured'] == true,
+      provider:
+          data['provider']?.toString() ?? '',
+      phoneNumber:
+          data['phone_number']?.toString() ?? '',
+      activeCalls:
+          (data['active_calls'] as num?)
+                  ?.toInt() ??
+              0,
+    );
+  }
+
+  Future<List<JarvisPhoneReceptionistMessage>>
+      phoneReceptionistMessages() async {
+    final response = await _client.get(
+      Uri.parse(
+        '${_config.httpBaseUrl}/v1/phone/messages',
+      ),
+      headers: _headers,
+    );
+
+    final Object? decoded =
+        jsonDecode(response.body);
+
+    if (response.statusCode != 200) {
+      final String detail = decoded is Map
+          ? decoded['detail']?.toString() ??
+              'Phone receptionist messages failed.'
+          : 'Phone receptionist messages failed.';
+      throw StateError(detail);
+    }
+
+    if (decoded is! Map) {
+      throw const FormatException(
+        'Invalid phone receptionist messages response.',
+      );
+    }
+
+    final Object? raw = decoded['messages'];
+    if (raw is! List) {
+      return const <JarvisPhoneReceptionistMessage>[];
+    }
+
+    return raw
+        .whereType<Map>()
+        .map(
+          (Map item) =>
+              JarvisPhoneReceptionistMessage.fromJson(
+            Map<String, dynamic>.from(item),
+          ),
+        )
+        .toList(growable: false);
   }
 
   Future<JarvisMusicTrack> searchMusic(
