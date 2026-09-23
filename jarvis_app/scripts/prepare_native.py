@@ -296,6 +296,48 @@ class MainActivity : FlutterFragmentActivity() {{
         ).setMethodCallHandler {{ call, result ->
             when (call.method) {{
                 "listUsbPrinters" -> result.success(listUsbPrinters())
+                "getDeviceName" -> {{
+                    val manufacturer = Build.MANUFACTURER
+                        ?.trim()
+                        ?.replaceFirstChar {{ if (it.isLowerCase()) it.titlecase() else it.toString() }}
+                        .orEmpty()
+                    val model = Build.MODEL?.trim().orEmpty()
+                    result.success(
+                        listOf(manufacturer, model)
+                            .filter {{ it.isNotBlank() }}
+                            .joinToString(" ")
+                            .ifBlank {{ "Android device" }},
+                    )
+                }}
+                "printTextDocument" -> {{
+                    val title = call.argument<String>("title")?.trim().orEmpty()
+                    val text = call.argument<String>("text")?.trim().orEmpty()
+
+                    if (title.isEmpty() || text.isEmpty()) {{
+                        result.error(
+                            "invalid_document",
+                            "A printable title and document body are required.",
+                            null,
+                        )
+                    }} else {{
+                        try {{
+                            val printManager =
+                                getSystemService(Context.PRINT_SERVICE) as PrintManager
+                            val printJob = printManager.print(
+                                title,
+                                JarvisTextPrintAdapter(this, text),
+                                PrintAttributes.Builder().build(),
+                            )
+                            result.success(printJob.id.toString())
+                        }} catch (error: Throwable) {{
+                            result.error(
+                                "print_failed",
+                                error.message ?: "Unable to start print job.",
+                                null,
+                            )
+                        }}
+                    }}
+                }}
                 "openPrintSettings" -> {{
                     try {{
                         startActivity(Intent(Settings.ACTION_PRINT_SETTINGS))

@@ -86,6 +86,50 @@ class JarvisPrinterService {
     }
   }
 
+  Future<String> getDeviceName() async {
+    if (!isSupported) {
+      return 'Android device';
+    }
+
+    try {
+      return await _channel.invokeMethod<String>(
+            'getDeviceName',
+          ) ??
+          'Android device';
+    } on PlatformException {
+      return 'Android device';
+    }
+  }
+
+  Future<String?> printTextDocument({
+    required String title,
+    required String text,
+  }) async {
+    if (!isSupported) {
+      throw StateError(
+        'Printing is only available on Android.',
+      );
+    }
+
+    final String normalizedTitle = title.trim();
+    final String normalizedText = text.trim();
+
+    if (normalizedTitle.isEmpty ||
+        normalizedText.isEmpty) {
+      throw ArgumentError(
+        'A printable title and document body are required.',
+      );
+    }
+
+    return _channel.invokeMethod<String>(
+      'printTextDocument',
+      <String, dynamic>{
+        'title': normalizedTitle,
+        'text': normalizedText,
+      },
+    );
+  }
+
   Future<void> openPrintSettings() async {
     if (!isSupported) return;
     await _channel.invokeMethod<void>(

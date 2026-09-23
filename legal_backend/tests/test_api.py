@@ -113,3 +113,41 @@ def test_signed_chairman_session_authorizes_query():
         assert payload["matter_id"] == "matter-123"
         assert "NEXT_STEP_COMMAND" in payload["answer"]
         assert payload["model"] == api.OPENAI_MODEL
+
+
+def test_auth_check_rejects_missing_token():
+    with TestClient(api.app) as client:
+        response = client.get("/v1/auth/check")
+        assert response.status_code == 401
+
+
+def test_auth_check_accepts_existing_jarvis_client_token():
+    with TestClient(api.app) as client:
+        response = client.get(
+            "/v1/auth/check",
+            headers={"Authorization": "Bearer test-client-token"},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["authenticated"] is True
+        assert payload["role"] == "client"
+
+
+def test_auth_check_accepts_chairman_session():
+    identity = JarvisIdentity(
+        subject="google-subject-auth-check",
+        email="jeromeoffice78@gmail.com",
+        display_name="Jerome Office",
+        role="chairman",
+    )
+    token, _ = issue_session(identity)
+
+    with TestClient(api.app) as client:
+        response = client.get(
+            "/v1/auth/check",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["authenticated"] is True
+        assert payload["role"] == "chairman"

@@ -9,6 +9,7 @@ import '../../features/capabilities/jarvis_capability_service.dart';
 import '../../features/devices/jarvis_bluetooth_manager.dart';
 import '../../features/phone/jarvis_phone_service.dart';
 import '../../features/printer/jarvis_printer_service.dart';
+import '../../features/printer/jarvis_print_router.dart';
 import '../../features/vision/jarvis_vision_service.dart';
 import '../../features/voice/jarvis_voice_controller.dart';
 import '../../features/voice/jarvis_voice_service.dart';
@@ -73,6 +74,9 @@ final jarvisCapabilityServiceProvider =
     approvalService: ref.watch(
       jarvisActionApprovalServiceProvider,
     ),
+    printRouter: ref.watch(
+      jarvisPrintRouterProvider,
+    ),
   );
 
   ref.onDispose(service.dispose);
@@ -109,6 +113,22 @@ final jarvisPhoneServiceProvider =
 final jarvisPrinterServiceProvider =
     Provider<JarvisPrinterService>((Ref ref) {
   return JarvisPrinterService();
+});
+
+final jarvisPrintRouterProvider =
+    Provider<JarvisPrintRouter>((Ref ref) {
+  final JarvisPrintRouter router =
+      JarvisPrintRouter(
+    config: ref.watch(jarvisConfigProvider),
+    printerService:
+        ref.watch(jarvisPrinterServiceProvider),
+  );
+
+  ref.onDispose(() {
+    unawaited(router.dispose());
+  });
+
+  return router;
 });
 
 final jarvisChatControllerProvider =

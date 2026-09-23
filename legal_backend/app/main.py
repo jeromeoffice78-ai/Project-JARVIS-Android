@@ -60,6 +60,11 @@ class SessionResponse(BaseModel):
     subscription_exempt: bool
 
 
+class AuthCheckResponse(BaseModel):
+    authenticated: bool
+    role: str
+
+
 class LegalQueryRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=40_000)
     role: str = Field(default="client", min_length=1, max_length=64)
@@ -223,6 +228,16 @@ async def auth_session(
         display_name=identity.display_name,
         email=identity.email,
         subscription_exempt=identity.role == "chairman",
+    )
+
+
+@app.get("/v1/auth/check", response_model=AuthCheckResponse)
+async def auth_check(
+    authenticated_role: Annotated[str, Depends(authenticate_request)],
+) -> AuthCheckResponse:
+    return AuthCheckResponse(
+        authenticated=True,
+        role=authenticated_role,
     )
 
 
