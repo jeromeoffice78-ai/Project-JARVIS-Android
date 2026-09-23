@@ -30,6 +30,8 @@ dependencies:
   flutter_webrtc: ^1.6.2+hotfix.3
   model_viewer_plus: ^1.10.0
   youtube_player_iframe: ^6.0.2
+  share_plus: ^13.3.0
+  qr_flutter: ^4.1.0
 
 dev_dependencies:
   flutter_test:
