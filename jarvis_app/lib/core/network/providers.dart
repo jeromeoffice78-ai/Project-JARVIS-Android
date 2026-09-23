@@ -6,6 +6,9 @@ import '../../features/chat/jarvis_chat_controller.dart';
 import '../../features/autonomy/jarvis_autonomy_controller.dart';
 import '../../features/capabilities/jarvis_action_approval_service.dart';
 import '../../features/capabilities/jarvis_capability_service.dart';
+import '../../features/devices/jarvis_bluetooth_manager.dart';
+import '../../features/phone/jarvis_phone_service.dart';
+import '../../features/printer/jarvis_printer_service.dart';
 import '../../features/vision/jarvis_vision_service.dart';
 import '../../features/voice/jarvis_voice_controller.dart';
 import '../../features/voice/jarvis_voice_service.dart';
@@ -75,6 +78,37 @@ final jarvisCapabilityServiceProvider =
   ref.onDispose(service.dispose);
 
   return service;
+});
+
+final jarvisBluetoothManagerProvider =
+    Provider<JarvisBluetoothManager>((Ref ref) {
+  final JarvisBluetoothManager manager =
+      JarvisBluetoothManager();
+
+  ref.onDispose(() {
+    unawaited(manager.dispose());
+  });
+
+  return manager;
+});
+
+final jarvisBluetoothStateProvider =
+    StreamProvider<JarvisBluetoothState>(
+  (Ref ref) {
+    return ref
+        .watch(jarvisBluetoothManagerProvider)
+        .stateStream;
+  },
+);
+
+final jarvisPhoneServiceProvider =
+    Provider<JarvisPhoneService>((Ref ref) {
+  return JarvisPhoneService();
+});
+
+final jarvisPrinterServiceProvider =
+    Provider<JarvisPrinterService>((Ref ref) {
+  return JarvisPrinterService();
 });
 
 final jarvisChatControllerProvider =
