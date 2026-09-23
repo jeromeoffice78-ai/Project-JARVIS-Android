@@ -65,6 +65,7 @@ class JarvisApiService {
   Future<JarvisFrontierResult> frontierQuery({
     required String prompt,
     required String mode,
+    String? imageBase64,
   }) async {
     final response = await _client.post(
       Uri.parse(
@@ -74,6 +75,9 @@ class JarvisApiService {
       body: jsonEncode(<String, dynamic>{
         'prompt': prompt,
         'mode': mode,
+        if (imageBase64 != null &&
+            imageBase64.isNotEmpty)
+          'image_base64': imageBase64,
       }),
     );
 
