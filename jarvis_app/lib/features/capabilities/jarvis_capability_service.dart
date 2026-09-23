@@ -14,6 +14,9 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'jarvis_action_approval_service.dart';
 import '../devices/jarvis_cloud_device_network.dart';
+import '../music/jarvis_music_service.dart';
+import '../vision/jarvis_vision_service.dart';
+import '../voice/jarvis_voice_service.dart';
 import '../printer/jarvis_print_router.dart';
 
 class JarvisCapabilityResult {
@@ -33,10 +36,16 @@ class JarvisCapabilityService {
     required JarvisActionApprovalService approvalService,
     required JarvisPrintRouter printRouter,
     required JarvisCloudDeviceNetwork deviceNetwork,
+    required JarvisMusicService musicService,
+    required JarvisVisionService visionService,
+    required JarvisVoiceService voiceService,
     http.Client? httpClient,
   })  : _approvalService = approvalService,
         _printRouter = printRouter,
         _deviceNetwork = deviceNetwork,
+        _musicService = musicService,
+        _visionService = visionService,
+        _voiceService = voiceService,
         _httpClient = httpClient ?? http.Client() {
     tz_data.initializeTimeZones();
   }
@@ -47,6 +56,9 @@ class JarvisCapabilityService {
   final JarvisActionApprovalService _approvalService;
   final JarvisPrintRouter _printRouter;
   final JarvisCloudDeviceNetwork _deviceNetwork;
+  final JarvisMusicService _musicService;
+  final JarvisVisionService _visionService;
+  final JarvisVoiceService _voiceService;
   final http.Client _httpClient;
   final DeviceCalendarPlugin _calendar =
       DeviceCalendarPlugin();
@@ -99,6 +111,21 @@ class JarvisCapabilityService {
 
         case 'create_and_print_document':
           return _createAndPrintDocument(parameters);
+
+        case 'play_music':
+          return _playMusic(parameters);
+
+        case 'pause_music':
+          return _pauseMusic();
+
+        case 'resume_music':
+          return _resumeMusic();
+
+        case 'vision_refresh':
+          return _refreshVision();
+
+        case 'speak_text':
+          return _speakText(parameters);
 
         case 'list_cloud_devices':
           return _listCloudDevices();
@@ -798,6 +825,103 @@ class JarvisCapabilityService {
             'Jarvis could not route the document to an available printer: $error',
       );
     }
+  }
+
+  Future<JarvisCapabilityResult> _playMusic(
+    Map<String, dynamic> parameters,
+  ) async {
+    final String query =
+        parameters['query']?.toString().trim() ?? '';
+
+    if (query.isEmpty) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error: 'Music query is empty.',
+      );
+    }
+
+    final track =
+        await _musicService.searchAndPlay(query);
+
+    return JarvisCapabilityResult(
+      ok: true,
+      result: <String, dynamic>{
+        'title': track.title,
+        'author': track.author,
+        'provider': track.provider,
+        'video_id': track.videoId,
+        'playing': true,
+      },
+    );
+  }
+
+  Future<JarvisCapabilityResult>
+      _pauseMusic() async {
+    await _musicService.pause();
+
+    return const JarvisCapabilityResult(
+      ok: true,
+      result: <String, dynamic>{
+        'paused': true,
+      },
+    );
+  }
+
+  Future<JarvisCapabilityResult>
+      _resumeMusic() async {
+    await _musicService.play();
+
+    return const JarvisCapabilityResult(
+      ok: true,
+      result: <String, dynamic>{
+        'playing': true,
+      },
+    );
+  }
+
+  Future<JarvisCapabilityResult>
+      _refreshVision() async {
+    if (!_visionService.isActive) {
+      await _visionService.start();
+    } else {
+      await _visionService.refreshFrameNow();
+    }
+
+    return JarvisCapabilityResult(
+      ok: _visionService.isActive,
+      result: <String, dynamic>{
+        'vision_active':
+            _visionService.isActive,
+        'frame_refreshed': true,
+      },
+      error: _visionService.isActive
+          ? null
+          : 'Camera vision did not become active.',
+    );
+  }
+
+  Future<JarvisCapabilityResult> _speakText(
+    Map<String, dynamic> parameters,
+  ) async {
+    final String text =
+        parameters['text']?.toString().trim() ?? '';
+
+    if (text.isEmpty) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error: 'Speech text is empty.',
+      );
+    }
+
+    await _voiceService.speak(text);
+
+    return JarvisCapabilityResult(
+      ok: true,
+      result: <String, dynamic>{
+        'spoken': true,
+        'text': text,
+      },
+    );
   }
 
   Future<JarvisCapabilityResult>
