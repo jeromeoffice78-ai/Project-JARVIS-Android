@@ -60,6 +60,10 @@ REALTIME_MOOD_INSTRUCTIONS = {
         "Sound urgent, forceful, controlled, and highly focused. Never shout; use "
         "stronger emphasis and shorter phrasing."
     ),
+    "companion": (
+        "Sound warm, steady, masculine, present, and easy to talk to. Listen first, "
+        "ask natural follow-up questions, and do not turn every feeling into advice."
+    ),
 }
 
 GATEWAY_MODEL = os.getenv("AI_GATEWAY_MODEL", f"openai/{OPENAI_MODEL}").strip() or f"openai/{OPENAI_MODEL}"
