@@ -142,6 +142,33 @@ class _JarvisDevicesScreenState
     }
   }
 
+  Future<void> _checkBackgroundRelay(
+    JarvisCloudDeviceNetwork network,
+  ) async {
+    final Map<String, dynamic> status =
+        await network.nativeRelayStatus();
+
+    if (!mounted) return;
+
+    final bool running =
+        status['running'] == true;
+    final bool polling =
+        status['polling'] == true;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          running
+              ? 'Background cloud relay is running' +
+                  (polling
+                      ? ' and listening for safe remote commands.'
+                      : ' and standing by while Jarvis is in the foreground.')
+              : 'Background cloud relay is not running on this device.',
+        ),
+      ),
+    );
+  }
+
   Future<void> _connectSelected(
     JarvisBluetoothManager manager,
   ) async {
@@ -284,6 +311,20 @@ class _JarvisDevicesScreenState
                     ),
                   ),
                 ],
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: cloudState.configured
+                      ? () => _checkBackgroundRelay(
+                            cloudNetwork,
+                          )
+                      : null,
+                  icon: const Icon(
+                    Icons.cloud_queue,
+                  ),
+                  label: const Text(
+                    'Background Cloud Relay',
+                  ),
+                ),
               ],
             ),
           ),
@@ -598,7 +639,7 @@ class _JarvisDevicesScreenState
               'Send JARVIS to another device',
             ),
             subtitle: const Text(
-              'Share the installer link, show a QR code, or download the latest APK so another Android device can join the cloud network.',
+              'Privately share the exact installed JARVIS APK with another Android device using Quick Share, Drive, Messages, or another file-transfer target.',
             ),
             trailing:
                 const Icon(Icons.chevron_right),
