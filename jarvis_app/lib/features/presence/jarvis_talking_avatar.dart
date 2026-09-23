@@ -311,7 +311,7 @@ async function startAvatar() {
 
   await head.showAvatar({
     url:
-      "https://cdn.jsdelivr.net/gh/met4citizen/TalkingHead@1.7/avatars/avatarsdk.glb",
+      "https://readyplayerme-assets.s3.amazonaws.com/animations/visage/male.glb",
     body: "M",
     avatarMood: "neutral",
     retarget: {
