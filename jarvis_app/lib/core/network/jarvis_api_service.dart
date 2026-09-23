@@ -62,6 +62,44 @@ class JarvisApiService {
     return Map<String, dynamic>.from(decoded);
   }
 
+  Future<String> createRealtimeClientSecret() async {
+    final response = await _client.post(
+      Uri.parse(
+        '${_config.httpBaseUrl}/v1/realtime/client-secret',
+      ),
+      headers: _headers,
+    );
+
+    final Object? decoded = jsonDecode(response.body);
+    if (response.statusCode != 200) {
+      final String detail = decoded is Map
+          ? decoded['detail']?.toString() ??
+              'Realtime voice credential request failed.'
+          : 'Realtime voice credential request failed.';
+      throw StateError(
+        'Realtime voice setup failed: $detail',
+      );
+    }
+
+    if (decoded is! Map) {
+      throw const FormatException(
+        'Invalid Realtime credential response.',
+      );
+    }
+
+    final String secret =
+        decoded['value']?.toString() ?? '';
+
+    if (secret.isEmpty) {
+      throw const FormatException(
+        'Realtime credential response contained no client secret.',
+      );
+    }
+
+    return secret;
+  }
+
+
   Future<JarvisFrontierResult> frontierQuery({
     required String prompt,
     required String mode,
