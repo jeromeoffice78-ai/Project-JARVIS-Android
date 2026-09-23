@@ -41,6 +41,10 @@ class _JarvisShellState
     // cross-device routing knows which Android device currently hosts a printer.
     ref.read(jarvisPrintRouterProvider);
 
+    // Keep the internet-based Jarvis device network active for
+    // cross-device commands even when the Devices tab is not open.
+    ref.read(jarvisCloudDeviceNetworkProvider);
+
     _approvalSubscription = ref
         .read(
           jarvisActionApprovalServiceProvider,
