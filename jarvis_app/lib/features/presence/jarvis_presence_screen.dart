@@ -54,7 +54,7 @@ class JarvisPresenceScreen
 
     final bool jarvisHere =
         noAssignedDevice ||
-        activeDevice.deviceId ==
+        activeDevice?.deviceId ==
             cloudState.deviceId ||
         cloudState.activeAvatar;
 
