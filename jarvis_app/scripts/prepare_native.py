@@ -359,6 +359,33 @@ class MainActivity : FlutterFragmentActivity() {{
                         ) ?: false,
                     )
                 }}
+                "captureScreenshot" -> {{
+                    val service = JarvisAccessibilityService.instance
+                    if (service == null) {{
+                        result.error(
+                            "accessibility_disabled",
+                            "Enable Jarvis Accessibility Control first.",
+                            null,
+                        )
+                    }} else {{
+                        service.captureScreenshot(
+                            onSuccess = {{ encoded ->
+                                runOnUiThread {{
+                                    result.success(encoded)
+                                }}
+                            }},
+                            onError = {{ message ->
+                                runOnUiThread {{
+                                    result.error(
+                                        "screenshot_failed",
+                                        message,
+                                        null,
+                                    )
+                                }}
+                            }},
+                        )
+                    }}
+                }}
                 "listBondedBluetoothDevices" -> {{
                     result.success(listBondedBluetoothDevices())
                 }}
@@ -850,8 +877,13 @@ class JarvisInCallService : InCallService() {{
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.graphics.Bitmap
 import android.graphics.Path
+import android.os.Build
+import android.util.Base64
+import android.view.Display
 import android.view.accessibility.AccessibilityEvent
+import java.io.ByteArrayOutputStream
 
 class JarvisAccessibilityService : AccessibilityService() {{
     companion object {{
@@ -877,6 +909,88 @@ class JarvisAccessibilityService : AccessibilityService() {{
 
     override fun onInterrupt() {{
         // No continuous accessibility feedback stream is used.
+    }}
+
+    fun captureScreenshot(
+        onSuccess: (String) -> Unit,
+        onError: (String) -> Unit,
+    ) {{
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {{
+            onError("Screen capture requires Android 11 or newer.")
+            return
+        }}
+
+        takeScreenshot(
+            Display.DEFAULT_DISPLAY,
+            mainExecutor,
+            object : TakeScreenshotCallback {{
+                override fun onSuccess(
+                    screenshot: ScreenshotResult,
+                ) {{
+                    val hardwareBuffer =
+                        screenshot.hardwareBuffer
+
+                    try {{
+                        val hardwareBitmap =
+                            Bitmap.wrapHardwareBuffer(
+                                hardwareBuffer,
+                                screenshot.colorSpace,
+                            )
+
+                        if (hardwareBitmap == null) {{
+                            onError(
+                                "Android returned no screenshot bitmap.",
+                            )
+                            return
+                        }}
+
+                        val softwareBitmap =
+                            hardwareBitmap.copy(
+                                Bitmap.Config.ARGB_8888,
+                                false,
+                            )
+
+                        if (softwareBitmap == null) {{
+                            onError(
+                                "Could not convert the screenshot.",
+                            )
+                            return
+                        }}
+
+                        val output =
+                            ByteArrayOutputStream()
+                        softwareBitmap.compress(
+                            Bitmap.CompressFormat.PNG,
+                            100,
+                            output,
+                        )
+                        softwareBitmap.recycle()
+
+                        onSuccess(
+                            Base64.encodeToString(
+                                output.toByteArray(),
+                                Base64.NO_WRAP,
+                            ),
+                        )
+                    }} catch (error: Throwable) {{
+                        onError(
+                            error.message
+                                ?: "Screen capture failed.",
+                        )
+                    }} finally {{
+                        hardwareBuffer.close()
+                    }}
+                }}
+
+                override fun onFailure(
+                    errorCode: Int,
+                ) {{
+                    onError(
+                        "Android screenshot failed with code $errorCode.",
+                    )
+                }}
+            }},
+        )
     }}
 
     fun performNamedGlobalAction(action: String): Boolean {{
