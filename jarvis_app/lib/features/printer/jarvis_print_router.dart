@@ -8,6 +8,66 @@ import '../../core/config/jarvis_config.dart';
 import '../../core/protocol/jarvis_protocol.dart';
 import 'jarvis_printer_service.dart';
 
+final class JarvisDevicePresence {
+  const JarvisDevicePresence({
+    required this.deviceId,
+    required this.deviceName,
+    required this.platform,
+    required this.appVersion,
+    required this.printerReady,
+    required this.printerName,
+    required this.lastSeenAt,
+    required this.online,
+    required this.capabilities,
+  });
+
+  final String deviceId;
+  final String deviceName;
+  final String platform;
+  final String appVersion;
+  final bool printerReady;
+  final String printerName;
+  final DateTime? lastSeenAt;
+  final bool online;
+  final Map<String, dynamic> capabilities;
+
+  factory JarvisDevicePresence.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final String rawLastSeen =
+        json['last_seen_at']?.toString() ?? '';
+
+    return JarvisDevicePresence(
+      deviceId:
+          json['device_id']?.toString() ?? '',
+      deviceName:
+          json['device_name']?.toString() ??
+              'Android device',
+      platform:
+          json['platform']?.toString() ??
+              'android',
+      appVersion:
+          json['app_version']?.toString() ??
+              '',
+      printerReady:
+          json['printer_ready'] == true,
+      printerName:
+          json['printer_name']?.toString() ??
+              '',
+      lastSeenAt: rawLastSeen.isEmpty
+          ? null
+          : DateTime.tryParse(rawLastSeen),
+      online: json['online'] == true,
+      capabilities:
+          json['capabilities'] is Map
+              ? Map<String, dynamic>.from(
+                  json['capabilities'] as Map,
+                )
+              : const <String, dynamic>{},
+    );
+  }
+}
+
 final class JarvisPrintRouteResult {
   const JarvisPrintRouteResult({
     required this.jobId,
@@ -84,6 +144,34 @@ class JarvisPrintRouter {
       const Duration(seconds: 5),
       (_) => unawaited(pollForAssignedJobs()),
     );
+  }
+
+  Future<List<JarvisDevicePresence>> listDevices() async {
+    if (!isCloudRoutingConfigured) {
+      return const <JarvisDevicePresence>[];
+    }
+
+    final Map<String, dynamic> payload =
+        await _post(
+      const <String, dynamic>{
+        'operation': 'list_devices',
+      },
+    );
+
+    final Object? rawDevices = payload['devices'];
+    if (rawDevices is! List) {
+      return const <JarvisDevicePresence>[];
+    }
+
+    return rawDevices
+        .whereType<Map>()
+        .map(
+          (Map raw) =>
+              JarvisDevicePresence.fromJson(
+            Map<String, dynamic>.from(raw),
+          ),
+        )
+        .toList(growable: false);
   }
 
   Future<JarvisPrintRouteResult> queueDocument({
