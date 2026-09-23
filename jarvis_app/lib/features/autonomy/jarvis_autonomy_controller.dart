@@ -101,7 +101,7 @@ class JarvisAutonomyController {
       throw ArgumentError('Autonomous goal cannot be empty.');
     }
 
-    final int boundedMax = maxSteps.clamp(1, 20);
+    final int boundedMax = maxSteps.clamp(1, 20).toInt();
 
     _emit(
       JarvisAutonomyState(
