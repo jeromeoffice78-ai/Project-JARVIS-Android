@@ -46,6 +46,9 @@ flutter:
     - assets/models/CesiumMan.glb
     - assets/models/CesiumMan-LICENSE.md
     - assets/avatar/jarvis_human_avatar.html
+    - assets/avatar/vendor/utils/BufferGeometryUtils.js
+    - assets/avatar/vendor/loaders/GLTFLoader.js
+    - assets/avatar/vendor/three.module.js
     - assets/avatar/VITRUVIAN-NOTICE.md
     - assets/models/vitruvian_body.glb
     - assets/models/vitruvian_head.glb
