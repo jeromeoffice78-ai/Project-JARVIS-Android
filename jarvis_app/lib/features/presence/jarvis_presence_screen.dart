@@ -2,11 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:model_viewer_plus/model_viewer_plus.dart';
 
 import '../../core/network/providers.dart';
 import '../devices/jarvis_cloud_device_network.dart';
 import 'jarvis_avatar_behavior.dart';
+import 'jarvis_talking_avatar.dart';
 import '../realtime/jarvis_realtime_voice_screen.dart';
 import '../realtime/jarvis_realtime_voice_service.dart';
 import '../voice/jarvis_voice_screen.dart';
@@ -544,26 +544,12 @@ class _JarvisAnimatedPresenceState
             const Duration(milliseconds: 420),
         curve: Curves.easeOutCubic,
         scale: scale,
-        child: const SizedBox(
+        child: SizedBox(
           width: 430,
           height: 560,
-          child: ModelViewer(
-            src:
-                'assets/models/CesiumMan.glb',
-            alt:
-                'Animated 3D Jarvis humanoid',
-            autoPlay: true,
-            autoRotate: false,
-            cameraControls: true,
-            disableZoom: false,
-            backgroundColor:
-                Colors.transparent,
-            loading: Loading.eager,
-            reveal: Reveal.auto,
-            interactionPrompt:
-                InteractionPrompt.none,
-            cameraOrbit:
-                '0deg 75deg 2.2m',
+          child: JarvisTalkingAvatar(
+            behavior: widget.behavior,
+            voice: widget.voice,
           ),
         ),
       ),
