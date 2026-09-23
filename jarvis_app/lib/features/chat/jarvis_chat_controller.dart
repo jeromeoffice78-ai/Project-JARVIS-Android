@@ -178,16 +178,30 @@ class JarvisChatController {
       return false;
     }
 
+    final bool informationalQuestion =
+        RegExp(
+      r'\b(how (do|can|should) i|how to|what is|why does|where do i)\b',
+    ).hasMatch(lower);
+
+    if (informationalQuestion) {
+      return false;
+    }
+
     final bool hasDocumentObject = RegExp(
-      r'\b(document|letter|invoice|receipt|estimate|proposal|report|contract|agreement|form|notice|memo|page|it|this)\b',
+      r'\b(document|letter|invoice|receipt|estimate|proposal|report|contract|agreement|form|notice|memo|page|it|this|that)\b',
     ).hasMatch(lower);
 
     final bool hasCreationIntent = RegExp(
-      r'\b(create|make|write|draft|prepare|generate|compose|print)\b',
+      r'\b(create|make|write|draft|prepare|generate|compose)\b',
+    ).hasMatch(lower);
+
+    final bool directPrintIntent = RegExp(
+      r'\bprint\s+(this|it|that|the|my|a|an)\b',
     ).hasMatch(lower);
 
     return hasDocumentObject &&
-        hasCreationIntent;
+        (hasCreationIntent ||
+            directPrintIntent);
   }
 
   String _buildAutoPrintQuery(
