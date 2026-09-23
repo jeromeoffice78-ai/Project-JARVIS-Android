@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../features/chat/jarvis_chat_controller.dart';
+import '../../features/autonomy/jarvis_autonomy_controller.dart';
 import '../../features/capabilities/jarvis_action_approval_service.dart';
 import '../../features/capabilities/jarvis_capability_service.dart';
 import '../../features/vision/jarvis_vision_service.dart';
@@ -94,6 +95,34 @@ final jarvisChatControllerProvider =
 
   return controller;
 });
+
+final jarvisAutonomyControllerProvider =
+    Provider<JarvisAutonomyController>((Ref ref) {
+  final JarvisAutonomyController controller =
+      JarvisAutonomyController(
+    chatController: ref.watch(
+      jarvisChatControllerProvider,
+    ),
+    apiService: ref.watch(
+      jarvisApiServiceProvider,
+    ),
+  );
+
+  ref.onDispose(() {
+    unawaited(controller.dispose());
+  });
+
+  return controller;
+});
+
+final jarvisAutonomyStateProvider =
+    StreamProvider<JarvisAutonomyState>(
+  (Ref ref) {
+    return ref
+        .watch(jarvisAutonomyControllerProvider)
+        .stateStream;
+  },
+);
 
 final jarvisVoiceServiceProvider =
     Provider<JarvisVoiceService>((Ref ref) {

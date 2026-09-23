@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/network/jarvis_ws_service.dart';
 import '../../core/network/providers.dart';
 import '../chat/jarvis_chat_screen.dart';
+import '../autonomy/jarvis_autonomy_screen.dart';
 import '../capabilities/jarvis_action_approval_service.dart';
 import '../devices/jarvis_devices_screen.dart';
 import '../memory/jarvis_memory_screen.dart';
@@ -198,6 +199,22 @@ class _JarvisShellState
             ),
           ],
         ),
+        actions: <Widget>[
+          IconButton(
+            tooltip: 'Autonomous Agent',
+            icon: const Icon(
+              Icons.auto_awesome,
+            ),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (BuildContext context) =>
+                      const JarvisAutonomyScreen(),
+                ),
+              );
+            },
+          ),
+        ],
       ),
       body: Column(
         children: <Widget>[
