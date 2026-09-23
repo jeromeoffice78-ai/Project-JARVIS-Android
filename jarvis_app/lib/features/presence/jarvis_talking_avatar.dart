@@ -29,6 +29,7 @@ class _JarvisTalkingAvatarState
   Timer? _fallbackTimer;
   bool _ready = false;
   bool _failed = false;
+  String _lastTranscript = '';
 
   @override
   void initState() {
@@ -99,7 +100,9 @@ class _JarvisTalkingAvatarState
             oldWidget.voice.activity !=
                 widget.voice.activity ||
             oldWidget.voice.mood !=
-                widget.voice.mood)) {
+                widget.voice.mood ||
+            oldWidget.voice.transcript !=
+                widget.voice.transcript)) {
       unawaited(_syncAvatarState());
     }
   }
@@ -134,6 +137,21 @@ class _JarvisTalkingAvatarState
       await _controller.runJavaScript(
         script,
       );
+
+      if (widget.voice.activity ==
+              JarvisConversationActivity.speaking &&
+          widget.voice.transcript !=
+              _lastTranscript) {
+        _lastTranscript =
+            widget.voice.transcript;
+        await _controller.runJavaScript(
+          'window.jarvisSpeechPulse();',
+        );
+      } else if (widget.voice.activity !=
+          JarvisConversationActivity.speaking) {
+        _lastTranscript =
+            widget.voice.transcript;
+      }
     } on Object {
       if (mounted) {
         setState(() {
@@ -315,6 +333,33 @@ async function startAvatar() {
   try {
     head.setView("full");
   } catch (_) {}
+
+  // A neutral mouth-shape animation used as a cadence pulse.
+  // Realtime transcript deltas from Flutter trigger this while
+  // Jarvis is speaking, so the mouth visibly articulates without
+  // creating a second TTS/audio stream.
+  head.animEmojis["jarvis-talk"] = {
+    dt: [70, 100, 90, 110],
+    rescale: [0, 1, 0.35, 0],
+    vs: {
+      jawOpen: [0.05, 0.36, 0.14, 0.05],
+      mouthOpen: [0.04, 0.28, 0.1, 0.04],
+      mouthStretchLeft: [0.04, 0.13, 0.07, 0.04],
+      mouthStretchRight: [0.04, 0.13, 0.07, 0.04]
+    }
+  };
+
+  window.jarvisSpeechPulse = function() {
+    if (!head) return;
+    try {
+      head.playGesture(
+        "jarvis-talk",
+        0.42,
+        false,
+        55
+      );
+    } catch (_) {}
+  };
 
   window.jarvisSetState =
     async function(mood, activity, walking, gesture) {
