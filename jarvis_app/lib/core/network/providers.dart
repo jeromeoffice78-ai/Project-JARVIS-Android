@@ -10,6 +10,7 @@ import '../../features/devices/jarvis_bluetooth_manager.dart';
 import '../../features/phone/jarvis_phone_service.dart';
 import '../../features/printer/jarvis_printer_service.dart';
 import '../../features/printer/jarvis_print_router.dart';
+import '../../features/realtime/jarvis_realtime_voice_service.dart';
 import '../../features/system_control/jarvis_system_control_service.dart';
 import '../../features/vision/jarvis_vision_service.dart';
 import '../../features/voice/jarvis_voice_controller.dart';
@@ -182,6 +183,35 @@ final jarvisAutonomyStateProvider =
   (Ref ref) {
     return ref
         .watch(jarvisAutonomyControllerProvider)
+        .stateStream;
+  },
+);
+
+final jarvisRealtimeVoiceServiceProvider =
+    Provider<JarvisRealtimeVoiceService>(
+  (Ref ref) {
+    final JarvisRealtimeVoiceService service =
+        JarvisRealtimeVoiceService(
+      apiService: ref.watch(
+        jarvisApiServiceProvider,
+      ),
+    );
+
+    ref.onDispose(() {
+      unawaited(service.dispose());
+    });
+
+    return service;
+  },
+);
+
+final jarvisRealtimeVoiceStateProvider =
+    StreamProvider<JarvisRealtimeVoiceState>(
+  (Ref ref) {
+    return ref
+        .watch(
+          jarvisRealtimeVoiceServiceProvider,
+        )
         .stateStream;
   },
 );
