@@ -169,6 +169,20 @@ class RealtimeClientSecretRequest(BaseModel):
     context: str = Field(default="", max_length=12_000)
 
 
+class MusicSearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=300)
+
+
+class MusicSearchResponse(BaseModel):
+    query: str
+    provider: str
+    video_id: str
+    title: str
+    author: str
+    thumbnail_url: str
+    watch_url: str
+
+
 def _build_ai_client() -> tuple[AsyncOpenAI | None, str, str]:
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
     if groq_key:
@@ -292,6 +306,61 @@ def _extract_web_sources(response: object) -> list[dict[str, str]]:
     return sources
 
 
+def _youtube_video_id(raw_url: str) -> str | None:
+    url = raw_url.strip()
+    patterns = (
+        r"[?&]v=([A-Za-z0-9_-]{11})",
+        r"youtu\.be/([A-Za-z0-9_-]{11})",
+        r"youtube\.com/embed/([A-Za-z0-9_-]{11})",
+        r"youtube\.com/shorts/([A-Za-z0-9_-]{11})",
+        r"music\.youtube\.com/watch\?v=([A-Za-z0-9_-]{11})",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
+
+
+async def _validate_youtube_video(
+    video_id: str,
+) -> dict[str, str] | None:
+    watch_url = f"https://www.youtube.com/watch?v={video_id}"
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            response = await client.get(
+                "https://www.youtube.com/oembed",
+                params={
+                    "url": watch_url,
+                    "format": "json",
+                },
+            )
+    except httpx.HTTPError:
+        return None
+
+    if response.status_code != 200:
+        return None
+
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+
+    title = str(payload.get("title", "") or "").strip()
+    author = str(payload.get("author_name", "") or "").strip()
+    thumbnail = str(payload.get("thumbnail_url", "") or "").strip()
+
+    if not title:
+        return None
+
+    return {
+        "title": title,
+        "author": author,
+        "thumbnail_url": thumbnail,
+        "watch_url": watch_url,
+    }
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     return HealthResponse(
@@ -348,6 +417,97 @@ async def auth_check(
     return AuthCheckResponse(
         authenticated=True,
         role=authenticated_role,
+    )
+
+
+@app.post("/v1/music/search", response_model=MusicSearchResponse)
+async def music_search(
+    payload: MusicSearchRequest,
+    authenticated_role: Annotated[str, Depends(authenticate_request)],
+) -> MusicSearchResponse:
+    client: AsyncOpenAI | None = getattr(app.state, "frontier_openai", None)
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Internet music lookup requires OPENAI_API_KEY on the server.",
+        )
+
+    query = payload.query.strip()
+    search_prompt = (
+        "Search the public web for the exact song requested below. "
+        "Prefer the official artist channel, the artist's Topic channel, "
+        "the official music video, or another clearly authorized YouTube upload. "
+        "Return several direct YouTube watch URLs if possible. Do not invent URLs. "
+        "Do not return lyric reuploads, reaction videos, covers, remixes, or unofficial "
+        "copies unless the user's request specifically asks for one.\n\n"
+        f"Song request: {query}"
+    )
+
+    try:
+        response = await client.responses.create(
+            model=FRONTIER_MODEL,
+            instructions=(
+                "You are JARVIS Music Resolver. Find verified, legal embedded playback "
+                "sources. Prefer official or authorized YouTube uploads. Never fabricate "
+                "a video ID or URL."
+            ),
+            input=search_prompt,
+            tools=[{"type": "web_search"}],
+            reasoning={"effort": "medium"},
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Internet music search failed: {type(exc).__name__}",
+        ) from exc
+
+    candidate_urls: list[str] = []
+    seen_urls: set[str] = set()
+
+    for source in _extract_web_sources(response):
+        url = source.get("url", "").strip()
+        if url and url not in seen_urls:
+            seen_urls.add(url)
+            candidate_urls.append(url)
+
+    output_text = (response.output_text or "").strip()
+    for match in re.findall(
+        r"https?://(?:www\.)?(?:music\.)?(?:youtube\.com/watch\?[^\s<>)\]]+|youtu\.be/[A-Za-z0-9_-]{11})",
+        output_text,
+    ):
+        url = match.rstrip(".,;:'\"")
+        if url not in seen_urls:
+            seen_urls.add(url)
+            candidate_urls.append(url)
+
+    validated: list[tuple[str, dict[str, str]]] = []
+    for url in candidate_urls[:12]:
+        video_id = _youtube_video_id(url)
+        if not video_id:
+            continue
+        metadata = await _validate_youtube_video(video_id)
+        if metadata is None:
+            continue
+        validated.append((video_id, metadata))
+        if len(validated) >= 5:
+            break
+
+    if not validated:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Jarvis could not find a verified playable YouTube result for that song.",
+        )
+
+    video_id, metadata = validated[0]
+
+    return MusicSearchResponse(
+        query=query,
+        provider="youtube",
+        video_id=video_id,
+        title=metadata["title"],
+        author=metadata["author"],
+        thumbnail_url=metadata["thumbnail_url"],
+        watch_url=metadata["watch_url"],
     )
 
 
