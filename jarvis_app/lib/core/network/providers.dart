@@ -188,6 +188,9 @@ final jarvisChatControllerProvider =
     capabilityService: ref.watch(
       jarvisCapabilityServiceProvider,
     ),
+    musicService: ref.watch(
+      jarvisMusicServiceProvider,
+    ),
   );
 
   ref.onDispose(() {
