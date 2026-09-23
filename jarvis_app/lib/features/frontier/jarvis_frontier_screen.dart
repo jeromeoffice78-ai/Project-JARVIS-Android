@@ -58,20 +58,15 @@ class _JarvisFrontierScreenState
       };
 
   Future<void> _pickFile() async {
-    final FilePickerResult? result =
-        await FilePicker.platform.pickFiles(
-      withData: true,
-      allowMultiple: false,
-    );
+    final PlatformFile? file =
+        await FilePicker.pickFile();
 
-    if (!mounted ||
-        result == null ||
-        result.files.isEmpty) {
+    if (!mounted || file == null) {
       return;
     }
 
     setState(() {
-      _selectedFile = result.files.single;
+      _selectedFile = file;
       _error = null;
     });
   }
@@ -114,16 +109,18 @@ class _JarvisFrontierScreenState
         final PlatformFile? selected =
             _selectedFile;
 
-        if (selected == null ||
-            selected.bytes == null) {
+        if (selected == null) {
           throw StateError(
             'Choose a file before running Document Intelligence.',
           );
         }
 
+        final Uint8List bytes =
+            await selected.readAsBytes();
+
         final JarvisFrontierResult result =
             await api.analyzeFile(
-          bytes: selected.bytes!,
+          bytes: bytes,
           filename: selected.name,
           prompt: prompt,
         );
