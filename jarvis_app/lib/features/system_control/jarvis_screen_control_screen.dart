@@ -54,6 +54,58 @@ class _JarvisScreenControlScreenState
     });
   }
 
+  Future<void> _analyzeCurrentScreen() async {
+    if (!_accessibilityEnabled || _loading) {
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _status = 'Capturing and analyzing the current screen...';
+    });
+
+    try {
+      final JarvisSystemControlService control =
+          ref.read(
+        jarvisSystemControlServiceProvider,
+      );
+      final String screenshot =
+          await control.captureScreenshot();
+
+      final result = await ref
+          .read(jarvisApiServiceProvider)
+          .frontierQuery(
+        prompt:
+            'Analyze this Android screen. Describe what is visible, identify important buttons or controls, and note any warnings or errors. Do not infer hidden information.',
+        mode: 'reason',
+        imageBase64: screenshot,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _status = result.answer;
+      });
+    } on Object catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _status =
+            'Screen analysis failed: $error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+    }
+  }
+
   Future<void> _globalAction(
     String action,
   ) async {
@@ -144,6 +196,19 @@ class _JarvisScreenControlScreenState
                 const SizedBox(
                   height: 12,
                 ),
+                FilledButton.icon(
+                  onPressed:
+                      _accessibilityEnabled && !_loading
+                          ? _analyzeCurrentScreen
+                          : null,
+                  icon: const Icon(
+                    Icons.visibility_outlined,
+                  ),
+                  label: const Text(
+                    'Analyze Current Screen',
+                  ),
+                ),
+                const SizedBox(height: 18),
                 Text(
                   'System actions',
                   style: Theme.of(context)
