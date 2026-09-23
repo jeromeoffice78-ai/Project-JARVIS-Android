@@ -18,7 +18,50 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-sol").strip() or "gpt-5.6-sol"
 FRONTIER_MODEL = os.getenv("JARVIS_FRONTIER_MODEL", "gpt-5.6-sol").strip() or "gpt-5.6-sol"
 IMAGE_MODEL = os.getenv("JARVIS_IMAGE_MODEL", "gpt-image-2.5-sunburst").strip() or "gpt-image-2.5-sunburst"
 REALTIME_MODEL = os.getenv("JARVIS_REALTIME_MODEL", "gpt-realtime-2.1").strip() or "gpt-realtime-2.1"
-REALTIME_VOICE = os.getenv("JARVIS_REALTIME_VOICE", "marin").strip() or "marin"
+REALTIME_VOICE = os.getenv("JARVIS_REALTIME_VOICE", "cedar").strip() or "cedar"
+REALTIME_ALLOWED_VOICES = {
+    "alloy",
+    "ash",
+    "ballad",
+    "coral",
+    "echo",
+    "sage",
+    "shimmer",
+    "verse",
+    "marin",
+    "cedar",
+}
+REALTIME_MOOD_INSTRUCTIONS = {
+    "calm": (
+        "Sound calm, grounded, patient, and reassuring. Use an even pace and "
+        "measured emphasis."
+    ),
+    "confident": (
+        "Sound masculine, cool, self-assured, concise, and capable. Use controlled "
+        "energy and crisp emphasis without sounding theatrical."
+    ),
+    "serious": (
+        "Sound serious, composed, firm, and low-key. Slow slightly for important "
+        "details and avoid playful delivery."
+    ),
+    "focused": (
+        "Sound analytical, alert, efficient, and precise. Keep a steady pace and "
+        "stress key facts and action steps."
+    ),
+    "energetic": (
+        "Sound energized, upbeat, decisive, and action-oriented while remaining "
+        "professional."
+    ),
+    "warm": (
+        "Sound warm, friendly, supportive, and conversational. Keep the delivery "
+        "natural rather than sentimental."
+    ),
+    "intense": (
+        "Sound urgent, forceful, controlled, and highly focused. Never shout; use "
+        "stronger emphasis and shorter phrasing."
+    ),
+}
+
 GATEWAY_MODEL = os.getenv("AI_GATEWAY_MODEL", f"openai/{OPENAI_MODEL}").strip() or f"openai/{OPENAI_MODEL}"
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip() or "llama-3.3-70b-versatile"
 CHAIRMAN_TOKEN = os.getenv("JARVIS_CHAIRMAN_TOKEN", "").strip()
@@ -114,6 +157,12 @@ class FrontierImageRequest(BaseModel):
 class FrontierImageResponse(BaseModel):
     image_base64: str
     model: str
+
+
+class RealtimeClientSecretRequest(BaseModel):
+    voice: str = Field(default="cedar", min_length=1, max_length=32)
+    mood: str = Field(default="confident", min_length=1, max_length=32)
+    context: str = Field(default="", max_length=12_000)
 
 
 def _build_ai_client() -> tuple[AsyncOpenAI | None, str, str]:
@@ -300,6 +349,7 @@ async def auth_check(
 
 @app.post("/v1/realtime/client-secret")
 async def realtime_client_secret(
+    payload: RealtimeClientSecretRequest,
     authenticated_role: Annotated[str, Depends(authenticate_request)],
 ) -> dict[str, object]:
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
@@ -313,18 +363,45 @@ async def realtime_client_secret(
         f"jarvis:{authenticated_role}:primary".encode("utf-8")
     ).hexdigest()
 
+    requested_voice = payload.voice.strip().lower()
+    voice = (
+        requested_voice
+        if requested_voice in REALTIME_ALLOWED_VOICES
+        else REALTIME_VOICE
+    )
+    mood = payload.mood.strip().lower()
+    mood_instruction = REALTIME_MOOD_INSTRUCTIONS.get(
+        mood,
+        REALTIME_MOOD_INSTRUCTIONS["confident"],
+    )
+    continuity = payload.context.strip()
+
     session_config = {
         "session": {
             "type": "realtime",
             "model": REALTIME_MODEL,
             "instructions": (
-                "You are JARVIS, a concise, capable personal AI assistant. "
-                "Speak naturally, remember that device/tool actions must be verified, "
-                "and never claim an external action succeeded without confirmation."
+                "You are JARVIS, a male personal AI assistant with a cool, capable "
+                "presence. Speak naturally and stay concise unless detail is useful. "
+                + mood_instruction
+                + " Adapt emotion to the conversation while staying authentic and "
+                "controlled. Remember that device/tool actions must be verified, and "
+                "never claim an external action succeeded without confirmation."
+                + (
+                    " Recent continuity from the prior voice session: " + continuity
+                    if continuity
+                    else ""
+                )
             ),
             "audio": {
+                "input": {
+                    "transcription": {
+                        "model": "gpt-live-transcribe",
+                        "delay": "low",
+                    },
+                },
                 "output": {
-                    "voice": REALTIME_VOICE,
+                    "voice": voice,
                 },
             },
         }
