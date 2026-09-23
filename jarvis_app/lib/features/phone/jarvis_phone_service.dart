@@ -39,6 +39,45 @@ class JarvisCallMessage {
   }
 }
 
+class JarvisActiveCall {
+  const JarvisActiveCall({
+    required this.phoneNumber,
+    required this.state,
+    required this.isIncoming,
+    required this.isMuted,
+    required this.audioRoute,
+  });
+
+  final String phoneNumber;
+  final String state;
+  final bool isIncoming;
+  final bool isMuted;
+  final String audioRoute;
+
+  bool get isRinging => state == 'ringing';
+  bool get isActive => state == 'active';
+
+  factory JarvisActiveCall.fromMap(
+    Map<dynamic, dynamic> raw,
+  ) {
+    return JarvisActiveCall(
+      phoneNumber:
+          raw['phoneNumber']?.toString() ??
+              'Unknown caller',
+      state:
+          raw['state']?.toString() ??
+              'unknown',
+      isIncoming:
+          raw['isIncoming'] == true,
+      isMuted:
+          raw['isMuted'] == true,
+      audioRoute:
+          raw['audioRoute']?.toString() ??
+              'unknown',
+    );
+  }
+}
+
 class JarvisPhoneService {
   static const MethodChannel _channel =
       MethodChannel('jarvis.phone');
@@ -140,6 +179,78 @@ class JarvisPhoneService {
           .toList(growable: false);
     } on Object {
       return const <JarvisCallMessage>[];
+    }
+  }
+
+  Future<JarvisActiveCall?> getActiveCall() async {
+    if (!isSupported) return null;
+
+    try {
+      final Map<dynamic, dynamic>? raw =
+          await _channel.invokeMethod<
+              Map<dynamic, dynamic>>(
+        'getActiveCall',
+      );
+      if (raw == null || raw.isEmpty) {
+        return null;
+      }
+      return JarvisActiveCall.fromMap(raw);
+    } on PlatformException {
+      return null;
+    }
+  }
+
+  Future<bool> answerActiveCall() async {
+    return _invokeCallControl('answerActiveCall');
+  }
+
+  Future<bool> rejectActiveCall() async {
+    return _invokeCallControl('rejectActiveCall');
+  }
+
+  Future<bool> disconnectActiveCall() async {
+    return _invokeCallControl(
+      'disconnectActiveCall',
+    );
+  }
+
+  Future<bool> setMuted(bool muted) async {
+    if (!isSupported) return false;
+    try {
+      return await _channel.invokeMethod<bool>(
+            'setMuted',
+            <String, dynamic>{'muted': muted},
+          ) ??
+          false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  Future<bool> setSpeaker(bool enabled) async {
+    if (!isSupported) return false;
+    try {
+      return await _channel.invokeMethod<bool>(
+            'setSpeaker',
+            <String, dynamic>{'enabled': enabled},
+          ) ??
+          false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  Future<bool> _invokeCallControl(
+    String method,
+  ) async {
+    if (!isSupported) return false;
+    try {
+      return await _channel.invokeMethod<bool>(
+            method,
+          ) ??
+          false;
+    } on PlatformException {
+      return false;
     }
   }
 
