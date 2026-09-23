@@ -597,7 +597,10 @@ class JarvisRealtimeVoiceService {
 
         if (direct != null) {
           measuredLevel =
-              direct.toDouble().clamp(0.0, 1.0);
+              direct
+                  .toDouble()
+                  .clamp(0.0, 1.0)
+                  .toDouble();
           foundAudioReport = true;
           break;
         }
@@ -636,9 +639,12 @@ class JarvisRealtimeVoiceService {
 
           if (deltaEnergy >= 0 &&
               deltaDuration > 0) {
-            measuredLevel = math.sqrt(
-              deltaEnergy / deltaDuration,
-            ).clamp(0.0, 1.0);
+            measuredLevel = math
+                .sqrt(
+                  deltaEnergy / deltaDuration,
+                )
+                .clamp(0.0, 1.0)
+                .toDouble();
           }
         }
       }
@@ -668,7 +674,8 @@ class JarvisRealtimeVoiceService {
         _state.copyWith(
           remoteAudioLevel:
               _smoothedRemoteAudioLevel
-                  .clamp(0.0, 1.0),
+                  .clamp(0.0, 1.0)
+                  .toDouble(),
           remoteAudioLevelAvailable: true,
         ),
       );
