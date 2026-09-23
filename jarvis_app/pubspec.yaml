@@ -29,6 +29,7 @@ dependencies:
   file_picker: ^13.1.0
   flutter_webrtc: ^1.6.2+hotfix.3
   model_viewer_plus: ^1.10.0
+  webview_flutter: ^4.14.1
 
 dev_dependencies:
   flutter_test:
@@ -40,3 +41,11 @@ flutter:
   assets:
     - assets/models/CesiumMan.glb
     - assets/models/CesiumMan-LICENSE.md
+    - assets/digital_human/
+    - assets/digital_human/vendor/three/
+    - assets/digital_human/vendor/three/addons/controls/
+    - assets/digital_human/vendor/three/addons/loaders/
+    - assets/digital_human/vendor/three/addons/libs/
+    - assets/digital_human/vendor/three/addons/libs/basis/
+    - assets/digital_human/vendor/three/addons/environments/
+    - assets/digital_human/vendor/three/addons/utils/
