@@ -388,3 +388,79 @@ def test_realtime_client_secret_proxies_ephemeral_credential(monkeypatch):
         assert response.status_code == 200
         payload = response.json()
         assert payload["value"] == "ek_test_realtime"
+
+
+class _FakeMusicResponses:
+    def __init__(self):
+        self.calls = []
+
+    async def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(
+            output_text="https://www.youtube.com/watch?v=M7lc1UVf-VE",
+            output=[],
+        )
+
+
+class _FakeMusicOpenAI:
+    def __init__(self):
+        self.responses = _FakeMusicResponses()
+
+    async def close(self):
+        return None
+
+
+def test_music_search_returns_only_validated_youtube_result(monkeypatch):
+    async def fake_validate(video_id):
+        assert video_id == "M7lc1UVf-VE"
+        return {
+            "title": "Verified Song",
+            "author": "Official Artist",
+            "thumbnail_url": "https://example.com/thumb.jpg",
+            "watch_url": "https://www.youtube.com/watch?v=M7lc1UVf-VE",
+        }
+
+    monkeypatch.setattr(
+        api,
+        "_validate_youtube_video",
+        fake_validate,
+    )
+
+    with TestClient(api.app) as client:
+        fake = _FakeMusicOpenAI()
+        api.app.state.frontier_openai = fake
+
+        response = client.post(
+            "/v1/music/search",
+            headers={"Authorization": "Bearer test-client-token"},
+            json={"query": "Verified Song by Official Artist"},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["provider"] == "youtube"
+        assert payload["video_id"] == "M7lc1UVf-VE"
+        assert payload["title"] == "Verified Song"
+        assert payload["author"] == "Official Artist"
+        assert fake.responses.calls[-1]["tools"] == [{"type": "web_search"}]
+
+
+def test_youtube_video_id_parses_supported_url_shapes():
+    assert (
+        api._youtube_video_id(
+            "https://www.youtube.com/watch?v=M7lc1UVf-VE"
+        )
+        == "M7lc1UVf-VE"
+    )
+    assert (
+        api._youtube_video_id(
+            "https://youtu.be/M7lc1UVf-VE"
+        )
+        == "M7lc1UVf-VE"
+    )
+    assert (
+        api._youtube_video_id(
+            "https://music.youtube.com/watch?v=M7lc1UVf-VE"
+        )
+        == "M7lc1UVf-VE"
+    )
