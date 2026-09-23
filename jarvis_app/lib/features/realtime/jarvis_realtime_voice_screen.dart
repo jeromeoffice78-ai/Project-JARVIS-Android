@@ -21,6 +21,30 @@ class _JarvisRealtimeVoiceScreenState
         JarvisRealtimeVoiceScreen> {
   bool _muted = false;
 
+  String _activityLabel(
+    JarvisRealtimeVoiceState state,
+  ) {
+    return switch (state.activity) {
+      JarvisConversationActivity.idle =>
+        'Standing by',
+      JarvisConversationActivity.listening =>
+        'Listening',
+      JarvisConversationActivity.thinking =>
+        'Thinking',
+      JarvisConversationActivity.speaking =>
+        'Speaking',
+    };
+  }
+
+  String _titleCase(String value) {
+    if (value.isEmpty) {
+      return value;
+    }
+
+    return value[0].toUpperCase() +
+        value.substring(1);
+  }
+
   @override
   Widget build(BuildContext context) {
     final JarvisRealtimeVoiceService service =
@@ -98,7 +122,7 @@ class _JarvisRealtimeVoiceScreenState
                         'Connecting to Jarvis...',
                       JarvisRealtimeVoiceStatus
                             .connected =>
-                        'Live conversation active',
+                        _activityLabel(state),
                       JarvisRealtimeVoiceStatus
                             .stopping =>
                         'Ending session...',
@@ -111,11 +135,68 @@ class _JarvisRealtimeVoiceScreenState
                         .titleLarge,
                   ),
                   const SizedBox(height: 8),
-                  const Text(
-                    'Direct speech-to-speech conversation with interruption support and Bluetooth audio preference.',
+                  Text(
+                    state.speakerName.isEmpty
+                        ? 'Live speech-to-speech conversation with automatic mood, voice, and companion behavior.'
+                        : 'Talking with ${state.speakerName}. Jarvis is carrying that person\'s People Memory into the conversation.',
                     textAlign: TextAlign.center,
                   ),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 14),
+                  Wrap(
+                    alignment:
+                        WrapAlignment.center,
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: <Widget>[
+                      Chip(
+                        avatar: const Icon(
+                          Icons.record_voice_over_outlined,
+                          size: 18,
+                        ),
+                        label: Text(
+                          'Voice: ${_titleCase(state.currentVoice)}',
+                        ),
+                      ),
+                      Chip(
+                        avatar: const Icon(
+                          Icons.mood,
+                          size: 18,
+                        ),
+                        label: Text(
+                          state.companionMode
+                              ? 'Mood: Companion'
+                              : 'Mood: ${_titleCase(state.mood)}',
+                        ),
+                      ),
+                      if (state.speakerName.isNotEmpty)
+                        Chip(
+                          avatar: const Icon(
+                            Icons.person_outline,
+                            size: 18,
+                          ),
+                          label: Text(
+                            state.speakerName,
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    value: state.autoDirector,
+                    onChanged: (bool enabled) {
+                      service.setAutoDirector(
+                        enabled,
+                      );
+                    },
+                    title: const Text(
+                      'Autonomous director',
+                    ),
+                    subtitle: const Text(
+                      'Jarvis chooses voice and mood from the conversation automatically.',
+                    ),
+                  ),
+                  const SizedBox(height: 6),
                   Wrap(
                     alignment:
                         WrapAlignment.center,
@@ -125,13 +206,11 @@ class _JarvisRealtimeVoiceScreenState
                       FilledButton.icon(
                         onPressed:
                             busy ||
-                                    state
-                                        .isConnected
+                                    state.isConnected
                                 ? null
                                 : service.start,
                         icon: const Icon(
-                          Icons
-                              .play_arrow,
+                          Icons.play_arrow,
                         ),
                         label: const Text(
                           'Start Live Voice',
@@ -157,8 +236,7 @@ class _JarvisRealtimeVoiceScreenState
                                 : null,
                         icon: Icon(
                           _muted
-                              ? Icons
-                                  .mic_off
+                              ? Icons.mic_off
                               : Icons.mic,
                         ),
                         label: Text(
@@ -183,23 +261,100 @@ class _JarvisRealtimeVoiceScreenState
                       ),
                     ],
                   ),
+                  const SizedBox(height: 14),
+                  Wrap(
+                    alignment:
+                        WrapAlignment.center,
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: <Widget>[
+                      OutlinedButton.icon(
+                        onPressed:
+                            state.isConnected
+                                ? () => service.setMood(
+                                      'companion',
+                                      companionMode: true,
+                                    )
+                                : null,
+                        icon: const Icon(
+                          Icons.favorite_outline,
+                        ),
+                        label: const Text(
+                          'Companion Mode',
+                        ),
+                      ),
+                      PopupMenuButton<String>(
+                        enabled:
+                            state.isConnected,
+                        tooltip:
+                            'Choose Jarvis voice',
+                        onSelected:
+                            service.setVoice,
+                        itemBuilder:
+                            (BuildContext context) =>
+                                JarvisRealtimeVoiceService
+                                    .supportedVoices
+                                    .map(
+                                      (String voice) =>
+                                          PopupMenuItem<String>(
+                                        value: voice,
+                                        child: Text(
+                                          _titleCase(
+                                            voice,
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                    .toList(
+                                      growable: false,
+                                    ),
+                        child: const Chip(
+                          avatar: Icon(
+                            Icons.tune,
+                            size: 18,
+                          ),
+                          label: Text(
+                            'Voice options',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
           ),
           const SizedBox(height: 16),
           Text(
-            'Live transcript',
+            'Conversation',
             style: Theme.of(context)
                 .textTheme
                 .titleMedium,
           ),
           const SizedBox(height: 8),
+          if (state.userTranscript.isNotEmpty)
+            Card(
+              child: ListTile(
+                leading: const Icon(
+                  Icons.person_outline,
+                ),
+                title: Text(
+                  state.speakerName.isEmpty
+                      ? 'You'
+                      : state.speakerName,
+                ),
+                subtitle: SelectableText(
+                  state.userTranscript,
+                ),
+              ),
+            ),
           Card(
-            child: Padding(
-              padding:
-                  const EdgeInsets.all(16),
-              child: SelectableText(
+            child: ListTile(
+              leading: const Icon(
+                Icons.smart_toy_outlined,
+              ),
+              title: const Text('Jarvis'),
+              subtitle: SelectableText(
                 state.transcript.isEmpty
                     ? 'Jarvis transcript will appear here while he speaks.'
                     : state.transcript,
