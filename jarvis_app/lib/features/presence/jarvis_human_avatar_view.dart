@@ -116,7 +116,11 @@ class _JarvisHumanAvatarViewState
         oldWidget.voiceState.isConnected !=
             widget.voiceState.isConnected ||
         oldWidget.voiceState.transcript !=
-            widget.voiceState.transcript) {
+            widget.voiceState.transcript ||
+        oldWidget.voiceState.remoteAudioLevel !=
+            widget.voiceState.remoteAudioLevel ||
+        oldWidget.voiceState.remoteAudioLevelAvailable !=
+            widget.voiceState.remoteAudioLevelAvailable) {
       _pushState();
     }
   }
@@ -138,6 +142,10 @@ class _JarvisHumanAvatarViewState
           widget.voiceState.companionMode,
       'transcript':
           widget.voiceState.transcript,
+      'audioLevel':
+          widget.voiceState.remoteAudioLevel,
+      'audioLevelAvailable':
+          widget.voiceState.remoteAudioLevelAvailable,
     };
 
     await _controller.runJavaScript(

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:http/http.dart' as http;
@@ -35,6 +36,8 @@ final class JarvisRealtimeVoiceState {
     required this.autoDirector,
     required this.companionMode,
     required this.speakerName,
+    required this.remoteAudioLevel,
+    required this.remoteAudioLevelAvailable,
     this.errorMessage,
   });
 
@@ -48,6 +51,8 @@ final class JarvisRealtimeVoiceState {
         autoDirector = true,
         companionMode = false,
         speakerName = '',
+        remoteAudioLevel = 0,
+        remoteAudioLevelAvailable = false,
         errorMessage = null;
 
   final JarvisRealtimeVoiceStatus status;
@@ -59,6 +64,8 @@ final class JarvisRealtimeVoiceState {
   final bool autoDirector;
   final bool companionMode;
   final String speakerName;
+  final double remoteAudioLevel;
+  final bool remoteAudioLevelAvailable;
   final String? errorMessage;
 
   bool get isConnected =>
@@ -74,6 +81,8 @@ final class JarvisRealtimeVoiceState {
     bool? autoDirector,
     bool? companionMode,
     String? speakerName,
+    double? remoteAudioLevel,
+    bool? remoteAudioLevelAvailable,
     String? errorMessage,
     bool clearError = false,
   }) {
@@ -92,6 +101,11 @@ final class JarvisRealtimeVoiceState {
           companionMode ?? this.companionMode,
       speakerName:
           speakerName ?? this.speakerName,
+      remoteAudioLevel:
+          remoteAudioLevel ?? this.remoteAudioLevel,
+      remoteAudioLevelAvailable:
+          remoteAudioLevelAvailable ??
+              this.remoteAudioLevelAvailable,
       errorMessage: clearError
           ? null
           : errorMessage ?? this.errorMessage,
@@ -164,6 +178,10 @@ class JarvisRealtimeVoiceService {
   RTCPeerConnection? _peerConnection;
   RTCDataChannel? _dataChannel;
   MediaStream? _localStream;
+  Timer? _remoteAudioLevelTimer;
+  double? _lastInboundAudioEnergy;
+  double? _lastInboundAudioDuration;
+  double _smoothedRemoteAudioLevel = 0;
 
   final List<String> _conversationTurns =
       <String>[];
@@ -512,6 +530,7 @@ class JarvisRealtimeVoiceService {
       );
 
       _sendMoodUpdate();
+      _startRemoteAudioLevelMeter();
     } on Object catch (error) {
       await _closeTransport();
 
@@ -523,6 +542,146 @@ class JarvisRealtimeVoiceService {
           errorMessage: error.toString(),
         ),
       );
+    }
+  }
+
+  void _startRemoteAudioLevelMeter() {
+    _remoteAudioLevelTimer?.cancel();
+    _lastInboundAudioEnergy = null;
+    _lastInboundAudioDuration = null;
+    _smoothedRemoteAudioLevel = 0;
+
+    _remoteAudioLevelTimer = Timer.periodic(
+      const Duration(milliseconds: 120),
+      (_) => unawaited(
+        _sampleRemoteAudioLevel(),
+      ),
+    );
+  }
+
+  Future<void> _sampleRemoteAudioLevel() async {
+    final RTCPeerConnection? pc =
+        _peerConnection;
+
+    if (_disposed || pc == null) {
+      return;
+    }
+
+    try {
+      final List<StatsReport> reports =
+          await pc.getStats();
+
+      double? measuredLevel;
+      bool foundAudioReport = false;
+
+      for (final StatsReport report in reports) {
+        if (report.type != 'inbound-rtp') {
+          continue;
+        }
+
+        final Map<dynamic, dynamic> values =
+            report.values;
+
+        final String kind =
+            values['kind']?.toString() ??
+                values['mediaType']?.toString() ??
+                '';
+
+        if (kind.isNotEmpty &&
+            kind.toLowerCase() != 'audio') {
+          continue;
+        }
+
+        final num? direct =
+            values['audioLevel'] as num?;
+
+        if (direct != null) {
+          measuredLevel =
+              direct
+                  .toDouble()
+                  .clamp(0.0, 1.0)
+                  .toDouble();
+          foundAudioReport = true;
+          break;
+        }
+
+        final num? energyRaw =
+            values['totalAudioEnergy'] as num?;
+        final num? durationRaw =
+            values['totalSamplesDuration'] as num?;
+
+        if (energyRaw == null ||
+            durationRaw == null) {
+          continue;
+        }
+
+        foundAudioReport = true;
+
+        final double energy =
+            energyRaw.toDouble();
+        final double duration =
+            durationRaw.toDouble();
+
+        final double? previousEnergy =
+            _lastInboundAudioEnergy;
+        final double? previousDuration =
+            _lastInboundAudioDuration;
+
+        _lastInboundAudioEnergy = energy;
+        _lastInboundAudioDuration = duration;
+
+        if (previousEnergy != null &&
+            previousDuration != null) {
+          final double deltaEnergy =
+              energy - previousEnergy;
+          final double deltaDuration =
+              duration - previousDuration;
+
+          if (deltaEnergy >= 0 &&
+              deltaDuration > 0) {
+            measuredLevel = math
+                .sqrt(
+                  deltaEnergy / deltaDuration,
+                )
+                .clamp(0.0, 1.0)
+                .toDouble();
+          }
+        }
+      }
+
+      if (!foundAudioReport) {
+        return;
+      }
+
+      final double target =
+          _state.activity ==
+                  JarvisConversationActivity.speaking
+              ? (measuredLevel ?? 0)
+              : 0;
+
+      _smoothedRemoteAudioLevel =
+          (_smoothedRemoteAudioLevel * 0.55) +
+              (target * 0.45);
+
+      if ((_smoothedRemoteAudioLevel -
+                  _state.remoteAudioLevel)
+              .abs() <
+          0.008) {
+        return;
+      }
+
+      _emit(
+        _state.copyWith(
+          remoteAudioLevel:
+              _smoothedRemoteAudioLevel
+                  .clamp(0.0, 1.0)
+                  .toDouble(),
+          remoteAudioLevelAvailable: true,
+        ),
+      );
+    } on Object {
+      // Some WebRTC builds omit audio-level stats.
+      // The avatar keeps its timed lip-sync fallback.
     }
   }
 
@@ -1272,6 +1431,22 @@ class JarvisRealtimeVoiceService {
   }
 
   Future<void> _closeTransport() async {
+    _remoteAudioLevelTimer?.cancel();
+    _remoteAudioLevelTimer = null;
+    _lastInboundAudioEnergy = null;
+    _lastInboundAudioDuration = null;
+    _smoothedRemoteAudioLevel = 0;
+
+    if (_state.remoteAudioLevel != 0 ||
+        _state.remoteAudioLevelAvailable) {
+      _emit(
+        _state.copyWith(
+          remoteAudioLevel: 0,
+          remoteAudioLevelAvailable: false,
+        ),
+      );
+    }
+
     final RTCDataChannel? channel =
         _dataChannel;
     _dataChannel = null;

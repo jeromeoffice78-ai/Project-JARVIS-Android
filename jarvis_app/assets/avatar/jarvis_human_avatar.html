@@ -76,7 +76,9 @@ const state={
   mood:'confident',
   connected:false,
   companion:false,
-  transcript:''
+  transcript:'',
+  audioLevel:0,
+  audioLevelAvailable:false
 };
 
 function asset(rel){
@@ -209,11 +211,38 @@ function expression(t){
 
   if(state.activity==='speaking'){
     speakingPhase += .17;
-    const open=.16 + Math.abs(Math.sin(speakingPhase*1.9))*.42;
+
+    const fallbackOpen =
+      .16 + Math.abs(Math.sin(speakingPhase*1.9))*.42;
+
+    const rawLevel = Number.isFinite(state.audioLevel)
+      ? THREE.MathUtils.clamp(state.audioLevel,0,1)
+      : 0;
+
+    const audioOpen = state.audioLevelAvailable
+      ? THREE.MathUtils.clamp(
+          Math.pow(rawLevel, .55) * 1.75,
+          0,
+          .88
+        )
+      : fallbackOpen;
+
+    const open = state.audioLevelAvailable
+      ? audioOpen
+      : fallbackOpen;
+
     morph('Mouth_Large_Opened',open);
-    morph('Jaw_Lower',open*.5);
-    const slot=Math.floor((t/120)%5);
-    morph(['aa_02','ow_08','p_b_m_21','f_v_18','ey_eh_uh_04'][slot], .22+.18*Math.abs(Math.sin(speakingPhase)));
+    morph('Jaw_Lower',open*.56);
+
+    const slot=Math.floor((t/105)%5);
+    const visemeStrength = state.audioLevelAvailable
+      ? THREE.MathUtils.clamp(open*.62, .04, .52)
+      : .22+.18*Math.abs(Math.sin(speakingPhase));
+
+    morph(
+      ['aa_02','ow_08','p_b_m_21','f_v_18','ey_eh_uh_04'][slot],
+      visemeStrength
+    );
   }
 }
 function blinkValue(now){
