@@ -731,10 +731,11 @@ class JarvisCapabilityService {
             '';
 
     final int copies =
-        (parameters['copies'] as num?)
-                ?.toInt()
-                .clamp(1, 99) ??
-            1;
+        ((parameters['copies'] as num?)
+                    ?.toInt()
+                    .clamp(1, 99) ??
+                1)
+            .toInt();
 
     if (body.isEmpty) {
       return const JarvisCapabilityResult(
