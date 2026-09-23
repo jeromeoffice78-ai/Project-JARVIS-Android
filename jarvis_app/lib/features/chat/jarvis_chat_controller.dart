@@ -83,6 +83,9 @@ class JarvisChatController {
   final Map<String, ToolResultEvent> _completedToolCalls =
       <String, ToolResultEvent>{};
 
+  final Set<String> _autoPrintRequestIds =
+      <String>{};
+
   StreamSubscription<Map<String, dynamic>>? _messageSubscription;
 
   JarvisChatState _state = const JarvisChatState.initial();
@@ -113,8 +116,21 @@ class JarvisChatController {
       cancelCurrentResponse();
     }
 
+    final bool autoPrint =
+        _shouldAutoPrint(normalized);
+
+    final String effectiveQuery = autoPrint
+        ? _buildAutoPrintQuery(normalized)
+        : normalized;
+
     final UserTextQueryEvent event =
-        UserTextQueryEvent(text: normalized);
+        UserTextQueryEvent(text: effectiveQuery);
+
+    if (autoPrint) {
+      _autoPrintRequestIds.add(
+        event.requestId,
+      );
+    }
 
     _activeRequestId = event.requestId;
     _currentResponseBuffer = '';
@@ -148,6 +164,138 @@ class JarvisChatController {
 
       return null;
     }
+  }
+
+  bool _shouldAutoPrint(String query) {
+    final String lower =
+        query.toLowerCase();
+
+    if (!RegExp(r'\bprint\b')
+        .hasMatch(lower)) {
+      return false;
+    }
+
+    final bool hasDocumentObject = RegExp(
+      r'\b(document|letter|invoice|receipt|estimate|proposal|report|contract|agreement|form|notice|memo|page|it|this)\b',
+    ).hasMatch(lower);
+
+    final bool hasCreationIntent = RegExp(
+      r'\b(create|make|write|draft|prepare|generate|compose|print)\b',
+    ).hasMatch(lower);
+
+    return hasDocumentObject &&
+        hasCreationIntent;
+  }
+
+  String _buildAutoPrintQuery(
+    String original,
+  ) {
+    return '''
+${original}
+
+JARVIS PRINT EXECUTION INSTRUCTION:
+The user explicitly asked for a document to be printed. Create the finished document now. Output only the finished printable artifact with no explanation before or after it. Put a first line exactly in this format:
+PRINT_TITLE: <short document title>
+
+Then add one blank line and the complete document body. Do not include markdown code fences.
+''';
+  }
+
+  Future<void>
+      _routeCompletedDocumentForPrinting({
+    required String requestId,
+    required String rawResponse,
+  }) async {
+    final String normalized =
+        rawResponse.trim();
+
+    if (normalized.isEmpty) {
+      return;
+    }
+
+    String title = 'Jarvis Document';
+    String body = normalized;
+
+    final List<String> lines =
+        normalized.split('\n');
+
+    if (lines.isNotEmpty &&
+        lines.first
+            .trimLeft()
+            .startsWith('PRINT_TITLE:')) {
+      final String parsedTitle =
+          lines.first
+              .substring(
+                lines.first.indexOf(':') + 1,
+              )
+              .trim();
+
+      if (parsedTitle.isNotEmpty) {
+        title = parsedTitle;
+      }
+
+      body = lines
+          .skip(1)
+          .join('\n')
+          .trim();
+    }
+
+    if (body.isEmpty) {
+      return;
+    }
+
+    final JarvisCapabilityResult result =
+        await _capabilityService.execute(
+      requestId: requestId,
+      callId: 'auto-print-${requestId}',
+      action:
+          'create_and_print_document',
+      parameters: <String, dynamic>{
+        'title': title,
+        'document_text': body,
+        'copies': 1,
+      },
+    );
+
+    if (_disposed) {
+      return;
+    }
+
+    final String statusText;
+    if (result.ok) {
+      final String target =
+          result.result['target_device_name']
+                  ?.toString() ??
+              'printer host';
+      final String printer =
+          result.result['printer_name']
+                  ?.toString() ??
+              'printer';
+
+      statusText =
+          '\n\nJarvis print routing: sent to ${target} → ${printer}.';
+    } else {
+      statusText =
+          '\n\nJarvis print routing failed: ${result.error ?? 'No printer-ready Android device is available.'}';
+    }
+
+    _currentResponseBuffer =
+        body + statusText;
+    _emitResponseBuffer();
+
+    _emitState(
+      JarvisChatState(
+        status: result.ok
+            ? JarvisChatStatus.completed
+            : JarvisChatStatus.error,
+        responseText:
+            _currentResponseBuffer,
+        requestId: requestId,
+        errorMessage:
+            result.ok ? null : result.error,
+        retryable: !result.ok,
+      ),
+    );
   }
 
   void cancelCurrentResponse() {
@@ -248,6 +396,11 @@ class JarvisChatController {
     _expectedChunkIndex++;
 
     if (event.isFinal) {
+      final bool autoPrint =
+          _autoPrintRequestIds.remove(
+        event.requestId,
+      );
+
       _emitState(
         JarvisChatState(
           status: JarvisChatStatus.completed,
@@ -255,6 +408,17 @@ class JarvisChatController {
           requestId: event.requestId,
         ),
       );
+
+      if (autoPrint) {
+        unawaited(
+          _routeCompletedDocumentForPrinting(
+            requestId: event.requestId,
+            rawResponse:
+                _currentResponseBuffer,
+          ),
+        );
+      }
+
       _activeRequestId = null;
       _expectedChunkIndex = 0;
       return;
@@ -531,6 +695,7 @@ class JarvisChatController {
     _messageSubscription = null;
 
     _completedToolCalls.clear();
+    _autoPrintRequestIds.clear();
 
     await Future.wait<void>(<Future<void>>[
       _stateController.close(),
