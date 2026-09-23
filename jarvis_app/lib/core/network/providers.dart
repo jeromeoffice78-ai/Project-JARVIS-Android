@@ -94,6 +94,12 @@ final jarvisCapabilityServiceProvider =
     voiceService: ref.watch(
       jarvisVoiceServiceProvider,
     ),
+    phoneService: ref.watch(
+      jarvisPhoneServiceProvider,
+    ),
+    systemControlService: ref.watch(
+      jarvisSystemControlServiceProvider,
+    ),
   );
 
   ref.onDispose(service.dispose);
