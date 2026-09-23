@@ -1,9 +1,16 @@
 import 'dart:async';
 
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../chat/jarvis_chat_controller.dart';
 import 'jarvis_voice_service.dart';
 
 class JarvisVoiceController {
+  static const String _wakePassKey =
+      'jarvis.voice.wake_pass';
+  static const String defaultWakePass =
+      'Hey Jarvis';
+
   JarvisVoiceController({
     required JarvisVoiceService voiceService,
     required JarvisChatController chatController,
@@ -30,6 +37,8 @@ class JarvisVoiceController {
 
   final JarvisVoiceService _voiceService;
   final JarvisChatController _chatController;
+  final SharedPreferencesAsync _preferences =
+      SharedPreferencesAsync();
 
   final StreamController<bool> _handsFreeController =
       StreamController<bool>.broadcast();
@@ -40,6 +49,9 @@ class JarvisVoiceController {
   final StreamController<bool> _wakeWordController =
       StreamController<bool>.broadcast();
 
+  final StreamController<String> _wakePassController =
+      StreamController<String>.broadcast();
+
   StreamSubscription<String>?
       _finalTranscriptSubscription;
 
@@ -49,6 +61,7 @@ class JarvisVoiceController {
   bool _handsFree = false;
   bool _spokenReplies = true;
   bool _wakeWordMode = false;
+  String _wakePass = defaultWakePass;
   bool _disposed = false;
 
   String? _voiceRequestId;
@@ -59,6 +72,7 @@ class JarvisVoiceController {
   bool get handsFree => _handsFree;
   bool get spokenReplies => _spokenReplies;
   bool get wakeWordMode => _wakeWordMode;
+  String get wakePass => _wakePass;
 
   Stream<bool> get handsFreeStream =>
       _handsFreeController.stream;
@@ -69,12 +83,60 @@ class JarvisVoiceController {
   Stream<bool> get wakeWordStream =>
       _wakeWordController.stream;
 
+  Stream<String> get wakePassStream =>
+      _wakePassController.stream;
+
   Future<bool> initialize() async {
     if (_disposed) {
       return false;
     }
 
+    await _loadWakePass();
     return _voiceService.initialize();
+  }
+
+  Future<void> _loadWakePass() async {
+    final String? stored =
+        await _preferences.getString(
+      _wakePassKey,
+    );
+
+    final String value =
+        stored?.trim().isNotEmpty == true
+            ? stored!.trim()
+            : defaultWakePass;
+
+    _wakePass = value;
+
+    if (!_wakePassController.isClosed) {
+      _wakePassController.add(value);
+    }
+  }
+
+  Future<void> setWakePass(
+    String value,
+  ) async {
+    final String normalized =
+        value.trim();
+
+    if (normalized.length < 3) {
+      throw ArgumentError(
+        'Wake pass must be at least 3 characters.',
+      );
+    }
+
+    _wakePass = normalized;
+
+    await _preferences.setString(
+      _wakePassKey,
+      normalized,
+    );
+
+    if (!_wakePassController.isClosed) {
+      _wakePassController.add(
+        normalized,
+      );
+    }
   }
 
   Future<void> startPushToTalk() async {
@@ -132,6 +194,7 @@ class JarvisVoiceController {
       return;
     }
 
+    await _loadWakePass();
     _conversationGeneration++;
 
     _handsFree = false;
@@ -265,8 +328,13 @@ class JarvisVoiceController {
     final String lower =
         normalized.toLowerCase();
 
+    final String wakePassLower =
+        _wakePass.toLowerCase();
+
     final int wakeIndex =
-        lower.indexOf('jarvis');
+        lower.indexOf(
+      wakePassLower,
+    );
 
     if (wakeIndex < 0) {
       await _resumeWakeListening();
@@ -277,7 +345,7 @@ class JarvisVoiceController {
         normalized
             .substring(
               wakeIndex +
-                  'jarvis'.length,
+                  _wakePass.length,
             )
             .trim()
             .replaceFirst(
@@ -440,6 +508,7 @@ class JarvisVoiceController {
         _handsFreeController.close(),
         _spokenRepliesController.close(),
         _wakeWordController.close(),
+        _wakePassController.close(),
       ],
     );
   }
