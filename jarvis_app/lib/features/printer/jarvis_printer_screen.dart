@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/network/providers.dart';
 import 'jarvis_printer_service.dart';
+import 'jarvis_print_router.dart';
 
 class JarvisPrinterScreen
     extends ConsumerStatefulWidget {
@@ -43,6 +44,8 @@ class _JarvisPrinterScreenState
   Widget build(BuildContext context) {
     final JarvisPrinterService service =
         ref.watch(jarvisPrinterServiceProvider);
+    final JarvisPrintRouter router =
+        ref.watch(jarvisPrintRouterProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -58,6 +61,40 @@ class _JarvisPrinterScreenState
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: <Widget>[
+          Card(
+            child: ListTile(
+              leading: Icon(
+                router.isCloudRoutingConfigured
+                    ? Icons.hub
+                    : Icons.cloud_off,
+              ),
+              title: const Text(
+                'Automatic printer routing',
+              ),
+              subtitle: Text(
+                router.isCloudRoutingConfigured
+                    ? 'This device: ${router.deviceName ?? 'initializing'}\nJarvis automatically selects whichever authorized Android device currently reports a ready printer.'
+                    : 'Cloud routing is not configured in this build.',
+              ),
+              trailing: IconButton(
+                tooltip: 'Refresh printer heartbeat',
+                onPressed:
+                    router.isCloudRoutingConfigured
+                        ? () async {
+                            await router
+                                .refreshHeartbeat();
+                            if (mounted) {
+                              setState(() {});
+                            }
+                          }
+                        : null,
+                icon: const Icon(
+                  Icons.sync,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
