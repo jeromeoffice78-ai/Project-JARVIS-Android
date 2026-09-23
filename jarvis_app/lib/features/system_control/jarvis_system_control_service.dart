@@ -133,6 +133,27 @@ class JarvisSystemControlService {
     }
   }
 
+  Future<String> captureScreenshot() async {
+    if (!isSupported) {
+      throw StateError(
+        'Screen capture is only available on Android.',
+      );
+    }
+
+    final String? encoded =
+        await _channel.invokeMethod<String>(
+      'captureScreenshot',
+    );
+
+    if (encoded == null || encoded.isEmpty) {
+      throw StateError(
+        'Android returned no screenshot.',
+      );
+    }
+
+    return encoded;
+  }
+
   Future<List<JarvisBondedBluetoothDevice>>
       listBondedBluetoothDevices() async {
     if (!isSupported) {
