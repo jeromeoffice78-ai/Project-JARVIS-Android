@@ -82,6 +82,9 @@ final jarvisCapabilityServiceProvider =
     printRouter: ref.watch(
       jarvisPrintRouterProvider,
     ),
+    deviceNetwork: ref.watch(
+      jarvisCloudDeviceNetworkProvider,
+    ),
   );
 
   ref.onDispose(service.dispose);
