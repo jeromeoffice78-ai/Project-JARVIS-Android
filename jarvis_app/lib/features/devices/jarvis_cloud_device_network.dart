@@ -64,6 +64,7 @@ final class JarvisCloudDeviceState {
     required this.deviceName,
     required this.foreground,
     required this.activeAvatar,
+    required this.autoRoam,
     required this.devices,
     required this.lastCommand,
     required this.lastCommandResult,
@@ -76,6 +77,7 @@ final class JarvisCloudDeviceState {
         deviceName = '',
         foreground = true,
         activeAvatar = false,
+        autoRoam = true,
         devices = const <JarvisCloudDevice>[],
         lastCommand = '',
         lastCommandResult =
@@ -87,6 +89,7 @@ final class JarvisCloudDeviceState {
   final String deviceName;
   final bool foreground;
   final bool activeAvatar;
+  final bool autoRoam;
   final List<JarvisCloudDevice> devices;
   final String lastCommand;
   final Map<String, dynamic> lastCommandResult;
@@ -102,6 +105,7 @@ final class JarvisCloudDeviceState {
     String? deviceName,
     bool? foreground,
     bool? activeAvatar,
+    bool? autoRoam,
     List<JarvisCloudDevice>? devices,
     String? lastCommand,
     Map<String, dynamic>? lastCommandResult,
@@ -114,6 +118,7 @@ final class JarvisCloudDeviceState {
       deviceName: deviceName ?? this.deviceName,
       foreground: foreground ?? this.foreground,
       activeAvatar: activeAvatar ?? this.activeAvatar,
+      autoRoam: autoRoam ?? this.autoRoam,
       devices: devices ?? this.devices,
       lastCommand:
           lastCommand ?? this.lastCommand,
@@ -152,6 +157,8 @@ class JarvisCloudDeviceNetwork
 
   static const String _deviceIdKey =
       'jarvis.print.device_id';
+  static const String _autoRoamKey =
+      'jarvis.cloud.auto_roam_avatar';
 
   static const MethodChannel _relayChannel =
       MethodChannel('jarvis.cloud_relay');
@@ -199,6 +206,7 @@ class JarvisCloudDeviceNetwork
   bool _refreshing = false;
   bool _foreground = true;
   bool _activeAvatar = false;
+  bool _autoRoam = true;
   bool _nativeRelayStarted = false;
 
   Stream<JarvisCloudDeviceState> get stateStream =>
@@ -223,6 +231,11 @@ class JarvisCloudDeviceNetwork
         await _loadOrCreateDeviceId();
     final String deviceName =
         await _printerService.getDeviceName();
+    _autoRoam =
+        await _preferences.getBool(
+              _autoRoamKey,
+            ) ??
+            true;
 
     _emit(
       _state.copyWith(
@@ -230,6 +243,7 @@ class JarvisCloudDeviceNetwork
         deviceId: deviceId,
         deviceName: deviceName,
         foreground: _foreground,
+        autoRoam: _autoRoam,
         clearError: true,
       ),
     );
@@ -239,6 +253,10 @@ class JarvisCloudDeviceNetwork
     await _startNativeRelay(
       polling: !_foreground,
     );
+
+    if (_foreground && _autoRoam) {
+      _activeAvatar = true;
+    }
 
     await refreshHeartbeat();
     await refreshDevices();
@@ -270,12 +288,43 @@ class JarvisCloudDeviceNetwork
       ),
     );
     if (isConfigured) {
+      if (_foreground && _autoRoam) {
+        _activeAvatar = true;
+      }
       unawaited(refreshHeartbeat());
       unawaited(
         _setNativeRelayPolling(
           !_foreground,
         ),
       );
+    }
+  }
+
+  Future<void> setAutoRoam(
+    bool enabled,
+  ) async {
+    _autoRoam = enabled;
+    await _preferences.setBool(
+      _autoRoamKey,
+      enabled,
+    );
+
+    if (enabled && _foreground) {
+      _activeAvatar = true;
+    }
+
+    _emit(
+      _state.copyWith(
+        autoRoam: enabled,
+        activeAvatar: _activeAvatar,
+        clearError: true,
+      ),
+    );
+
+    if (isConfigured &&
+        _state.deviceId.isNotEmpty) {
+      await refreshHeartbeat();
+      await refreshDevices();
     }
   }
 
