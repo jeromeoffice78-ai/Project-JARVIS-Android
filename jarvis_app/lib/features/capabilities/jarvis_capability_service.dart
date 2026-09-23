@@ -194,6 +194,20 @@ class JarvisCapabilityService {
             parameters,
           );
 
+        case 'system_tap':
+          return _systemTap(
+            requestId: requestId,
+            callId: callId,
+            parameters: parameters,
+          );
+
+        case 'system_swipe':
+          return _systemSwipe(
+            requestId: requestId,
+            callId: callId,
+            parameters: parameters,
+          );
+
         default:
           return JarvisCapabilityResult(
             ok: false,
@@ -1427,6 +1441,130 @@ class JarvisCapabilityService {
       error: ok
           ? null
           : 'Android could not launch that package.',
+    );
+  }
+
+  Future<JarvisCapabilityResult> _systemTap({
+    required String requestId,
+    required String callId,
+    required Map<String, dynamic> parameters,
+  }) async {
+    final double? x =
+        (parameters['x'] as num?)?.toDouble();
+    final double? y =
+        (parameters['y'] as num?)?.toDouble();
+
+    if (x == null || y == null || x < 0 || y < 0) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error: 'Tap coordinates are invalid.',
+      );
+    }
+
+    final bool approved =
+        await _approvalService.request(
+      JarvisActionApprovalRequest(
+        id: '$requestId:$callId',
+        title: 'Let Jarvis tap the screen?',
+        description:
+            'Tap at screen coordinates (${x.toStringAsFixed(0)}, ${y.toStringAsFixed(0)}).',
+        action: 'system_tap',
+        parameters: parameters,
+      ),
+    );
+
+    if (!approved) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error: 'Screen tap was not approved.',
+      );
+    }
+
+    final bool ok =
+        await _systemControlService.tap(x: x, y: y);
+
+    return JarvisCapabilityResult(
+      ok: ok,
+      result: <String, dynamic>{
+        'x': x,
+        'y': y,
+        'tapped': ok,
+      },
+      error: ok
+          ? null
+          : 'Android could not perform the tap.',
+    );
+  }
+
+  Future<JarvisCapabilityResult> _systemSwipe({
+    required String requestId,
+    required String callId,
+    required Map<String, dynamic> parameters,
+  }) async {
+    final double? startX =
+        (parameters['start_x'] as num?)?.toDouble();
+    final double? startY =
+        (parameters['start_y'] as num?)?.toDouble();
+    final double? endX =
+        (parameters['end_x'] as num?)?.toDouble();
+    final double? endY =
+        (parameters['end_y'] as num?)?.toDouble();
+    final int durationMs =
+        (((parameters['duration_ms'] as num?)
+                    ?.toInt() ??
+                350)
+            .clamp(100, 5000))
+            .toInt();
+
+    if (<double?>[startX, startY, endX, endY]
+            .any((double? value) => value == null || value < 0)) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error: 'Swipe coordinates are invalid.',
+      );
+    }
+
+    final bool approved =
+        await _approvalService.request(
+      JarvisActionApprovalRequest(
+        id: '$requestId:$callId',
+        title: 'Let Jarvis swipe the screen?',
+        description:
+            'Swipe from (${startX!.toStringAsFixed(0)}, ${startY!.toStringAsFixed(0)}) to (${endX!.toStringAsFixed(0)}, ${endY!.toStringAsFixed(0)}).',
+        action: 'system_swipe',
+        parameters: parameters,
+      ),
+    );
+
+    if (!approved) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error: 'Screen swipe was not approved.',
+      );
+    }
+
+    final bool ok =
+        await _systemControlService.swipe(
+      startX: startX!,
+      startY: startY!,
+      endX: endX!,
+      endY: endY!,
+      durationMs: durationMs,
+    );
+
+    return JarvisCapabilityResult(
+      ok: ok,
+      result: <String, dynamic>{
+        'start_x': startX,
+        'start_y': startY,
+        'end_x': endX,
+        'end_y': endY,
+        'duration_ms': durationMs,
+        'swiped': ok,
+      },
+      error: ok
+          ? null
+          : 'Android could not perform the swipe.',
     );
   }
 
