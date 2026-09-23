@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/network/providers.dart';
+import '../distribution/jarvis_share_screen.dart';
 import '../phone/jarvis_phone_screen.dart';
 import '../printer/jarvis_printer_screen.dart';
 import '../system_control/jarvis_screen_control_screen.dart';
@@ -588,6 +589,30 @@ class _JarvisDevicesScreenState
             ),
           ),
         const SizedBox(height: 16),
+        Card(
+          child: ListTile(
+            leading: const Icon(
+              Icons.install_mobile_outlined,
+            ),
+            title: const Text(
+              'Send JARVIS to another device',
+            ),
+            subtitle: const Text(
+              'Share the installer link, show a QR code, or download the latest APK so another Android device can join the cloud network.',
+            ),
+            trailing:
+                const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder:
+                      (BuildContext context) =>
+                          const JarvisShareScreen(),
+                ),
+              );
+            },
+          ),
+        ),
         Card(
           child: ListTile(
             leading: const Icon(
