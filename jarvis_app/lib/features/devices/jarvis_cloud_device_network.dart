@@ -57,6 +57,60 @@ final class JarvisCloudDevice {
   }
 }
 
+final class JarvisCloudCommandResult {
+  const JarvisCloudCommandResult({
+    required this.commandId,
+    required this.status,
+    required this.result,
+    required this.error,
+    required this.timedOut,
+  });
+
+  final String commandId;
+  final String status;
+  final Map<String, dynamic> result;
+  final String? error;
+  final bool timedOut;
+
+  bool get isTerminal => const <String>{
+        'completed',
+        'failed',
+        'cancelled',
+        'expired',
+      }.contains(status);
+
+  bool get completed =>
+      status == 'completed';
+
+  factory JarvisCloudCommandResult.fromJson(
+    Map<String, dynamic> json, {
+    bool timedOut = false,
+  }) {
+    final Object? rawResult = json['result'];
+
+    return JarvisCloudCommandResult(
+      commandId: json['id']?.toString() ?? '',
+      status:
+          json['status']?.toString() ?? 'unknown',
+      result: rawResult is Map
+          ? Map<String, dynamic>.from(rawResult)
+          : const <String, dynamic>{},
+      error: json['error']?.toString(),
+      timedOut: timedOut,
+    );
+  }
+
+  JarvisCloudCommandResult withTimedOut() {
+    return JarvisCloudCommandResult(
+      commandId: commandId,
+      status: status,
+      result: result,
+      error: error,
+      timedOut: true,
+    );
+  }
+}
+
 final class JarvisCloudDeviceState {
   const JarvisCloudDeviceState({
     required this.configured,
@@ -574,6 +628,95 @@ class JarvisCloudDeviceNetwork
           payload['command'],
         )['id']?.toString() ??
         '';
+  }
+
+  Future<JarvisCloudCommandResult?>
+      getCommand(
+    String commandId,
+  ) async {
+    _ensureReady();
+
+    final String normalized =
+        commandId.trim();
+
+    if (normalized.isEmpty) {
+      throw ArgumentError(
+        'A cloud command ID is required.',
+      );
+    }
+
+    final Map<String, dynamic> payload =
+        await _post(<String, dynamic>{
+      'operation': 'get_command',
+      'command_id': normalized,
+    });
+
+    final Map<String, dynamic> command =
+        _asMap(payload['command']);
+
+    if (command.isEmpty) {
+      return null;
+    }
+
+    return JarvisCloudCommandResult.fromJson(
+      command,
+    );
+  }
+
+  Future<JarvisCloudCommandResult>
+      waitForCommand(
+    String commandId, {
+    Duration timeout =
+        const Duration(seconds: 30),
+    Duration pollInterval =
+        const Duration(milliseconds: 750),
+  }) async {
+    final String normalized =
+        commandId.trim();
+
+    if (normalized.isEmpty) {
+      throw ArgumentError(
+        'A cloud command ID is required.',
+      );
+    }
+
+    final DateTime deadline =
+        DateTime.now().add(timeout);
+
+    JarvisCloudCommandResult last =
+        JarvisCloudCommandResult(
+      commandId: normalized,
+      status: 'queued',
+      result:
+          const <String, dynamic>{},
+      error: null,
+      timedOut: false,
+    );
+
+    while (!_disposed &&
+        DateTime.now().isBefore(deadline)) {
+      final JarvisCloudCommandResult?
+          current =
+          await getCommand(normalized);
+
+      if (current == null) {
+        throw StateError(
+          'Cloud command disappeared before verification.',
+        );
+      }
+
+      last = current;
+
+      if (current.isTerminal) {
+        return current;
+      }
+
+      await Future<void>.delayed(
+        pollInterval,
+      );
+    }
+
+    return last.withTimedOut();
   }
 
   Future<List<String>> broadcastCommand({
