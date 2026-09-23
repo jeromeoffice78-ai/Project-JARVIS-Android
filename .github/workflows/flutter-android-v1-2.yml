@@ -5,7 +5,6 @@ on:
   push:
     branches:
       - main
-      - feature/jarvis-background-cloud-link
     paths:
       - 'jarvis_app/**'
       - '.github/workflows/flutter-android-v1-2.yml'
