@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,6 +14,7 @@ enum _FrontierMode {
   reason,
   research,
   code,
+  file,
   image,
 }
 
@@ -39,6 +41,7 @@ class _JarvisFrontierScreenState
   List<Map<String, String>> _sources =
       const <Map<String, String>>[];
   Uint8List? _imageBytes;
+  PlatformFile? _selectedFile;
 
   @override
   void dispose() {
@@ -50,8 +53,28 @@ class _JarvisFrontierScreenState
         _FrontierMode.reason => 'reason',
         _FrontierMode.research => 'research',
         _FrontierMode.code => 'code',
+        _FrontierMode.file => 'file',
         _FrontierMode.image => 'image',
       };
+
+  Future<void> _pickFile() async {
+    final FilePickerResult? result =
+        await FilePicker.platform.pickFiles(
+      withData: true,
+      allowMultiple: false,
+    );
+
+    if (!mounted ||
+        result == null ||
+        result.files.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      _selectedFile = result.files.single;
+      _error = null;
+    });
+  }
 
   Future<void> _run() async {
     final String prompt =
@@ -86,6 +109,33 @@ class _JarvisFrontierScreenState
           _imageBytes =
               base64Decode(result.base64);
           _model = result.model;
+        });
+      } else if (_mode == _FrontierMode.file) {
+        final PlatformFile? selected =
+            _selectedFile;
+
+        if (selected == null ||
+            selected.bytes == null) {
+          throw StateError(
+            'Choose a file before running Document Intelligence.',
+          );
+        }
+
+        final JarvisFrontierResult result =
+            await api.analyzeFile(
+          bytes: selected.bytes!,
+          filename: selected.name,
+          prompt: prompt,
+        );
+
+        if (!mounted) {
+          return;
+        }
+
+        setState(() {
+          _answer = result.answer;
+          _model = result.model;
+          _sources = result.sources;
         });
       } else {
         final JarvisFrontierResult result =
@@ -157,49 +207,56 @@ class _JarvisFrontierScreenState
             ),
           ),
           const SizedBox(height: 12),
-          SegmentedButton<_FrontierMode>(
-            segments:
-                const <ButtonSegment<
-                    _FrontierMode>>[
-              ButtonSegment<_FrontierMode>(
-                value: _FrontierMode.reason,
-                icon: Icon(Icons.psychology),
-                label: Text('Reason'),
-              ),
-              ButtonSegment<_FrontierMode>(
-                value:
-                    _FrontierMode.research,
-                icon: Icon(Icons.travel_explore),
-                label: Text('Research'),
-              ),
-              ButtonSegment<_FrontierMode>(
-                value: _FrontierMode.code,
-                icon: Icon(Icons.code),
-                label: Text('Code'),
-              ),
-              ButtonSegment<_FrontierMode>(
-                value: _FrontierMode.image,
-                icon: Icon(Icons.image_outlined),
-                label: Text('Image'),
-              ),
-            ],
-            selected:
-                <_FrontierMode>{_mode},
-            onSelectionChanged:
-                (Set<_FrontierMode> selected) {
-              if (selected.isEmpty) {
-                return;
-              }
-
-              setState(() {
-                _mode = selected.first;
-                _answer = '';
-                _sources =
-                    const <Map<String, String>>[];
-                _imageBytes = null;
-                _error = null;
-              });
-            },
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _FrontierMode.values
+                .map(
+                  (_FrontierMode mode) =>
+                      ChoiceChip(
+                    selected: _mode == mode,
+                    avatar: Icon(
+                      switch (mode) {
+                        _FrontierMode.reason =>
+                          Icons.psychology,
+                        _FrontierMode.research =>
+                          Icons.travel_explore,
+                        _FrontierMode.code =>
+                          Icons.code,
+                        _FrontierMode.file =>
+                          Icons.description_outlined,
+                        _FrontierMode.image =>
+                          Icons.image_outlined,
+                      },
+                      size: 18,
+                    ),
+                    label: Text(
+                      switch (mode) {
+                        _FrontierMode.reason =>
+                          'Reason',
+                        _FrontierMode.research =>
+                          'Research',
+                        _FrontierMode.code =>
+                          'Code',
+                        _FrontierMode.file =>
+                          'Files',
+                        _FrontierMode.image =>
+                          'Image',
+                      },
+                    ),
+                    onSelected: (_) {
+                      setState(() {
+                        _mode = mode;
+                        _answer = '';
+                        _sources =
+                            const <Map<String, String>>[];
+                        _imageBytes = null;
+                        _error = null;
+                      });
+                    },
+                  ),
+                )
+                .toList(growable: false),
           ),
           const SizedBox(height: 16),
           TextField(
@@ -216,11 +273,27 @@ class _JarvisFrontierScreenState
                   'Research objective',
                 _FrontierMode.code =>
                   'Coding / analysis task',
+                _FrontierMode.file =>
+                  'What should Jarvis find or analyze in this file?',
                 _FrontierMode.image =>
                   'Describe the image',
               },
             ),
           ),
+          if (_mode == _FrontierMode.file) ...[
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: _loading ? null : _pickFile,
+              icon: const Icon(
+                Icons.attach_file,
+              ),
+              label: Text(
+                _selectedFile == null
+                    ? 'Choose File'
+                    : _selectedFile!.name,
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           FilledButton.icon(
             onPressed: _loading ? null : _run,
@@ -232,6 +305,8 @@ class _JarvisFrontierScreenState
                   Icons.travel_explore,
                 _FrontierMode.code =>
                   Icons.play_circle_outline,
+                _FrontierMode.file =>
+                  Icons.document_scanner_outlined,
                 _FrontierMode.image =>
                   Icons.auto_awesome,
               },
@@ -244,6 +319,8 @@ class _JarvisFrontierScreenState
                   'Research',
                 _FrontierMode.code =>
                   'Run Code Lab',
+                _FrontierMode.file =>
+                  'Analyze File',
                 _FrontierMode.image =>
                   'Create Image',
               },
