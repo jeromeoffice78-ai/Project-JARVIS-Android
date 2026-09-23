@@ -71,6 +71,96 @@ jobs:
           test "$(stat -c %s assets/models/speaker_ecapa_xnnpack_fp32.pte)" -gt 80000000
           flutter pub get
 
+      - name: Build licensed expressive male Jarvis avatar
+        working-directory: jarvis_app
+        run: |
+          set -euo pipefail
+          WORK="$PWD/.cache/rocketbox"
+          OUT="$PWD/assets/models/JarvisRocketbox.glb"
+          mkdir -p "$WORK/textures" assets/models
+
+          curl --fail --location --retry 5 --retry-delay 3 \
+            "https://raw.githubusercontent.com/microsoft/Microsoft-Rocketbox/master/Assets/Avatars/Adults/Male_Adult_01/Export/Male_Adult_01_facial.fbx" \
+            --output "$WORK/Male_Adult_01_facial.fbx"
+
+          for file in \
+            m002_body_color.tga \
+            m002_body_normal.tga \
+            m002_body_specular.tga \
+            m002_head_color.tga \
+            m002_head_normal.tga \
+            m002_head_specular.tga \
+            m002_opacity_color.tga
+          do
+            curl --fail --location --retry 5 --retry-delay 3 \
+              "https://raw.githubusercontent.com/microsoft/Microsoft-Rocketbox/master/Assets/Avatars/Adults/Male_Adult_01/Textures/$file" \
+              --output "$WORK/textures/$file"
+          done
+
+          curl --fail --location --retry 5 --retry-delay 3 \
+            "https://raw.githubusercontent.com/microsoft/Microsoft-Rocketbox/master/LICENSE.md" \
+            --output assets/models/ROCKETBOX-LICENSE.txt
+
+          curl --fail --location --retry 5 --retry-delay 3 \
+            "https://raw.githubusercontent.com/aralde/react-ai-avatar/425860b7d82bea42d946d2d1171ae912c30fd7fa/tools/rocketbox-asset/convert.mjs" \
+            --output "$WORK/convert.mjs"
+          curl --fail --location --retry 5 --retry-delay 3 \
+            "https://raw.githubusercontent.com/aralde/react-ai-avatar/425860b7d82bea42d946d2d1171ae912c30fd7fa/tools/rocketbox-asset/embed-textures.mjs" \
+            --output "$WORK/embed-textures.mjs"
+
+          sed -i 's/f001_/m002_/g' "$WORK/embed-textures.mjs"
+
+          pushd "$WORK"
+          npm init -y >/dev/null 2>&1
+          npm install --no-audit --no-fund --save-exact fbx2gltf@0.9.7-p1
+          node convert.mjs Male_Adult_01_facial.fbx "$OUT"
+          node embed-textures.mjs "$OUT" "$WORK/textures" --size=512
+          popd
+
+          test -s "$OUT"
+
+          node - "$OUT" <<'NODE'
+          const fs = require('fs');
+          const file = process.argv[2];
+          const glb = fs.readFileSync(file);
+          if (glb.readUInt32LE(0) !== 0x46546c67) {
+            throw new Error('JarvisRocketbox.glb is not a GLB file');
+          }
+          const jsonLength = glb.readUInt32LE(12);
+          const json = JSON.parse(
+            glb.subarray(20, 20 + jsonLength).toString('utf8')
+          );
+          const names = new Set(
+            (json.meshes || []).flatMap(
+              (mesh) => (mesh.extras && mesh.extras.targetNames) || []
+            )
+          );
+          for (const required of [
+            'jawOpen',
+            'mouthSmileLeft',
+            'mouthSmileRight',
+            'eyeBlinkLeft',
+            'eyeBlinkRight',
+            'browInnerUp'
+          ]) {
+            if (!names.has(required)) {
+              throw new Error('Missing required facial morph: ' + required);
+            }
+          }
+          if (names.size < 50) {
+            throw new Error(
+              'Expected at least 50 ARKit facial morphs, found ' + names.size
+            );
+          }
+          console.log(
+            'Rocketbox Jarvis validated with ' +
+              names.size +
+              ' named facial morphs.'
+          );
+          NODE
+
+          flutter pub get
+
       - name: Flutter analyze
         working-directory: jarvis_app
         run: flutter analyze --no-fatal-warnings --no-fatal-infos

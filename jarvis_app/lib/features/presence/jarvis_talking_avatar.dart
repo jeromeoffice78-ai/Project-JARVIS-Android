@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:model_viewer_plus/model_viewer_plus.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
@@ -69,8 +70,9 @@ class _JarvisTalkingAvatarState
             });
           }
         },
-      )
-      ..loadHtmlString(_avatarHtml);
+      );
+
+    unawaited(_loadRenderer());
 
     _fallbackTimer = Timer(
       const Duration(seconds: 16),
@@ -82,6 +84,33 @@ class _JarvisTalkingAvatarState
         }
       },
     );
+  }
+
+  Future<void> _loadRenderer() async {
+    try {
+      final ByteData data = await rootBundle.load(
+        'assets/models/JarvisRocketbox.glb',
+      );
+      final List<int> bytes = data.buffer.asUint8List(
+        data.offsetInBytes,
+        data.lengthInBytes,
+      );
+      final String modelDataUrl =
+          'data:model/gltf-binary;base64,' +
+              base64Encode(bytes);
+      final String html = _avatarHtml.replaceFirst(
+        '__JARVIS_MODEL_DATA__',
+        modelDataUrl,
+      );
+
+      await _controller.loadHtmlString(html);
+    } on Object {
+      if (mounted) {
+        setState(() {
+          _failed = true;
+        });
+      }
+    }
   }
 
   @override
@@ -116,9 +145,6 @@ class _JarvisTalkingAvatarState
         _talkingHeadMood(widget.behavior);
     final String activity =
         widget.voice.activity.name;
-    final bool walking =
-        widget.behavior.motion ==
-            JarvisAvatarMotion.pace;
     final String gesture =
         _gestureFor(widget.behavior);
 
@@ -127,8 +153,6 @@ class _JarvisTalkingAvatarState
         jsonEncode(mood) +
         ',' +
         jsonEncode(activity) +
-        ',' +
-        (walking ? 'true' : 'false') +
         ',' +
         jsonEncode(gesture) +
         ');';
@@ -284,12 +308,8 @@ const String _avatarHtml = r'''
 import { TalkingHead } from "talkinghead";
 
 let head = null;
-let currentWalking = false;
 let lastGesture = "";
 let lastActivity = "";
-
-const walkUrl =
-  "https://cdn.jsdelivr.net/gh/met4citizen/TalkingHead@1.7/animations/walking.fbx";
 
 async function startAvatar() {
   const nodeAvatar =
@@ -310,19 +330,9 @@ async function startAvatar() {
   });
 
   await head.showAvatar({
-    url:
-      "https://readyplayerme-assets.s3.amazonaws.com/animations/visage/male.glb",
+    url: "__JARVIS_MODEL_DATA__",
     body: "M",
     avatarMood: "neutral",
-    retarget: {
-      Neck: { z: -0.01, rx: -0.15 },
-      Neck1: { z: -0.01, rx: -0.15 },
-      Neck2: { z: -0.01, rx: -0.15 },
-      LeftShoulder: { rz: -0.3 },
-      RightShoulder: { rz: 0.3 },
-      scaleToEyesLevel: 1.0,
-      origin: { y: -0.1 }
-    },
     baseline: {
       headRotateX: -0.04,
       eyeBlinkLeft: 0.05,
@@ -362,29 +372,12 @@ async function startAvatar() {
   };
 
   window.jarvisSetState =
-    async function(mood, activity, walking, gesture) {
+    async function(mood, activity, gesture) {
       if (!head) return;
 
       try {
         head.setMood(mood || "neutral");
       } catch (_) {}
-
-      if (walking !== currentWalking) {
-        currentWalking = walking;
-        try {
-          if (walking) {
-            head.playAnimation(
-              walkUrl,
-              null,
-              8,
-              0,
-              0.01
-            );
-          } else {
-            head.stopAnimation();
-          }
-        } catch (_) {}
-      }
 
       if (gesture &&
           gesture !== lastGesture &&

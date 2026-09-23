@@ -41,7 +41,4 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/models/speaker_ecapa_xnnpack_fp32.pte
-    - assets/models/SPEAKER-ECAPA-LICENSE.md
-    - assets/models/CesiumMan.glb
-    - assets/models/CesiumMan-LICENSE.md
+    - assets/models/
