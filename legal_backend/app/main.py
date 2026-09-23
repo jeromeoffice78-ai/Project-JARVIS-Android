@@ -671,6 +671,114 @@ async def realtime_client_secret(
                         "additionalProperties": False,
                     },
                 },
+                {
+                    "type": "function",
+                    "name": "phone_active_call",
+                    "description": "Report the current Android cellular call state.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "phone_answer_call",
+                    "description": "Answer the currently ringing cellular call.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "phone_reject_call",
+                    "description": "Reject the currently ringing cellular call.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "phone_end_call",
+                    "description": "End the current cellular call.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "phone_set_mute",
+                    "description": "Mute or unmute the current cellular call.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "muted": {"type": "boolean"},
+                        },
+                        "required": ["muted"],
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "phone_set_speaker",
+                    "description": "Turn speakerphone on or off for the current cellular call.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "enabled": {"type": "boolean"},
+                        },
+                        "required": ["enabled"],
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "system_global_action",
+                    "description": "Perform an Android Back, Home, Recents, Notifications, or Quick Settings action.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "enum": ["back", "home", "recents", "notifications", "quick_settings"],
+                            },
+                        },
+                        "required": ["action"],
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "system_type_text",
+                    "description": "Type user-approved text into the currently focused Android text field.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "text": {"type": "string"},
+                        },
+                        "required": ["text"],
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "system_launch_app",
+                    "description": "Launch an installed Android app by exact package name.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "package_name": {"type": "string"},
+                        },
+                        "required": ["package_name"],
+                        "additionalProperties": False,
+                    },
+                },
             ],
         }
     }
