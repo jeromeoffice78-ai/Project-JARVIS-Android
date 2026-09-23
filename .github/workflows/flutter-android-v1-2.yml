@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+      - 'feature/**'
+      - 'fix/**'
     paths:
       - 'jarvis_app/**'
       - '.github/workflows/flutter-android-v1-2.yml'
