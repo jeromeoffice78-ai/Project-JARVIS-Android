@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import hmac
 import os
 from contextlib import asynccontextmanager
 from typing import Annotated
 
+import httpx
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, status
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
@@ -15,6 +17,8 @@ APP_NAME = "JARVIS Legal Enterprise API"
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-sol").strip() or "gpt-5.6-sol"
 FRONTIER_MODEL = os.getenv("JARVIS_FRONTIER_MODEL", "gpt-5.6-sol").strip() or "gpt-5.6-sol"
 IMAGE_MODEL = os.getenv("JARVIS_IMAGE_MODEL", "gpt-image-2.5-sunburst").strip() or "gpt-image-2.5-sunburst"
+REALTIME_MODEL = os.getenv("JARVIS_REALTIME_MODEL", "gpt-realtime-2.1").strip() or "gpt-realtime-2.1"
+REALTIME_VOICE = os.getenv("JARVIS_REALTIME_VOICE", "marin").strip() or "marin"
 GATEWAY_MODEL = os.getenv("AI_GATEWAY_MODEL", f"openai/{OPENAI_MODEL}").strip() or f"openai/{OPENAI_MODEL}"
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip() or "llama-3.3-70b-versatile"
 CHAIRMAN_TOKEN = os.getenv("JARVIS_CHAIRMAN_TOKEN", "").strip()
@@ -292,6 +296,71 @@ async def auth_check(
         authenticated=True,
         role=authenticated_role,
     )
+
+
+@app.post("/v1/realtime/client-secret")
+async def realtime_client_secret(
+    authenticated_role: Annotated[str, Depends(authenticate_request)],
+) -> dict[str, object]:
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Realtime voice requires OPENAI_API_KEY on the server.",
+        )
+
+    safety_identifier = hashlib.sha256(
+        f"jarvis:{authenticated_role}:primary".encode("utf-8")
+    ).hexdigest()
+
+    session_config = {
+        "session": {
+            "type": "realtime",
+            "model": REALTIME_MODEL,
+            "instructions": (
+                "You are JARVIS, a concise, capable personal AI assistant. "
+                "Speak naturally, remember that device/tool actions must be verified, "
+                "and never claim an external action succeeded without confirmation."
+            ),
+            "audio": {
+                "output": {
+                    "voice": REALTIME_VOICE,
+                },
+            },
+        }
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.post(
+                "https://api.openai.com/v1/realtime/client_secrets",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                    "OpenAI-Safety-Identifier": safety_identifier,
+                },
+                json=session_config,
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Realtime credential request failed: {type(exc).__name__}",
+        ) from exc
+
+    if response.status_code < 200 or response.status_code >= 300:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="OpenAI Realtime credential service rejected the request.",
+        )
+
+    payload = response.json()
+    if not isinstance(payload, dict) or not str(payload.get("value", "")).strip():
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="OpenAI Realtime returned no usable client secret.",
+        )
+
+    return payload
 
 
 @app.post("/v1/frontier/query", response_model=FrontierQueryResponse)
