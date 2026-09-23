@@ -62,12 +62,21 @@ class JarvisApiService {
     return Map<String, dynamic>.from(decoded);
   }
 
-  Future<String> createRealtimeClientSecret() async {
+  Future<String> createRealtimeClientSecret({
+    String voice = 'cedar',
+    String mood = 'confident',
+    String context = '',
+  }) async {
     final response = await _client.post(
       Uri.parse(
         '${_config.httpBaseUrl}/v1/realtime/client-secret',
       ),
       headers: _headers,
+      body: jsonEncode(<String, dynamic>{
+        'voice': voice,
+        'mood': mood,
+        'context': context,
+      }),
     );
 
     final Object? decoded = jsonDecode(response.body);
