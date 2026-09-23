@@ -11,6 +11,7 @@ import '../capabilities/jarvis_action_approval_service.dart';
 import '../devices/jarvis_devices_screen.dart';
 import '../frontier/jarvis_frontier_screen.dart';
 import '../presence/jarvis_presence_screen.dart';
+import '../presence/jarvis_ambient_avatar_layer.dart';
 import '../memory/jarvis_memory_screen.dart';
 import '../music/jarvis_music_now_playing.dart';
 import '../people/people_memory_screen.dart';
@@ -299,18 +300,26 @@ class _JarvisShellState
           ),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: <Widget>[
-          _ConnectionBanner(
-            state: connection,
+          Column(
+            children: <Widget>[
+              _ConnectionBanner(
+                state: connection,
+              ),
+              const _MemoryBanner(),
+              const JarvisMusicNowPlaying(),
+              Expanded(
+                child: IndexedStack(
+                  index: _index,
+                  children: _screens,
+                ),
+              ),
+            ],
           ),
-          const _MemoryBanner(),
-          const JarvisMusicNowPlaying(),
-          Expanded(
-            child: IndexedStack(
-              index: _index,
-              children: _screens,
-            ),
+          const Positioned.fill(
+            child:
+                JarvisAmbientAvatarLayer(),
           ),
         ],
       ),
