@@ -245,6 +245,9 @@ final jarvisRealtimeVoiceServiceProvider =
       voiceIdentityService: ref.watch(
         jarvisVoiceIdentityServiceProvider,
       ),
+      capabilityService: ref.watch(
+        jarvisCapabilityServiceProvider,
+      ),
     );
 
     ref.onDispose(() {
