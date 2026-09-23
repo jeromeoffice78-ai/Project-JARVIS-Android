@@ -163,6 +163,7 @@ class JarvisCloudDeviceNetwork
     'flashlight_on',
     'flashlight_off',
     'avatar_handoff',
+    'wake_jarvis',
   };
 
   final JarvisConfig _config;
@@ -698,6 +699,24 @@ class JarvisCloudDeviceNetwork
           'state': action == 'flashlight_on'
               ? 'on'
               : 'off',
+        };
+
+      case 'wake_jarvis':
+        await _voiceService.speak(
+          parameters['response']
+                  ?.toString()
+                  .trim()
+                  .isNotEmpty ==
+              true
+              ? parameters['response']
+                  .toString()
+                  .trim()
+              : 'Yes?',
+        );
+        await _voiceService.startListening();
+        return const <String, dynamic>{
+          'awake': true,
+          'listening': true,
         };
 
       case 'avatar_handoff':
