@@ -111,7 +111,7 @@ class JarvisMusicService {
       return;
     }
 
-    await controller.play();
+    await controller.playVideo();
 
     _emit(
       JarvisMusicState(
@@ -128,7 +128,7 @@ class JarvisMusicService {
       return;
     }
 
-    await controller.pause();
+    await controller.pauseVideo();
 
     _emit(
       JarvisMusicState(
@@ -142,7 +142,7 @@ class JarvisMusicService {
     _ensureActive();
 
     if (_state.track != null) {
-      await controller.pause();
+      await controller.pauseVideo();
     }
 
     _emit(
