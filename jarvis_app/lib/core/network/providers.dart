@@ -7,6 +7,7 @@ import '../../features/autonomy/jarvis_autonomy_controller.dart';
 import '../../features/capabilities/jarvis_action_approval_service.dart';
 import '../../features/capabilities/jarvis_capability_service.dart';
 import '../../features/devices/jarvis_bluetooth_manager.dart';
+import '../../features/music/jarvis_music_service.dart';
 import '../../features/phone/jarvis_phone_service.dart';
 import '../../features/people/jarvis_voice_identity_service.dart';
 import '../../features/printer/jarvis_printer_service.dart';
@@ -104,6 +105,31 @@ final jarvisBluetoothStateProvider =
   (Ref ref) {
     return ref
         .watch(jarvisBluetoothManagerProvider)
+        .stateStream;
+  },
+);
+
+final jarvisMusicServiceProvider =
+    Provider<JarvisMusicService>((Ref ref) {
+  final JarvisMusicService service =
+      JarvisMusicService(
+    apiService: ref.watch(
+      jarvisApiServiceProvider,
+    ),
+  );
+
+  ref.onDispose(() {
+    unawaited(service.dispose());
+  });
+
+  return service;
+});
+
+final jarvisMusicStateProvider =
+    StreamProvider<JarvisMusicState>(
+  (Ref ref) {
+    return ref
+        .watch(jarvisMusicServiceProvider)
         .stateStream;
   },
 );
