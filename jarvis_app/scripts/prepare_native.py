@@ -244,6 +244,10 @@ class MainActivity : FlutterFragmentActivity() {{
             this,
             flutterEngine,
         )
+        JarvisAppDistributionBridge.register(
+            this,
+            flutterEngine,
+        )
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -714,6 +718,26 @@ class JarvisTextPrintAdapter(
 
     (path.parent / "JarvisVoiceIdentityBridge.kt").write_text(
         voice_identity_text,
+        encoding="utf-8",
+    )
+
+    app_distribution_template = (
+        ROOT
+        / "scripts"
+        / "native"
+        / "JarvisAppDistributionBridge.kt.template"
+    )
+    if not app_distribution_template.exists():
+        raise RuntimeError(
+            "JarvisAppDistributionBridge.kt.template is missing"
+        )
+
+    app_distribution_text = app_distribution_template.read_text(
+        encoding="utf-8"
+    ).replace("__PACKAGE__", package_name)
+
+    (path.parent / "JarvisAppDistributionBridge.kt").write_text(
+        app_distribution_text,
         encoding="utf-8",
     )
 
