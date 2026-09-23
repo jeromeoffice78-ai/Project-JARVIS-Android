@@ -237,6 +237,11 @@ class MainActivity : FlutterFragmentActivity() {{
     private val controlChannel = "jarvis.system_control"
     private val prefsName = "jarvis_phone"
 
+    override fun onNewIntent(intent: Intent) {{
+        super.onNewIntent(intent)
+        setIntent(intent)
+    }}
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {{
         super.configureFlutterEngine(flutterEngine)
 
@@ -256,6 +261,12 @@ class MainActivity : FlutterFragmentActivity() {{
             when (call.method) {{
                 "isDefaultDialer" -> result.success(isDefaultDialer())
                 "requestDefaultDialer" -> result.success(requestDefaultDialer())
+                "consumeLaunchTarget" -> {{
+                    val target =
+                        intent?.getStringExtra("jarvis_launch_target").orEmpty()
+                    intent?.removeExtra("jarvis_launch_target")
+                    result.success(target)
+                }}
                 "getActiveCall" ->
                     result.success(JarvisInCallService.activeCallSnapshot())
                 "answerActiveCall" ->
@@ -1047,7 +1058,9 @@ class JarvisInCallService : InCallService() {{
         }}
 
         val launchIntent =
-            packageManager.getLaunchIntentForPackage(packageName)
+            packageManager.getLaunchIntentForPackage(packageName)?.apply {{
+                putExtra("jarvis_launch_target", "phone")
+            }}
         val pendingIntent = launchIntent?.let {{
             PendingIntent.getActivity(
                 this,
