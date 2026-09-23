@@ -1065,8 +1065,30 @@ class JarvisCapabilityService {
       parameters: commandParams,
     );
 
+    if (commandId.isEmpty) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error:
+            'Cloud command could not be queued.',
+      );
+    }
+
+    final JarvisCloudCommandResult
+        verification =
+        await _deviceNetwork.waitForCommand(
+      commandId,
+      timeout: const Duration(seconds: 25),
+    );
+
+    final bool completed =
+        verification.completed;
+
+    final String status = verification.timedOut
+        ? 'pending_unverified'
+        : verification.status;
+
     return JarvisCapabilityResult(
-      ok: commandId.isNotEmpty,
+      ok: completed,
       result: <String, dynamic>{
         'command_id': commandId,
         'target_device_id':
@@ -1074,11 +1096,18 @@ class JarvisCapabilityService {
         'target_device_name':
             target.deviceName,
         'action': action,
-        'status': 'queued',
+        'status': status,
+        'verified': verification.isTerminal &&
+            !verification.timedOut,
+        'target_result':
+            verification.result,
       },
-      error: commandId.isEmpty
-          ? 'Cloud command could not be queued.'
-          : null,
+      error: completed
+          ? null
+          : verification.timedOut
+              ? 'The target device accepted the command but did not report completion before the verification timeout.'
+              : verification.error ??
+                  'The target device reported that the command did not complete.',
     );
   }
 
@@ -1113,13 +1142,80 @@ class JarvisCapabilityService {
       parameters: commandParams,
     );
 
+    if (ids.isEmpty) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error:
+            'No other online Jarvis devices were available for the broadcast.',
+      );
+    }
+
+    final List<JarvisCloudCommandResult>
+        verifications = await Future.wait(
+      ids.map(
+        (String id) =>
+            _deviceNetwork.waitForCommand(
+          id,
+          timeout:
+              const Duration(seconds: 25),
+        ),
+      ),
+    );
+
+    final int completedCount =
+        verifications
+            .where(
+              (JarvisCloudCommandResult item) =>
+                  item.completed,
+            )
+            .length;
+
+    final int timedOutCount =
+        verifications
+            .where(
+              (JarvisCloudCommandResult item) =>
+                  item.timedOut,
+            )
+            .length;
+
+    final List<Map<String, dynamic>>
+        outcomes = verifications
+            .map(
+              (JarvisCloudCommandResult item) =>
+                  <String, dynamic>{
+                'command_id':
+                    item.commandId,
+                'status': item.timedOut
+                    ? 'pending_unverified'
+                    : item.status,
+                'verified':
+                    item.isTerminal &&
+                        !item.timedOut,
+                'result': item.result,
+                if (item.error != null)
+                  'error': item.error,
+              },
+            )
+            .toList(growable: false);
+
+    final bool allCompleted =
+        completedCount == ids.length;
+
     return JarvisCapabilityResult(
-      ok: true,
+      ok: allCompleted,
       result: <String, dynamic>{
         'action': action,
         'command_ids': ids,
-        'queued_count': ids.length,
+        'target_count': ids.length,
+        'completed_count':
+            completedCount,
+        'pending_unverified_count':
+            timedOutCount,
+        'outcomes': outcomes,
       },
+      error: allCompleted
+          ? null
+          : 'One or more target devices did not verify successful completion.',
     );
   }
 
@@ -1145,19 +1241,46 @@ class JarvisCapabilityService {
       target.deviceId,
     );
 
+    if (commandId.isEmpty) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error:
+            'Jarvis handoff could not be queued.',
+      );
+    }
+
+    final JarvisCloudCommandResult
+        verification =
+        await _deviceNetwork.waitForCommand(
+      commandId,
+      timeout: const Duration(seconds: 20),
+    );
+
+    final bool completed =
+        verification.completed;
+
     return JarvisCapabilityResult(
-      ok: commandId.isNotEmpty,
+      ok: completed,
       result: <String, dynamic>{
         'command_id': commandId,
         'target_device_id':
             target.deviceId,
         'target_device_name':
             target.deviceName,
-        'status': 'handoff_queued',
+        'status': verification.timedOut
+            ? 'handoff_pending_unverified'
+            : verification.status,
+        'verified': verification.isTerminal &&
+            !verification.timedOut,
+        'target_result':
+            verification.result,
       },
-      error: commandId.isEmpty
-          ? 'Jarvis handoff could not be queued.'
-          : null,
+      error: completed
+          ? null
+          : verification.timedOut
+              ? 'Jarvis handoff was queued, but the target device did not verify arrival before the timeout.'
+              : verification.error ??
+                  'The target device did not verify the Jarvis handoff.',
     );
   }
 
