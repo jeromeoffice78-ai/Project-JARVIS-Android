@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/network/providers.dart';
 import '../chat/jarvis_chat_controller.dart';
+import '../realtime/jarvis_realtime_voice_screen.dart';
 import 'jarvis_voice_controller.dart';
 import 'jarvis_voice_service.dart';
 
@@ -71,6 +72,32 @@ class _JarvisVoiceScreenState
               padding: const EdgeInsets.all(18),
               children: <Widget>[
                 _StatusCard(state: voiceState),
+                const SizedBox(height: 12),
+                Card(
+                  child: ListTile(
+                    leading: const Icon(
+                      Icons.graphic_eq,
+                    ),
+                    title: const Text(
+                      'Live Frontier Voice',
+                    ),
+                    subtitle: const Text(
+                      'Direct speech-to-speech Jarvis with realtime turn-taking, interruptions, and Bluetooth audio preference.',
+                    ),
+                    trailing: const Icon(
+                      Icons.chevron_right,
+                    ),
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder:
+                              (BuildContext context) =>
+                                  const JarvisRealtimeVoiceScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                ),
                 const SizedBox(height: 18),
                 Center(
                   child: InkWell(
