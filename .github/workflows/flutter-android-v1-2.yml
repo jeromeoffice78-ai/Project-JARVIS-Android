@@ -1,4 +1,4 @@
-name: JARVIS Flutter Android v1.2
+name: JARVIS Flutter Android v1.3
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: jarvis-flutter-v1-2-${{ github.ref }}
+  group: jarvis-flutter-v1-3-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -92,14 +92,14 @@ jobs:
       - name: Stage APK
         run: |
           mkdir -p dist
-          cp jarvis_app/build/app/outputs/flutter-apk/app-debug.apk dist/JARVIS-v1.2-debug.apk
-          sha256sum dist/JARVIS-v1.2-debug.apk > dist/JARVIS-v1.2-debug.apk.sha256
+          cp jarvis_app/build/app/outputs/flutter-apk/app-debug.apk dist/JARVIS-v1.3-debug.apk
+          sha256sum dist/JARVIS-v1.3-debug.apk > dist/JARVIS-v1.3-debug.apk.sha256
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: JARVIS-v1.2-Android
+          name: JARVIS-v1.3-Android
           path: |
-            dist/JARVIS-v1.2-debug.apk
-            dist/JARVIS-v1.2-debug.apk.sha256
+            dist/JARVIS-v1.3-debug.apk
+            dist/JARVIS-v1.3-debug.apk.sha256
           retention-days: 30
