@@ -489,3 +489,79 @@ def test_youtube_video_id_parses_supported_url_shapes():
         )
         == "M7lc1UVf-VE"
     )
+
+
+
+def test_phone_receptionist_status_and_messages(monkeypatch):
+    async def fake_phone_gateway_call(operation, **payload):
+        assert operation == "list_messages"
+        assert payload["limit"] == 100
+        return {
+            "messages": [
+                {
+                    "call_id": "call_test_1",
+                    "provider": "openai_sip",
+                    "from_number": "+15551234567",
+                    "to_number": "+15557654321",
+                    "caller_name": "Marcus",
+                    "callback_number": "+15551234567",
+                    "urgent": True,
+                    "summary": "Please call back today.",
+                    "transcript": "This is Marcus. Please call me back today.",
+                    "assistant_transcript": "I will pass that message along.",
+                    "status": "completed",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        api,
+        "_phone_gateway_call",
+        fake_phone_gateway_call,
+    )
+    monkeypatch.setattr(
+        api,
+        "PHONE_WEBHOOK_SECRET",
+        "whsec_test",
+    )
+    monkeypatch.setattr(
+        api,
+        "RECEPTIONIST_NUMBER",
+        "+15557654321",
+    )
+
+    with TestClient(api.app) as client:
+        status_response = client.get(
+            "/v1/phone/status",
+            headers={
+                "Authorization":
+                    "Bearer test-client-token"
+            },
+        )
+        assert status_response.status_code == 200
+        status_payload = status_response.json()
+        assert status_payload["configured"] is True
+        assert status_payload["provider"] == "openai_sip"
+        assert (
+            status_payload["phone_number"]
+            == "+15557654321"
+        )
+
+        messages_response = client.get(
+            "/v1/phone/messages",
+            headers={
+                "Authorization":
+                    "Bearer test-client-token"
+            },
+        )
+        assert messages_response.status_code == 200
+        messages = messages_response.json()["messages"]
+        assert len(messages) == 1
+        assert messages[0]["caller_name"] == "Marcus"
+        assert messages[0]["urgent"] is True
+
+
+def test_phone_receptionist_requires_authentication():
+    with TestClient(api.app) as client:
+        response = client.get("/v1/phone/status")
+        assert response.status_code == 401
