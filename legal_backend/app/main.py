@@ -569,6 +569,109 @@ async def realtime_client_secret(
                     "voice": voice,
                 },
             },
+            "tool_choice": "auto",
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "play_music",
+                    "description": (
+                        "Search the internet for the requested song and play the "
+                        "verified result inside JARVIS."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Song, artist, album, or track request.",
+                            },
+                        },
+                        "required": ["query"],
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "pause_music",
+                    "description": "Pause music currently playing inside JARVIS.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "resume_music",
+                    "description": "Resume the current JARVIS music track.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "list_cloud_devices",
+                    "description": (
+                        "List JARVIS devices registered on the user's secure cloud "
+                        "device network and report which are online."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "handoff_jarvis_device",
+                    "description": (
+                        "Move JARVIS presence to another online JARVIS device by "
+                        "device name."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "target_device_name": {
+                                "type": "string",
+                                "description": "Name of the destination device.",
+                            },
+                        },
+                        "required": ["target_device_name"],
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "send_cloud_device_command",
+                    "description": (
+                        "Send an approved command to another online JARVIS device. "
+                        "Supported actions include speak_text, play_music, music_pause, "
+                        "music_resume, vision_refresh, flashlight_on, flashlight_off, "
+                        "system_action, ping, and avatar_handoff."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "target_device_name": {
+                                "type": "string",
+                                "description": "Name of the target JARVIS device.",
+                            },
+                            "action": {
+                                "type": "string",
+                                "description": "Allowed cloud-device action.",
+                            },
+                            "parameters": {
+                                "type": "object",
+                                "description": "Parameters for the target action.",
+                            },
+                        },
+                        "required": ["target_device_name", "action"],
+                        "additionalProperties": False,
+                    },
+                },
+            ],
         }
     }
 
