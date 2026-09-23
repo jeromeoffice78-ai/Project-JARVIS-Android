@@ -256,6 +256,22 @@ class MainActivity : FlutterFragmentActivity() {{
             when (call.method) {{
                 "isDefaultDialer" -> result.success(isDefaultDialer())
                 "requestDefaultDialer" -> result.success(requestDefaultDialer())
+                "getActiveCall" ->
+                    result.success(JarvisInCallService.activeCallSnapshot())
+                "answerActiveCall" ->
+                    result.success(JarvisInCallService.answerActiveCall())
+                "rejectActiveCall" ->
+                    result.success(JarvisInCallService.rejectActiveCall())
+                "disconnectActiveCall" ->
+                    result.success(JarvisInCallService.disconnectActiveCall())
+                "setMuted" -> {{
+                    val muted = call.argument<Boolean>("muted") ?: false
+                    result.success(JarvisInCallService.setCallMuted(muted))
+                }}
+                "setSpeaker" -> {{
+                    val enabled = call.argument<Boolean>("enabled") ?: false
+                    result.success(JarvisInCallService.setSpeakerEnabled(enabled))
+                }}
                 "setAutoAnswer" -> {{
                     val enabled = call.argument<Boolean>("enabled") ?: false
                     getSharedPreferences(prefsName, Context.MODE_PRIVATE)
@@ -752,17 +768,138 @@ import android.app.PendingIntent
 import android.content.Context
 import android.os.Build
 import android.telecom.Call
+import android.telecom.CallAudioState
 import android.telecom.InCallService
 import android.telecom.VideoProfile
 import org.json.JSONArray
 import org.json.JSONObject
 
 class JarvisInCallService : InCallService() {{
+    companion object {{
+        var instance: JarvisInCallService? = null
+            private set
+        var activeCall: Call? = null
+            private set
+
+        fun activeCallSnapshot(): Map<String, Any?>? {{
+            val call = activeCall ?: return null
+            val details = call.details
+            val number =
+                details.handle?.schemeSpecificPart ?: "Unknown caller"
+            val incoming = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {{
+                details.callDirection == Call.Details.DIRECTION_INCOMING
+            }} else {{
+                call.state == Call.STATE_RINGING
+            }}
+            val service = instance
+            val audioState = service?.callAudioState
+            val route = when (audioState?.route) {{
+                CallAudioState.ROUTE_SPEAKER -> "speaker"
+                CallAudioState.ROUTE_BLUETOOTH -> "bluetooth"
+                CallAudioState.ROUTE_WIRED_HEADSET -> "wired_headset"
+                CallAudioState.ROUTE_EARPIECE -> "earpiece"
+                else -> "unknown"
+            }}
+            val state = when (call.state) {{
+                Call.STATE_RINGING -> "ringing"
+                Call.STATE_ACTIVE -> "active"
+                Call.STATE_HOLDING -> "holding"
+                Call.STATE_DIALING -> "dialing"
+                Call.STATE_CONNECTING -> "connecting"
+                Call.STATE_DISCONNECTED -> "disconnected"
+                else -> "other"
+            }}
+            return mapOf(
+                "phoneNumber" to number,
+                "state" to state,
+                "isIncoming" to incoming,
+                "isMuted" to (audioState?.isMuted ?: false),
+                "audioRoute" to route,
+            )
+        }}
+
+        fun answerActiveCall(): Boolean {{
+            val call = activeCall ?: return false
+            return try {{
+                call.answer(VideoProfile.STATE_AUDIO_ONLY)
+                true
+            }} catch (_: Throwable) {{
+                false
+            }}
+        }}
+
+        fun rejectActiveCall(): Boolean {{
+            val call = activeCall ?: return false
+            return try {{
+                if (call.state == Call.STATE_RINGING) {{
+                    call.reject(false, null)
+                }} else {{
+                    call.disconnect()
+                }}
+                true
+            }} catch (_: Throwable) {{
+                false
+            }}
+        }}
+
+        fun disconnectActiveCall(): Boolean {{
+            val call = activeCall ?: return false
+            return try {{
+                call.disconnect()
+                true
+            }} catch (_: Throwable) {{
+                false
+            }}
+        }}
+
+        fun setCallMuted(muted: Boolean): Boolean {{
+            val service = instance ?: return false
+            return try {{
+                service.setMuted(muted)
+                true
+            }} catch (_: Throwable) {{
+                false
+            }}
+        }}
+
+        fun setSpeakerEnabled(enabled: Boolean): Boolean {{
+            val service = instance ?: return false
+            return try {{
+                @Suppress("DEPRECATION")
+                service.setAudioRoute(
+                    if (enabled) {{
+                        CallAudioState.ROUTE_SPEAKER
+                    }} else {{
+                        CallAudioState.ROUTE_EARPIECE
+                    }},
+                )
+                true
+            }} catch (_: Throwable) {{
+                false
+            }}
+        }}
+    }}
+
     private val prefsName = "jarvis_phone"
     private val channelId = "jarvis_calls"
     private val notificationId = 7731
 
+    override fun onCreate() {{
+        super.onCreate()
+        instance = this
+    }}
+
+    override fun onDestroy() {{
+        if (instance === this) {{
+            instance = null
+        }}
+        activeCall = null
+        super.onDestroy()
+    }}
+
     override fun onCallAdded(call: Call) {{
+        super.onCallAdded(call)
+        activeCall = call
         super.onCallAdded(call)
 
         if (!isIncoming(call)) {{
@@ -821,6 +958,9 @@ class JarvisInCallService : InCallService() {{
 
     override fun onCallRemoved(call: Call) {{
         super.onCallRemoved(call)
+        if (activeCall === call) {{
+            activeCall = null
+        }}
         cancelIncomingCallNotification()
     }}
 
