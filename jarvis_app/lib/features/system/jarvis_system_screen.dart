@@ -7,6 +7,7 @@ import '../../core/config/jarvis_config.dart';
 import '../../core/network/jarvis_ws_service.dart';
 import '../../core/network/providers.dart';
 import '../capabilities/jarvis_capability_service.dart';
+import '../printer/jarvis_print_router.dart';
 
 class JarvisSystemScreen extends ConsumerStatefulWidget {
   const JarvisSystemScreen({super.key});
@@ -22,6 +23,8 @@ class _JarvisSystemScreenState
       TextEditingController();
 
   Map<String, dynamic>? _health;
+  List<JarvisDevicePresence> _devices =
+      const <JarvisDevicePresence>[];
   String? _error;
   String _capabilityResult = '';
   bool _loading = false;
@@ -31,9 +34,10 @@ class _JarvisSystemScreenState
   void initState() {
     super.initState();
 
-    Future<void>.microtask(
-      _loadCapabilitySettings,
-    );
+    Future<void>.microtask(() async {
+      await _loadCapabilitySettings();
+      await _refreshHealth();
+    });
   }
 
   @override
@@ -71,14 +75,25 @@ class _JarvisSystemScreenState
     });
 
     try {
-      final health =
-          await ref.read(jarvisApiServiceProvider).health();
+      final healthFuture =
+          ref.read(jarvisApiServiceProvider).health();
+
+      final JarvisPrintRouter router =
+          ref.read(jarvisPrintRouterProvider);
+      await router.refreshHeartbeat();
+      final devicesFuture = router.listDevices();
+
+      final health = await healthFuture;
+      final devices = await devicesFuture;
 
       if (!mounted) {
         return;
       }
 
-      setState(() => _health = health);
+      setState(() {
+        _health = health;
+        _devices = devices;
+      });
     } on Object catch (error) {
       if (!mounted) {
         return;
@@ -243,6 +258,138 @@ class _JarvisSystemScreenState
                     ? 'UNKNOWN'
                     : 'AVAILABLE',
             icon: Icons.psychology,
+          ),
+          const SizedBox(height: 18),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                crossAxisAlignment:
+                    CrossAxisAlignment.start,
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      const Icon(
+                        Icons.hub_outlined,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Cross-Device JARVIS',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleMedium
+                              ?.copyWith(
+                                fontWeight:
+                                    FontWeight.bold,
+                              ),
+                        ),
+                      ),
+                      Text(
+                        '${_devices.where((JarvisDevicePresence d) => d.online).length} online',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Each signed-in Android device reports its live Jarvis capabilities. Offline/stale devices are not treated as available.',
+                  ),
+                  const SizedBox(height: 12),
+                  if (_devices.isEmpty)
+                    const ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        Icons.devices_other_outlined,
+                      ),
+                      title: Text(
+                        'No devices reporting yet',
+                      ),
+                      subtitle: Text(
+                        'Install and launch this build on your Android devices to populate the shared device registry.',
+                      ),
+                    )
+                  else
+                    ..._devices.map(
+                      (JarvisDevicePresence device) {
+                        final List<String> enabled =
+                            device.capabilities.entries
+                                .where(
+                                  (MapEntry<String, dynamic> e) =>
+                                      e.value == true,
+                                )
+                                .map(
+                                  (MapEntry<String, dynamic> e) =>
+                                      e.key.replaceAll('_', ' '),
+                                )
+                                .toList(growable: false);
+
+                        return Card(
+                          margin: const EdgeInsets.only(
+                            bottom: 10,
+                          ),
+                          child: ExpansionTile(
+                            leading: Icon(
+                              device.online
+                                  ? Icons.phone_android
+                                  : Icons.phonelink_off,
+                            ),
+                            title: Text(
+                              device.deviceName,
+                            ),
+                            subtitle: Text(
+                              '${device.online ? 'ONLINE' : 'OFFLINE'}'
+                              '${device.appVersion.isEmpty ? '' : ' • v${device.appVersion}'}'
+                              '${device.printerReady ? ' • PRINTER READY' : ''}',
+                            ),
+                            children: <Widget>[
+                              if (device.printerReady)
+                                ListTile(
+                                  leading: const Icon(
+                                    Icons.print,
+                                  ),
+                                  title: const Text(
+                                    'Printer host',
+                                  ),
+                                  subtitle: Text(
+                                    device.printerName.isEmpty
+                                        ? 'USB printer available'
+                                        : device.printerName,
+                                  ),
+                                ),
+                              if (enabled.isNotEmpty)
+                                Padding(
+                                  padding:
+                                      const EdgeInsets.fromLTRB(
+                                    16,
+                                    0,
+                                    16,
+                                    16,
+                                  ),
+                                  child: Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: enabled
+                                        .map(
+                                          (String capability) =>
+                                              Chip(
+                                            label: Text(
+                                              capability,
+                                            ),
+                                          ),
+                                        )
+                                        .toList(
+                                          growable: false,
+                                        ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                ],
+              ),
+            ),
           ),
           const SizedBox(height: 18),
           Card(
