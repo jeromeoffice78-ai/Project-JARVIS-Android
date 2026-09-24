@@ -525,6 +525,9 @@ class JarvisCloudDeviceNetwork
           'device_diagnostics': true,
           'device_security_scan': true,
           'device_repair': true,
+          'vpn_monitoring': true,
+          'vpn_settings': true,
+          'verified_command_ack': true,
         },
       });
 
@@ -741,6 +744,50 @@ class JarvisCloudDeviceNetwork
     return last.withTimedOut();
   }
 
+  Future<JarvisCloudCommandResult> sendCommandAndWait({
+    required String targetDeviceId,
+    required String action,
+    Map<String, dynamic> parameters =
+        const <String, dynamic>{},
+    int ttlSeconds = 300,
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    final String commandId = await sendCommand(
+      targetDeviceId: targetDeviceId,
+      action: action,
+      parameters: parameters,
+      ttlSeconds: ttlSeconds,
+    );
+
+    if (commandId.isEmpty) {
+      throw StateError(
+        'Cloud gateway did not return a command ID.',
+      );
+    }
+
+    final JarvisCloudCommandResult result =
+        await waitForCommand(
+      commandId,
+      timeout: timeout,
+    );
+
+    if (result.timedOut) {
+      throw StateError(
+        'Target device did not confirm $action before timeout.',
+      );
+    }
+
+    if (!result.completed) {
+      throw StateError(
+        result.error?.trim().isNotEmpty == true
+            ? result.error!
+            : 'Target device reported ${result.status} for $action.',
+      );
+    }
+
+    return result;
+  }
+
   Future<List<String>> broadcastCommand({
     required String action,
     Map<String, dynamic> parameters =
@@ -783,16 +830,43 @@ class JarvisCloudDeviceNetwork
         .toList(growable: false);
   }
 
-  Future<String> handoffJarvisTo(
+  Future<JarvisCloudCommandResult> handoffJarvisTo(
     String targetDeviceId,
-  ) {
-    return sendCommand(
-      targetDeviceId: targetDeviceId,
+  ) async {
+    final String target = targetDeviceId.trim();
+    if (target.isEmpty) {
+      throw ArgumentError(
+        'A target device ID is required.',
+      );
+    }
+
+    JarvisCloudDevice? knownTarget;
+    for (final JarvisCloudDevice device in _state.devices) {
+      if (device.deviceId == target) {
+        knownTarget = device;
+        break;
+      }
+    }
+
+    if (knownTarget == null || !knownTarget.online) {
+      throw StateError(
+        'Target Jarvis device is not currently online.',
+      );
+    }
+
+    final JarvisCloudCommandResult result =
+        await sendCommandAndWait(
+      targetDeviceId: target,
       action: 'avatar_handoff',
       parameters: const <String, dynamic>{
         'animate_entry': true,
       },
+      ttlSeconds: 90,
+      timeout: const Duration(seconds: 45),
     );
+
+    await refreshDevices();
+    return result;
   }
 
   Future<void> pollCommands() async {
