@@ -490,7 +490,7 @@ class JarvisBluetoothManager {
     _reconnectAttempts[deviceId] = next;
 
     final int delaySeconds =
-        (next * 3).clamp(3, 30);
+        (next * 3).clamp(3, 30).toInt();
 
     _errors[deviceId] =
         'Connection lost. Jarvis will retry in ${delaySeconds}s.';
