@@ -7,6 +7,7 @@ import '../../core/config/jarvis_config.dart';
 import '../../core/network/jarvis_ws_service.dart';
 import '../../core/network/providers.dart';
 import '../capabilities/jarvis_capability_service.dart';
+import 'jarvis_device_defense_screen.dart';
 
 class JarvisSystemScreen extends ConsumerStatefulWidget {
   const JarvisSystemScreen({super.key});
@@ -243,6 +244,32 @@ class _JarvisSystemScreenState
                     ? 'UNKNOWN'
                     : 'AVAILABLE',
             icon: Icons.psychology,
+          ),
+          const SizedBox(height: 18),
+          Card(
+            child: ListTile(
+              leading: const Icon(
+                Icons.security_rounded,
+              ),
+              title: const Text(
+                'JARVIS Device Defense',
+              ),
+              subtitle: const Text(
+                'Scan for suspicious apps and diagnose storage, memory, battery, network, Bluetooth, and other device issues.',
+              ),
+              trailing: const Icon(
+                Icons.chevron_right,
+              ),
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder:
+                        (BuildContext context) =>
+                            const JarvisDeviceDefenseScreen(),
+                  ),
+                );
+              },
+            ),
           ),
           const SizedBox(height: 18),
           Card(
