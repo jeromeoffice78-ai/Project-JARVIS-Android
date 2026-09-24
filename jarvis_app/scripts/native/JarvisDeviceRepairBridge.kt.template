@@ -19,6 +19,7 @@ import android.provider.Settings
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import java.time.LocalDate
 import kotlin.math.roundToInt
 
 object JarvisDeviceRepairBridge {
@@ -315,6 +316,91 @@ object JarvisDeviceRepairBridge {
             )
         }
 
+        if (bluetoothEnabled == false) {
+            issues.add(
+                mapOf(
+                    "code" to
+                        "bluetooth_disabled",
+                    "severity" to "low",
+                    "summary" to
+                        "Bluetooth is disabled.",
+                    "repair" to "bluetooth",
+                ),
+            )
+        }
+
+        if (
+            batteryPercent in 0..9 &&
+            batteryStatus !=
+                BatteryManager
+                    .BATTERY_STATUS_CHARGING &&
+            batteryStatus !=
+                BatteryManager
+                    .BATTERY_STATUS_FULL
+        ) {
+            issues.add(
+                mapOf(
+                    "code" to
+                        "battery_critical",
+                    "severity" to "medium",
+                    "summary" to
+                        "Battery level is critically low.",
+                    "repair" to "battery",
+                ),
+            )
+        }
+
+        if (batteryTemperature >= 450) {
+            issues.add(
+                mapOf(
+                    "code" to
+                        "battery_hot",
+                    "severity" to "high",
+                    "summary" to
+                        "Battery temperature is unusually high.",
+                    "repair" to "battery",
+                ),
+            )
+        }
+
+        val securityPatch =
+            Build.VERSION.SECURITY_PATCH
+                ?.trim()
+                .orEmpty()
+
+        if (securityPatch.isNotEmpty()) {
+            try {
+                val patchDate =
+                    LocalDate.parse(
+                        securityPatch,
+                    )
+                val staleBefore =
+                    LocalDate.now()
+                        .minusDays(180)
+
+                if (
+                    patchDate.isBefore(
+                        staleBefore,
+                    )
+                ) {
+                    issues.add(
+                        mapOf(
+                            "code" to
+                                "security_patch_old",
+                            "severity" to
+                                "medium",
+                            "summary" to
+                                "Android security patch is more than 180 days old.",
+                            "repair" to
+                                "system_update",
+                        ),
+                    )
+                }
+            } catch (_: Throwable) {
+                // Some vendors use non-standard patch strings.
+            }
+        }
+
         return mapOf(
             "manufacturer" to
                 Build.MANUFACTURER,
@@ -323,6 +409,8 @@ object JarvisDeviceRepairBridge {
                 Build.VERSION.RELEASE,
             "sdk" to
                 Build.VERSION.SDK_INT,
+            "securityPatch" to
+                Build.VERSION.SECURITY_PATCH,
             "memory" to mapOf(
                 "availableBytes" to
                     memoryInfo.availMem,
@@ -869,6 +957,36 @@ object JarvisDeviceRepairBridge {
                     Intent(
                         Settings
                             .ACTION_SECURITY_SETTINGS,
+                    )
+                "system_update" ->
+                    Intent(
+                        Settings
+                            .ACTION_SYSTEM_UPDATE_SETTINGS,
+                    )
+                "date_time" ->
+                    Intent(
+                        Settings
+                            .ACTION_DATE_SETTINGS,
+                    )
+                "display" ->
+                    Intent(
+                        Settings
+                            .ACTION_DISPLAY_SETTINGS,
+                    )
+                "sound" ->
+                    Intent(
+                        Settings
+                            .ACTION_SOUND_SETTINGS,
+                    )
+                "accessibility" ->
+                    Intent(
+                        Settings
+                            .ACTION_ACCESSIBILITY_SETTINGS,
+                    )
+                "memory" ->
+                    Intent(
+                        Settings
+                            .ACTION_APPLICATION_SETTINGS,
                     )
                 else ->
                     Intent(
