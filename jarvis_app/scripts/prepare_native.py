@@ -321,6 +321,10 @@ class MainActivity : FlutterFragmentActivity() {{
             this,
             flutterEngine,
         )
+        JarvisVpnBridge.register(
+            this,
+            flutterEngine,
+        )
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -952,6 +956,26 @@ class JarvisTextPrintAdapter(
 
     (path.parent / "JarvisDeviceRepairBridge.kt").write_text(
         device_repair_text,
+        encoding="utf-8",
+    )
+
+    vpn_bridge_template = (
+        ROOT
+        / "scripts"
+        / "native"
+        / "JarvisVpnBridge.kt.template"
+    )
+    if not vpn_bridge_template.exists():
+        raise RuntimeError(
+            "JarvisVpnBridge.kt.template is missing"
+        )
+
+    vpn_bridge_text = vpn_bridge_template.read_text(
+        encoding="utf-8"
+    ).replace("__PACKAGE__", package_name)
+
+    (path.parent / "JarvisVpnBridge.kt").write_text(
+        vpn_bridge_text,
         encoding="utf-8",
     )
 
