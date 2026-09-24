@@ -483,6 +483,32 @@ object JarvisDeviceRepairBridge {
         val packages =
             linkedSetOf<String>()
 
+        try {
+            val installed =
+                if (
+                    Build.VERSION.SDK_INT >= 33
+                ) {
+                    packageManager
+                        .getInstalledPackages(
+                            PackageManager
+                                .PackageInfoFlags
+                                .of(0),
+                        )
+                } else {
+                    @Suppress("DEPRECATION")
+                    packageManager
+                        .getInstalledPackages(0)
+                }
+
+            installed.forEach {
+                packages.add(
+                    it.packageName,
+                )
+            }
+        } catch (_: Throwable) {
+            // Android package visibility rules may limit this list.
+        }
+
         activities.forEach {
             packages.add(
                 it.activityInfo.packageName,
