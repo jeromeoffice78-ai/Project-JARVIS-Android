@@ -1716,6 +1716,185 @@ class JarvisCapabilityService {
     );
   }
 
+  Future<JarvisCapabilityResult>
+      _deviceDiagnose() async {
+    final Map<String, dynamic> diagnosis =
+        await _deviceRepairService.diagnose();
+
+    return JarvisCapabilityResult(
+      ok: diagnosis['error'] == null,
+      result: diagnosis,
+      error: diagnosis['error']
+          ?.toString(),
+    );
+  }
+
+  Future<JarvisCapabilityResult>
+      _deviceMalwareScan() async {
+    final Map<String, dynamic> summary =
+        await _deviceRepairService
+            .malwareSummary();
+
+    return JarvisCapabilityResult(
+      ok: true,
+      result: summary,
+    );
+  }
+
+  Future<JarvisCapabilityResult>
+      _deviceRepair(
+    Map<String, dynamic> parameters,
+  ) async {
+    final String target =
+        parameters['target']
+                ?.toString()
+                .trim()
+                .toLowerCase() ??
+            '';
+
+    if (target.isEmpty) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error:
+            'Device repair target is empty.',
+      );
+    }
+
+    final Map<String, dynamic> result =
+        await _deviceRepairService
+            .repairTarget(target);
+
+    return JarvisCapabilityResult(
+      ok: result['ok'] == true,
+      result: result,
+      error: result['ok'] == true
+          ? null
+          : result['error']
+                  ?.toString() ??
+              'JARVIS could not start that repair.',
+    );
+  }
+
+  Future<JarvisCapabilityResult>
+      _deviceRemoveSuspiciousApp({
+    required String requestId,
+    required String callId,
+    required Map<String, dynamic> parameters,
+  }) async {
+    final String packageName =
+        parameters['package_name']
+                ?.toString()
+                .trim() ??
+            '';
+
+    if (packageName.isEmpty) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error:
+            'Android package name is empty.',
+      );
+    }
+
+    final bool installed =
+        await _deviceRepairService
+            .isPackageInstalled(
+      packageName,
+    );
+
+    if (!installed) {
+      return JarvisCapabilityResult(
+        ok: true,
+        result: <String, dynamic>{
+          'package_name': packageName,
+          'installed': false,
+          'removed': true,
+          'verification':
+              'Package is not installed.',
+        },
+      );
+    }
+
+    final bool approved =
+        await _approvalService.request(
+      JarvisActionApprovalRequest(
+        id: '$requestId:$callId',
+        title:
+            'Remove suspicious Android app?',
+        description:
+            'JARVIS will open Android\'s uninstall confirmation for $packageName. '
+            'Android requires your final confirmation.',
+        action:
+            'device_remove_suspicious_app',
+        parameters: parameters,
+      ),
+    );
+
+    if (!approved) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error:
+            'Suspicious-app removal was not approved.',
+      );
+    }
+
+    final bool opened =
+        await _deviceRepairService
+            .requestUninstall(
+      packageName,
+    );
+
+    return JarvisCapabilityResult(
+      ok: opened,
+      result: <String, dynamic>{
+        'package_name': packageName,
+        'uninstall_prompt_opened':
+            opened,
+        'removed': false,
+        'requires_android_confirmation':
+            true,
+        'verification_required':
+            true,
+      },
+      error: opened
+          ? null
+          : 'Android could not open the uninstall confirmation.',
+    );
+  }
+
+  Future<JarvisCapabilityResult>
+      _deviceVerifyAppRemoved(
+    Map<String, dynamic> parameters,
+  ) async {
+    final String packageName =
+        parameters['package_name']
+                ?.toString()
+                .trim() ??
+            '';
+
+    if (packageName.isEmpty) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error:
+            'Android package name is empty.',
+      );
+    }
+
+    final bool installed =
+        await _deviceRepairService
+            .isPackageInstalled(
+      packageName,
+    );
+
+    return JarvisCapabilityResult(
+      ok: true,
+      result: <String, dynamic>{
+        'package_name': packageName,
+        'installed': installed,
+        'removed': !installed,
+      },
+    );
+  }
+
   Future<JarvisCapabilityResult> _openWebUrl(
     Map<String, dynamic> parameters,
   ) async {
