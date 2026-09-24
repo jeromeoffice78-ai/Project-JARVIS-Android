@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:torch_light/torch_light.dart';
@@ -26,6 +27,10 @@ final class JarvisCloudDevice {
     required this.activeAvatar,
     required this.capabilities,
     required this.lastSeenAt,
+    required this.latitude,
+    required this.longitude,
+    required this.locationAccuracyMeters,
+    required this.locationUpdatedAt,
   });
 
   final String deviceId;
@@ -35,6 +40,13 @@ final class JarvisCloudDevice {
   final bool activeAvatar;
   final Map<String, dynamic> capabilities;
   final DateTime? lastSeenAt;
+  final double? latitude;
+  final double? longitude;
+  final double? locationAccuracyMeters;
+  final DateTime? locationUpdatedAt;
+
+  bool get hasLocation =>
+      latitude != null && longitude != null;
 
   factory JarvisCloudDevice.fromJson(
     Map<String, dynamic> json,
@@ -55,7 +67,19 @@ final class JarvisCloudDevice {
       lastSeenAt: DateTime.tryParse(
         json['last_seen_at']?.toString() ?? '',
       ),
+      latitude: _numberOrNull(json['latitude']),
+      longitude: _numberOrNull(json['longitude']),
+      locationAccuracyMeters:
+          _numberOrNull(json['location_accuracy_m']),
+      locationUpdatedAt: DateTime.tryParse(
+        json['location_updated_at']?.toString() ?? '',
+      ),
     );
+  }
+
+  static double? _numberOrNull(Object? value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '');
   }
 }
 
@@ -273,6 +297,9 @@ class JarvisCloudDeviceNetwork
   bool _activeAvatar = false;
   bool _autoRoam = true;
   bool _nativeRelayStarted = false;
+  bool _locationPermissionPrompted = false;
+  Position? _lastLocation;
+  DateTime? _lastLocationSampledAt;
 
   Stream<JarvisCloudDeviceState> get stateStream =>
       _stateController.stream;
@@ -416,7 +443,7 @@ class JarvisCloudDeviceNetwork
         <String, dynamic>{
           'gatewayUrl':
               _config.deviceGatewayUrl,
-          'token': _config.clientToken,
+          'token': _authToken,
           'deviceId': _state.deviceId,
           'deviceName':
               _state.deviceName.isEmpty
@@ -491,6 +518,94 @@ class JarvisCloudDeviceNetwork
     }
   }
 
+  Future<Map<String, dynamic>>
+      _locationHeartbeatFields() async {
+    if (kIsWeb ||
+        defaultTargetPlatform !=
+            TargetPlatform.android) {
+      return const <String, dynamic>{};
+    }
+
+    final DateTime now = DateTime.now();
+    final Position? cached = _lastLocation;
+    final DateTime? sampledAt =
+        _lastLocationSampledAt;
+
+    if (cached != null &&
+        sampledAt != null &&
+        now.difference(sampledAt) <
+            const Duration(seconds: 90)) {
+      return <String, dynamic>{
+        'latitude': cached.latitude,
+        'longitude': cached.longitude,
+        'location_accuracy_m': cached.accuracy,
+      };
+    }
+
+    try {
+      if (!await Geolocator
+          .isLocationServiceEnabled()) {
+        return const <String, dynamic>{};
+      }
+
+      LocationPermission permission =
+          await Geolocator.checkPermission();
+
+      if (permission ==
+              LocationPermission.denied &&
+          _foreground &&
+          !_locationPermissionPrompted) {
+        _locationPermissionPrompted = true;
+        permission =
+            await Geolocator.requestPermission();
+      }
+
+      if (permission ==
+              LocationPermission.denied ||
+          permission ==
+              LocationPermission.deniedForever) {
+        return const <String, dynamic>{};
+      }
+
+      Position? position;
+      if (_foreground) {
+        try {
+          position =
+              await Geolocator.getCurrentPosition(
+            locationSettings:
+                const LocationSettings(
+              accuracy: LocationAccuracy.high,
+              timeLimit:
+                  Duration(seconds: 8),
+            ),
+          );
+        } on Object {
+          position =
+              await Geolocator.getLastKnownPosition();
+        }
+      } else {
+        position =
+            await Geolocator.getLastKnownPosition();
+      }
+
+      if (position == null) {
+        return const <String, dynamic>{};
+      }
+
+      _lastLocation = position;
+      _lastLocationSampledAt = now;
+
+      return <String, dynamic>{
+        'latitude': position.latitude,
+        'longitude': position.longitude,
+        'location_accuracy_m':
+            position.accuracy,
+      };
+    } on Object {
+      return const <String, dynamic>{};
+    }
+  }
+
   Future<void> refreshHeartbeat() async {
     if (_disposed ||
         !isConfigured ||
@@ -499,6 +614,10 @@ class JarvisCloudDeviceNetwork
     }
 
     try {
+      final Map<String, dynamic>
+          locationFields =
+          await _locationHeartbeatFields();
+
       final Map<String, dynamic> payload =
           await _post(<String, dynamic>{
         'operation': 'heartbeat',
@@ -511,6 +630,7 @@ class JarvisCloudDeviceNetwork
         'app_version': '1.3.0',
         'foreground': _foreground,
         'active_avatar': _activeAvatar,
+        ...locationFields,
         'capabilities':
             const <String, dynamic>{
           'cloud_commands': true,
@@ -528,6 +648,7 @@ class JarvisCloudDeviceNetwork
           'vpn_monitoring': true,
           'vpn_settings': true,
           'verified_command_ack': true,
+          'device_location': true,
         },
       });
 
