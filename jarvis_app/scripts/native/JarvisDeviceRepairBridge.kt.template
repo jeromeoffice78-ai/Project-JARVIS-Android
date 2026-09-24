@@ -64,6 +64,19 @@ object JarvisDeviceRepairBridge {
                     )
                 }
 
+                "repairIssue" -> {
+                    val target =
+                        call.argument<String>("target")
+                            ?.trim()
+                            .orEmpty()
+                    result.success(
+                        repairIssue(
+                            activity,
+                            target,
+                        ),
+                    )
+                }
+
                 "openAppDetails" -> {
                     val packageName =
                         call.argument<String>("packageName")
@@ -310,6 +323,48 @@ object JarvisDeviceRepairBridge {
                     "severity" to "high",
                     "summary" to
                         "Android reports a battery-health warning.",
+                    "repair" to "battery",
+                ),
+            )
+        }
+
+        if (bluetoothEnabled == false) {
+            issues.add(
+                mapOf(
+                    "code" to "bluetooth_disabled",
+                    "severity" to "low",
+                    "summary" to
+                        "Bluetooth is disabled.",
+                    "repair" to "bluetooth",
+                ),
+            )
+        }
+
+        if (
+            batteryPercent in 0..9 &&
+            batteryStatus !=
+                BatteryManager.BATTERY_STATUS_CHARGING &&
+            batteryStatus !=
+                BatteryManager.BATTERY_STATUS_FULL
+        ) {
+            issues.add(
+                mapOf(
+                    "code" to "battery_low",
+                    "severity" to "medium",
+                    "summary" to
+                        "Battery level is critically low.",
+                    "repair" to "battery",
+                ),
+            )
+        }
+
+        if (batteryTemperature >= 450) {
+            issues.add(
+                mapOf(
+                    "code" to "battery_hot",
+                    "severity" to "high",
+                    "summary" to
+                        "Battery temperature is unusually high.",
                     "repair" to "battery",
                 ),
             )
@@ -824,6 +879,47 @@ object JarvisDeviceRepairBridge {
         }
     }
 
+    private fun repairIssue(
+        activity: Activity,
+        target: String,
+    ): Map<String, Any?> {
+        if (target == "jarvis_cache") {
+            val cleaned =
+                clearCache(activity.cacheDir)
+            return mapOf(
+                "ok" to cleaned,
+                "target" to target,
+                "action" to "clear_cache",
+                "requiresUserAction" to false,
+                "message" to
+                    if (cleaned) {
+                        "JARVIS temporary cache was cleared."
+                    } else {
+                        "JARVIS cache could not be cleared."
+                    },
+            )
+        }
+
+        val opened =
+            openRepairSettings(
+                activity,
+                target,
+            )
+
+        return mapOf(
+            "ok" to opened,
+            "target" to target,
+            "action" to "open_android_repair_panel",
+            "requiresUserAction" to opened,
+            "message" to
+                if (opened) {
+                    "Android opened the repair controls for $target. User confirmation may still be required."
+                } else {
+                    "Android could not open the repair controls for $target."
+                },
+        )
+    }
+
     private fun openRepairSettings(
         activity: Activity,
         target: String,
@@ -869,6 +965,36 @@ object JarvisDeviceRepairBridge {
                     Intent(
                         Settings
                             .ACTION_SECURITY_SETTINGS,
+                    )
+                "system_update" ->
+                    Intent(
+                        Settings
+                            .ACTION_SYSTEM_UPDATE_SETTINGS,
+                    )
+                "date_time" ->
+                    Intent(
+                        Settings
+                            .ACTION_DATE_SETTINGS,
+                    )
+                "display" ->
+                    Intent(
+                        Settings
+                            .ACTION_DISPLAY_SETTINGS,
+                    )
+                "sound" ->
+                    Intent(
+                        Settings
+                            .ACTION_SOUND_SETTINGS,
+                    )
+                "accessibility" ->
+                    Intent(
+                        Settings
+                            .ACTION_ACCESSIBILITY_SETTINGS,
+                    )
+                "memory" ->
+                    Intent(
+                        Settings
+                            .ACTION_APPLICATION_SETTINGS,
                     )
                 else ->
                     Intent(
