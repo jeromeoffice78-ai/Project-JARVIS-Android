@@ -101,6 +101,9 @@ final jarvisCapabilityServiceProvider =
     systemControlService: ref.watch(
       jarvisSystemControlServiceProvider,
     ),
+    deviceRepairService: ref.watch(
+      jarvisDeviceRepairServiceProvider,
+    ),
   );
 
   ref.onDispose(service.dispose);
