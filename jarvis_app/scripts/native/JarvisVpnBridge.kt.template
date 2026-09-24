@@ -1,0 +1,88 @@
+package __PACKAGE__
+
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.provider.Settings
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
+
+object JarvisVpnBridge {
+    private const val CHANNEL = "jarvis.vpn"
+
+    fun register(
+        activity: Activity,
+        flutterEngine: FlutterEngine,
+    ) {
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getStatus" -> result.success(status(activity))
+                "openVpnSettings" -> {
+                    try {
+                        activity.startActivity(
+                            Intent(Settings.ACTION_VPN_SETTINGS),
+                        )
+                        result.success(null)
+                    } catch (error: Throwable) {
+                        result.error(
+                            "vpn_settings_failed",
+                            error.message ?: "Unable to open VPN settings.",
+                            null,
+                        )
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    private fun status(context: Context): Map<String, Any> {
+        val manager = context.getSystemService(
+            Context.CONNECTIVITY_SERVICE,
+        ) as ConnectivityManager
+        val network = manager.activeNetwork
+        val capabilities = network?.let {
+            manager.getNetworkCapabilities(it)
+        }
+
+        val active =
+            capabilities?.hasTransport(
+                NetworkCapabilities.TRANSPORT_VPN,
+            ) == true
+        val validated =
+            capabilities?.hasCapability(
+                NetworkCapabilities.NET_CAPABILITY_VALIDATED,
+            ) == true
+        val metered =
+            capabilities?.hasCapability(
+                NetworkCapabilities.NET_CAPABILITY_NOT_METERED,
+            ) != true
+
+        val transport = when {
+            capabilities == null -> "none"
+            active -> "vpn"
+            capabilities.hasTransport(
+                NetworkCapabilities.TRANSPORT_WIFI,
+            ) -> "wifi"
+            capabilities.hasTransport(
+                NetworkCapabilities.TRANSPORT_CELLULAR,
+            ) -> "cellular"
+            capabilities.hasTransport(
+                NetworkCapabilities.TRANSPORT_ETHERNET,
+            ) -> "ethernet"
+            else -> "other"
+        }
+
+        return mapOf(
+            "active" to active,
+            "validated" to validated,
+            "metered" to metered,
+            "transport" to transport,
+        )
+    }
+}
