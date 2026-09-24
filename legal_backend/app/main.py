@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import json
 import os
 import re
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Annotated
@@ -14,7 +16,7 @@ import httpx
 import phonenumbers
 from phonenumbers import geocoder as phone_geocoder
 from phonenumbers import timezone as phone_timezone
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect, status
 from openai import AsyncOpenAI, OpenAI
 import websockets
 from pydantic import BaseModel, Field
@@ -82,6 +84,13 @@ PHONE_GATEWAY_URL = os.getenv(
     "JARVIS_PHONE_GATEWAY_URL",
     "https://idpneeyysraraznqmiio.supabase.co/functions/v1/jarvis-phone-gateway",
 ).strip()
+MEMORY_GATEWAY_URL = os.getenv(
+    "JARVIS_MEMORY_GATEWAY_URL",
+    "https://idpneeyysraraznqmiio.supabase.co/functions/v1/jarvis-memory-gateway",
+).strip()
+VISION_FRAME_MAX_BYTES = 8 * 1024 * 1024
+VISION_FRAME_TTL_SECONDS = 60.0
+LATEST_VISION_FRAMES: dict[str, dict[str, object]] = {}
 PHONE_WEBHOOK_SECRET = os.getenv("OPENAI_WEBHOOK_SECRET", "").strip()
 RECEPTIONIST_NUMBER = os.getenv("JARVIS_RECEPTIONIST_NUMBER", "").strip()
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
@@ -203,6 +212,18 @@ class MusicSearchResponse(BaseModel):
     watch_url: str
 
 
+class MemorySaveRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=20_000)
+    kind: str = Field(default="fact", min_length=1, max_length=100)
+    importance: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
+class PersonCreateRequest(BaseModel):
+    display_name: str = Field(min_length=1, max_length=200)
+    relationship: str = Field(default="", max_length=500)
+    notes: str = Field(default="", max_length=5_000)
+
+
 class PhoneReceptionistStatus(BaseModel):
     configured: bool
     provider: str
@@ -312,32 +333,123 @@ def _extract_bearer(value: str | None) -> str:
     return value[len(prefix) :].strip()
 
 
-async def authenticate_request(
-    authorization: Annotated[str | None, Header()] = None,
-) -> str:
-    supplied = _extract_bearer(authorization)
-    if not supplied:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid client authentication.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+def _role_for_token(supplied: str) -> str | None:
+    token = supplied.strip()
+    if not token:
+        return None
 
-    session_identity = verify_session(supplied)
+    session_identity = verify_session(token)
     if session_identity is not None and session_identity.role == "chairman":
         return "chairman"
 
     # Transitional compatibility only. New Chairman builds use Google OIDC +
     # server-issued sessions; this static token can be removed after migration.
-    if CHAIRMAN_TOKEN and hmac.compare_digest(supplied, CHAIRMAN_TOKEN):
+    if CHAIRMAN_TOKEN and hmac.compare_digest(token, CHAIRMAN_TOKEN):
         return "chairman"
-    if CLIENT_TOKEN and hmac.compare_digest(supplied, CLIENT_TOKEN):
+    if CLIENT_TOKEN and hmac.compare_digest(token, CLIENT_TOKEN):
         return "client"
+
+    return None
+
+
+async def authenticate_request(
+    authorization: Annotated[str | None, Header()] = None,
+) -> str:
+    supplied = _extract_bearer(authorization)
+    role = _role_for_token(supplied)
+    if role is not None:
+        return role
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid client authentication.",
         headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+async def _memory_gateway_call(
+    operation: str,
+    authorization: str | None,
+    **payload: object,
+) -> dict[str, object]:
+    auth = (authorization or "").strip()
+    if not auth or not MEMORY_GATEWAY_URL:
+        raise RuntimeError("Memory gateway is not configured.")
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(
+            MEMORY_GATEWAY_URL,
+            headers={
+                "Authorization": auth,
+                "Content-Type": "application/json",
+            },
+            json={"operation": operation, **payload},
+        )
+
+    try:
+        data = response.json()
+    except ValueError:
+        data = {}
+
+    if response.status_code < 200 or response.status_code >= 300:
+        detail = str(data.get("error", "")).strip() if isinstance(data, dict) else ""
+        raise RuntimeError(detail or f"Memory gateway HTTP {response.status_code}.")
+
+    return data if isinstance(data, dict) else {}
+
+
+def _vision_key(authorization: str | None) -> str:
+    token = _extract_bearer(authorization)
+    if not token:
+        return ""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _detect_image_mime(data: bytes, supplied: str | None) -> str | None:
+    mime = (supplied or "").split(";", 1)[0].strip().lower()
+    if mime in {"image/jpeg", "image/png", "image/webp"}:
+        return mime
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def _latest_vision_data_url(authorization: str | None) -> str | None:
+    key = _vision_key(authorization)
+    if not key:
+        return None
+
+    record = LATEST_VISION_FRAMES.get(key)
+    if not record:
+        return None
+
+    captured_at = float(record.get("captured_at", 0.0) or 0.0)
+    if time.monotonic() - captured_at > VISION_FRAME_TTL_SECONDS:
+        LATEST_VISION_FRAMES.pop(key, None)
+        return None
+
+    raw = record.get("data")
+    mime = str(record.get("mime", "") or "")
+    if not isinstance(raw, bytes) or not raw or not mime:
+        return None
+
+    encoded = base64.b64encode(raw).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
+
+
+def _prompt_requests_camera_context(prompt: str) -> bool:
+    return bool(
+        re.search(
+            r"(JARVIS VISION CONTEXT|latest camera frame|what do you see|"
+            r"what am i looking at|look at this|read this|see what i see|"
+            r"camera vision|through the camera)",
+            prompt,
+            flags=re.IGNORECASE,
+        )
     )
 
 
@@ -920,6 +1032,326 @@ async def auth_check(
     )
 
 
+
+
+@app.websocket("/ws/jarvis")
+async def jarvis_websocket(websocket: WebSocket) -> None:
+    ticket = (websocket.query_params.get("ticket") or "").strip()
+    role = _role_for_token(ticket)
+    if role is None:
+        await websocket.close(code=4401, reason="Unauthorized")
+        return
+
+    await websocket.accept()
+    await websocket.send_json(
+        {
+            "type": "system",
+            "message": "Jarvis online.",
+            "role": role,
+        }
+    )
+
+    try:
+        while True:
+            try:
+                event = await asyncio.wait_for(
+                    websocket.receive_json(),
+                    timeout=25.0,
+                )
+            except asyncio.TimeoutError:
+                await websocket.send_json(
+                    {
+                        "type": "ping",
+                        "ping_id": str(time.time_ns()),
+                    }
+                )
+                continue
+
+            if not isinstance(event, dict):
+                continue
+
+            event_type = str(event.get("type", "") or "")
+            if event_type in {"pong", "tool_result"}:
+                continue
+
+            if event_type == "cancel_response":
+                await websocket.send_json(
+                    {
+                        "type": "response_cancelled",
+                        "request_id": event.get("request_id"),
+                    }
+                )
+                continue
+
+            if event_type == "user_text":
+                request_id = str(event.get("request_id", "") or "")
+                payload = event.get("payload")
+                prompt = (
+                    str(payload.get("text", "") or "").strip()
+                    if isinstance(payload, dict)
+                    else ""
+                )
+                client: AsyncOpenAI | None = getattr(
+                    app.state,
+                    "frontier_openai",
+                    None,
+                )
+                if not request_id or not prompt or client is None:
+                    await websocket.send_json(
+                        {
+                            "type": "error",
+                            "request_id": request_id or None,
+                            "code": "invalid_request",
+                            "message": "Jarvis could not process that WebSocket request.",
+                            "retryable": True,
+                        }
+                    )
+                    continue
+
+                try:
+                    response = await client.responses.create(
+                        model=FRONTIER_MODEL,
+                        instructions=(
+                            "You are JARVIS, a precise personal AI assistant. "
+                            f"Authenticated application role: {role}."
+                        ),
+                        input=prompt,
+                        reasoning={"effort": "high"},
+                    )
+                    answer = (response.output_text or "").strip()
+                    if not answer:
+                        raise RuntimeError("Empty response")
+                    await websocket.send_json(
+                        {
+                            "type": "agent_text_chunk",
+                            "request_id": request_id,
+                            "chunk_index": 0,
+                            "payload": {
+                                "chunk_index": 0,
+                                "text_chunk": answer,
+                                "is_final": True,
+                            },
+                        }
+                    )
+                except Exception as exc:
+                    await websocket.send_json(
+                        {
+                            "type": "error",
+                            "request_id": request_id,
+                            "code": "jarvis_ws_request_failed",
+                            "message": f"Jarvis request failed: {type(exc).__name__}",
+                            "retryable": True,
+                        }
+                    )
+    except WebSocketDisconnect:
+        return
+
+
+@app.post("/memory")
+async def save_memory(
+    payload: MemorySaveRequest,
+    authorization: Annotated[str | None, Header()] = None,
+    authenticated_role: Annotated[str, Depends(authenticate_request)] = "client",
+) -> dict[str, object]:
+    del authenticated_role
+    try:
+        return await _memory_gateway_call(
+            "save_memory",
+            authorization,
+            text=payload.text,
+            kind=payload.kind,
+            importance=payload.importance,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Memory storage unavailable: {type(exc).__name__}",
+        ) from exc
+
+
+@app.get("/memory/context")
+async def memory_context(
+    q: str = "",
+    authorization: Annotated[str | None, Header()] = None,
+    authenticated_role: Annotated[str, Depends(authenticate_request)] = "client",
+) -> dict[str, object]:
+    del authenticated_role
+    try:
+        return await _memory_gateway_call(
+            "query_memory",
+            authorization,
+            query=q[:1000],
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Memory lookup unavailable: {type(exc).__name__}",
+        ) from exc
+
+
+@app.get("/people")
+async def list_people(
+    authorization: Annotated[str | None, Header()] = None,
+    authenticated_role: Annotated[str, Depends(authenticate_request)] = "client",
+) -> dict[str, object]:
+    del authenticated_role
+    try:
+        return await _memory_gateway_call("list_people", authorization)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"People Memory unavailable: {type(exc).__name__}",
+        ) from exc
+
+
+@app.post("/people")
+async def create_person(
+    payload: PersonCreateRequest,
+    authorization: Annotated[str | None, Header()] = None,
+    authenticated_role: Annotated[str, Depends(authenticate_request)] = "client",
+) -> dict[str, object]:
+    del authenticated_role
+    try:
+        return await _memory_gateway_call(
+            "create_person",
+            authorization,
+            display_name=payload.display_name,
+            relationship=payload.relationship,
+            notes=payload.notes,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"People Memory unavailable: {type(exc).__name__}",
+        ) from exc
+
+
+@app.get("/people/presence/current")
+async def current_person_presence(
+    authorization: Annotated[str | None, Header()] = None,
+    authenticated_role: Annotated[str, Depends(authenticate_request)] = "client",
+) -> dict[str, object]:
+    del authenticated_role
+    try:
+        return await _memory_gateway_call("current_presence", authorization)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"People presence unavailable: {type(exc).__name__}",
+        ) from exc
+
+
+@app.delete("/people/presence/current")
+async def clear_person_presence(
+    authorization: Annotated[str | None, Header()] = None,
+    authenticated_role: Annotated[str, Depends(authenticate_request)] = "client",
+) -> dict[str, object]:
+    del authenticated_role
+    try:
+        return await _memory_gateway_call("clear_presence", authorization)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"People presence unavailable: {type(exc).__name__}",
+        ) from exc
+
+
+@app.post("/people/{person_id}/present")
+async def confirm_person_present(
+    person_id: str,
+    authorization: Annotated[str | None, Header()] = None,
+    authenticated_role: Annotated[str, Depends(authenticate_request)] = "client",
+) -> dict[str, object]:
+    del authenticated_role
+    try:
+        return await _memory_gateway_call(
+            "confirm_present",
+            authorization,
+            person_id=person_id[:100],
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"People presence unavailable: {type(exc).__name__}",
+        ) from exc
+
+
+@app.delete("/people/{person_id}")
+async def delete_person(
+    person_id: str,
+    authorization: Annotated[str | None, Header()] = None,
+    authenticated_role: Annotated[str, Depends(authenticate_request)] = "client",
+) -> dict[str, object]:
+    del authenticated_role
+    try:
+        return await _memory_gateway_call(
+            "delete_person",
+            authorization,
+            person_id=person_id[:100],
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"People Memory unavailable: {type(exc).__name__}",
+        ) from exc
+
+
+@app.post("/vision/frame")
+async def upload_vision_frame(
+    frame: UploadFile = File(...),
+    authorization: Annotated[str | None, Header()] = None,
+    authenticated_role: Annotated[str, Depends(authenticate_request)] = "client",
+) -> dict[str, object]:
+    del authenticated_role
+    key = _vision_key(authorization)
+    if not key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid client authentication.",
+        )
+
+    data = await frame.read(VISION_FRAME_MAX_BYTES + 1)
+    if not data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Vision frame is empty.",
+        )
+    if len(data) > VISION_FRAME_MAX_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Vision frames must be 8 MB or smaller.",
+        )
+
+    mime = _detect_image_mime(data, frame.content_type)
+    if mime is None:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Vision frame must be JPEG, PNG, or WebP.",
+        )
+
+    LATEST_VISION_FRAMES[key] = {
+        "data": data,
+        "mime": mime,
+        "captured_at": time.monotonic(),
+    }
+
+    return {
+        "status": "accepted",
+        "bytes": len(data),
+        "expires_in_seconds": int(VISION_FRAME_TTL_SECONDS),
+    }
+
+
+@app.delete("/vision/frame")
+async def clear_vision_frame(
+    authorization: Annotated[str | None, Header()] = None,
+    authenticated_role: Annotated[str, Depends(authenticate_request)] = "client",
+) -> dict[str, object]:
+    del authenticated_role
+    key = _vision_key(authorization)
+    if key:
+        LATEST_VISION_FRAMES.pop(key, None)
+    return {"status": "cleared"}
 
 
 @app.get(
@@ -1521,7 +1953,8 @@ async def realtime_client_secret(
 @app.post("/v1/frontier/query", response_model=FrontierQueryResponse)
 async def frontier_query(
     payload: FrontierQueryRequest,
-    authenticated_role: Annotated[str, Depends(authenticate_request)],
+    authorization: Annotated[str | None, Header()] = None,
+    authenticated_role: Annotated[str, Depends(authenticate_request)] = "client",
 ) -> FrontierQueryResponse:
     client: AsyncOpenAI | None = getattr(app.state, "frontier_openai", None)
     if client is None:
@@ -1560,7 +1993,14 @@ async def frontier_query(
     )
 
     input_payload: object = payload.prompt.strip()
+    image_url: str | None = None
+
     if payload.image_base64:
+        image_url = "data:image/png;base64," + payload.image_base64.strip()
+    elif _prompt_requests_camera_context(payload.prompt):
+        image_url = _latest_vision_data_url(authorization)
+
+    if image_url:
         input_payload = [
             {
                 "role": "user",
@@ -1571,10 +2011,7 @@ async def frontier_query(
                     },
                     {
                         "type": "input_image",
-                        "image_url": (
-                            "data:image/png;base64,"
-                            + payload.image_base64.strip()
-                        ),
+                        "image_url": image_url,
                     },
                 ],
             }
