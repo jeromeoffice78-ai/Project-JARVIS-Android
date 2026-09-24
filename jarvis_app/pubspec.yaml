@@ -10,7 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_riverpod: ^3.4.2
-  flutter_secure_storage: ^9.2.4
+  flutter_secure_storage: ^11.2.0
   google_sign_in: 6.3.0
   web_socket_channel: ^3.0.3
   torch_light: ^2.0.0
