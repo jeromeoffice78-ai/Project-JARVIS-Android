@@ -5,7 +5,8 @@ on:
     branches:
       - main
     paths:
-      - ".github/workflows/build-jarvis-clean-install.yml"\n      - "jarvis_app/scripts/prepare_native.py"
+      - ".github/workflows/build-jarvis-clean-install.yml"
+      - "jarvis_app/scripts/prepare_native.py"
   workflow_dispatch:
 
 permissions:
