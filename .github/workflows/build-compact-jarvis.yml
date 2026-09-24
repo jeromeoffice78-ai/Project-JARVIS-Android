@@ -1,0 +1,100 @@
+name: Build Compact JARVIS ARM64 APK
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/build-compact-jarvis.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android scaffold
+        working-directory: jarvis_app
+        run: |
+          set -euo pipefail
+          flutter create --platforms=android .
+          rm -f test/widget_test.dart
+          python scripts/prepare_native.py
+
+      - name: Bundle JARVIS avatar runtime and models
+        working-directory: jarvis_app
+        run: |
+          set -euo pipefail
+          mkdir -p assets/models assets/vendor/three/addons/loaders assets/vendor/three/addons/utils
+
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/CesiumMan/glTF-Binary/CesiumMan.glb             --output assets/models/CesiumMan.glb
+
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/mrdoob/three.js/r180/build/three.module.js             --output assets/vendor/three/three.module.js
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/mrdoob/three.js/r180/examples/jsm/loaders/GLTFLoader.js             --output assets/vendor/three/addons/loaders/GLTFLoader.js
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/mrdoob/three.js/r180/examples/jsm/utils/BufferGeometryUtils.js             --output assets/vendor/three/addons/utils/BufferGeometryUtils.js
+
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/vitruvian_body.glb             --output assets/models/vitruvian_body.glb
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/vitruvian_head.glb             --output assets/models/vitruvian_head.glb
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/hairtool_cards.glb             --output assets/models/hairtool_cards.glb
+          for asset in vit_face_bc.png vit_mouth.png vit_sclera.png vit_iris.png vit_hair_atlas.png vit_hair_opacity.png; do
+            curl --fail --location --retry 5 --retry-delay 3               "https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/$asset"               --output "assets/models/$asset"
+          done
+
+          curl --fail --location --retry 5 --retry-delay 3             "https://huggingface.co/mlboydaisuke/ECAPA-TDNN-Speaker-ExecuTorch/resolve/main/speaker_ecapa_xnnpack_fp32.pte?download=true"             --output assets/models/speaker_ecapa_xnnpack_fp32.pte
+          test "$(stat -c %s assets/models/speaker_ecapa_xnnpack_fp32.pte)" -gt 80000000
+
+          flutter pub get
+
+      - name: Build compact ARM64 release APK
+        working-directory: jarvis_app
+        env:
+          JARVIS_HTTP_BASE: ${{ secrets.JARVIS_HTTP_BASE }}
+          JARVIS_WS_URL: ${{ secrets.JARVIS_WS_URL }}
+          JARVIS_CLIENT_TOKEN: ${{ secrets.JARVIS_CLIENT_TOKEN }}
+        run: |
+          set -euo pipefail
+          HTTP_BASE="${JARVIS_HTTP_BASE:-http://10.0.2.2:8000}"
+          WS_URL="${JARVIS_WS_URL:-ws://10.0.2.2:8000/ws/jarvis}"
+          TOKEN="${JARVIS_CLIENT_TOKEN:-}"
+          flutter build apk --release             --target-platform android-arm64             --dart-define=JARVIS_HTTP_BASE="$HTTP_BASE"             --dart-define=JARVIS_WS_URL="$WS_URL"             --dart-define=JARVIS_CLIENT_TOKEN="$TOKEN"
+
+      - name: Stage and inspect compact APK
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp jarvis_app/build/app/outputs/flutter-apk/app-release.apk dist/JARVIS-COMPACT-FULL-ARM64.apk
+          sha256sum dist/JARVIS-COMPACT-FULL-ARM64.apk | tee dist/JARVIS-COMPACT-FULL-ARM64.apk.sha256
+          stat -c "APK_BYTES=%s" dist/JARVIS-COMPACT-FULL-ARM64.apk | tee dist/JARVIS-COMPACT-FULL-ARM64.size.txt
+
+      - name: Publish compact APK release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TAG="jarvis-compact-full-arm64"
+          TITLE="JARVIS Compact Full App - ARM64"
+          NOTES="Compact ARM64 release build of the full JARVIS Android app. Same core features and bundled speaker/avatar models, without debug payload and unused CPU architectures."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG"               dist/JARVIS-COMPACT-FULL-ARM64.apk               dist/JARVIS-COMPACT-FULL-ARM64.apk.sha256               dist/JARVIS-COMPACT-FULL-ARM64.size.txt               --clobber
+          else
+            gh release create "$TAG"               dist/JARVIS-COMPACT-FULL-ARM64.apk               dist/JARVIS-COMPACT-FULL-ARM64.apk.sha256               dist/JARVIS-COMPACT-FULL-ARM64.size.txt               --target main               --title "$TITLE"               --notes "$NOTES"
+          fi
