@@ -52,6 +52,18 @@ jobs:
           rm -f test/widget_test.dart
           python scripts/prepare_native.py
 
+      - name: Enforce zero-placeholder release policy
+        working-directory: jarvis_app
+        run: |
+          set -euo pipefail
+          if grep -RInE \
+            --include='*.dart' --include='*.kt' --include='*.java' \
+            '(^|[^[:alnum:]_])(TODO|FIXME)([^[:alnum:]_]|$)|coming[[:space:]]+soon|placeholder|mock[[:space:]]+(response|result|data)|fake[[:space:]]+(response|result|data)|stub[[:space:]]+(implementation|response|result)' \
+            lib scripts/native; then
+            echo 'JARVIS release blocked: placeholder implementation detected.'
+            exit 1
+          fi
+
       - name: Bundle standalone Jarvis 3D model
         working-directory: jarvis_app
         run: |
