@@ -6,6 +6,7 @@ import '../distribution/jarvis_share_screen.dart';
 import '../phone/jarvis_phone_screen.dart';
 import '../printer/jarvis_printer_screen.dart';
 import '../system_control/jarvis_screen_control_screen.dart';
+import '../vpn/jarvis_vpn_screen.dart';
 import 'jarvis_bluetooth_manager.dart';
 import 'jarvis_cloud_device_network.dart';
 
@@ -43,7 +44,7 @@ class _JarvisDevicesScreenState
           .showSnackBar(
         SnackBar(
           content: Text(
-            'Jarvis handoff sent to ' +
+            'Jarvis handoff confirmed on ' +
                 device.deviceName +
                 '.',
           ),
@@ -69,9 +70,10 @@ class _JarvisDevicesScreenState
     JarvisCloudDevice device,
   ) async {
     try {
-      await network.sendCommand(
+      await network.sendCommandAndWait(
         targetDeviceId: device.deviceId,
         action: 'ping',
+        timeout: const Duration(seconds: 20),
       );
 
       if (!mounted) return;
@@ -80,7 +82,7 @@ class _JarvisDevicesScreenState
           .showSnackBar(
         SnackBar(
           content: Text(
-            'Ping queued for ' +
+            'Ping confirmed by ' +
                 device.deviceName +
                 '.',
           ),
@@ -106,13 +108,14 @@ class _JarvisDevicesScreenState
     JarvisCloudDevice device,
   ) async {
     try {
-      await network.sendCommand(
+      await network.sendCommandAndWait(
         targetDeviceId: device.deviceId,
         action: 'speak_text',
         parameters: <String, dynamic>{
           'text':
               'Jarvis cloud connection is online.',
         },
+        timeout: const Duration(seconds: 30),
       );
 
       if (!mounted) return;
@@ -121,7 +124,7 @@ class _JarvisDevicesScreenState
           .showSnackBar(
         SnackBar(
           content: Text(
-            'Speech command sent to ' +
+            'Speech confirmed by ' +
                 device.deviceName +
                 '.',
           ),
@@ -714,6 +717,30 @@ class _JarvisDevicesScreenState
                   builder:
                       (BuildContext context) =>
                           const JarvisScreenControlScreen(),
+                ),
+              );
+            },
+          ),
+        ),
+        Card(
+          child: ListTile(
+            leading: const Icon(
+              Icons.vpn_key_outlined,
+            ),
+            title: const Text(
+              'JARVIS VPN Guard',
+            ),
+            subtitle: const Text(
+              'Verify Android VPN protection and open the system VPN controls.',
+            ),
+            trailing:
+                const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder:
+                      (BuildContext context) =>
+                          const JarvisVpnScreen(),
                 ),
               );
             },
