@@ -26,9 +26,14 @@ class _JarvisBootstrapState extends ConsumerState<JarvisBootstrap> {
 
     Future<void>.microtask(() async {
       try {
-        await ref.read(jarvisWsServiceProvider).connect();
+        await ref
+            .read(jarvisApiServiceProvider)
+            .health()
+            .timeout(
+              const Duration(seconds: 20),
+            );
       } on Object {
-        // The service owns reconnect/error state; the UI remains usable offline.
+        // The UI remains usable while the backend wakes or reconnects.
       }
     });
   }
