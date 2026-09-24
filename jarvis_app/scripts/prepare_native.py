@@ -56,6 +56,8 @@ def patch_manifest() -> None:
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
@@ -76,6 +78,8 @@ def patch_manifest() -> None:
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
 
     <application""",
@@ -204,6 +208,23 @@ def patch_manifest() -> None:
             1,
         )
 
+    if "JarvisOverlayService" not in text:
+        overlay_service = """\
+        <service
+            android:name=".JarvisOverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-enabled persistent JARVIS floating avatar overlay" />
+        </service>
+"""
+        text = text.replace(
+            "    </application>",
+            overlay_service + "    </application>",
+            1,
+        )
+
     path.write_text(text, encoding="utf-8")
 
 
@@ -274,6 +295,10 @@ class MainActivity : FlutterFragmentActivity() {{
             flutterEngine,
         )
         JarvisCloudRelayBridge.register(
+            this,
+            flutterEngine,
+        )
+        JarvisOverlayBridge.register(
             this,
             flutterEngine,
         )
@@ -851,6 +876,43 @@ class JarvisTextPrintAdapter(
     )
     (path.parent / "JarvisCloudRelayService.kt").write_text(
         cloud_relay_service_text,
+        encoding="utf-8",
+    )
+
+    overlay_bridge_template = (
+        ROOT
+        / "scripts"
+        / "native"
+        / "JarvisOverlayBridge.kt.template"
+    )
+    overlay_service_template = (
+        ROOT
+        / "scripts"
+        / "native"
+        / "JarvisOverlayService.kt.template"
+    )
+    if not overlay_bridge_template.exists():
+        raise RuntimeError(
+            "JarvisOverlayBridge.kt.template is missing"
+        )
+    if not overlay_service_template.exists():
+        raise RuntimeError(
+            "JarvisOverlayService.kt.template is missing"
+        )
+
+    overlay_bridge_text = overlay_bridge_template.read_text(
+        encoding="utf-8"
+    ).replace("__PACKAGE__", package_name)
+    overlay_service_text = overlay_service_template.read_text(
+        encoding="utf-8"
+    ).replace("__PACKAGE__", package_name)
+
+    (path.parent / "JarvisOverlayBridge.kt").write_text(
+        overlay_bridge_text,
+        encoding="utf-8",
+    )
+    (path.parent / "JarvisOverlayService.kt").write_text(
+        overlay_service_text,
         encoding="utf-8",
     )
 
