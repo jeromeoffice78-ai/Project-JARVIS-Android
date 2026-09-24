@@ -55,10 +55,25 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release/JARVIS-FULL-APP.apk release/JARVIS-FULL-APP.apk.sha256 --clobber
           else
-            gh release create "$TAG" \
-              release/JARVIS-FULL-APP.apk \
-              release/JARVIS-FULL-APP.apk.sha256 \
-              --target d2a04f34762eba1248cdf1954622dac335b1f225 \
-              --title "$TITLE" \
-              --notes "$NOTES"
+            gh release create "$TAG"               release/JARVIS-FULL-APP.apk               release/JARVIS-FULL-APP.apk.sha256               --target d2a04f34762eba1248cdf1954622dac335b1f225               --title "$TITLE"               --notes "$NOTES"
           fi
+
+      - name: Record successful APK publication
+        env:
+          RELEASE_URL: https://github.com/${{ github.repository }}/releases/download/jarvis-full-app-d2a04f3/JARVIS-FULL-APP.apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "JARVIS APK RELEASE: PUBLISHED"
+            echo "URL=$RELEASE_URL"
+            echo "SHA256=5c8f23958b531204a90ba1bd99d99938a4102ae43c563df28b6ec347857ed690"
+          } > JARVIS_RELEASE_PUBLISHED.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add JARVIS_RELEASE_PUBLISHED.txt
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "Record JARVIS APK release publication"
+          git push origin HEAD:main
