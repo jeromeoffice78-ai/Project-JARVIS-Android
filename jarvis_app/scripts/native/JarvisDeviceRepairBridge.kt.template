@@ -1,0 +1,753 @@
+package __PACKAGE__
+
+import android.app.Activity
+import android.app.ActivityManager
+import android.bluetooth.BluetoothManager
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.Uri
+import android.os.BatteryManager
+import android.os.Build
+import android.os.Environment
+import android.os.StatFs
+import android.provider.Settings
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
+import java.io.File
+import kotlin.math.roundToInt
+
+object JarvisDeviceRepairBridge {
+    private const val CHANNEL = "jarvis.device_repair"
+
+    fun register(
+        activity: Activity,
+        flutterEngine: FlutterEngine,
+    ) {
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "diagnose" -> {
+                    result.success(
+                        diagnose(activity),
+                    )
+                }
+
+                "scanApps" -> {
+                    result.success(
+                        scanVisibleApps(activity),
+                    )
+                }
+
+                "clearJarvisCache" -> {
+                    result.success(
+                        clearCache(activity.cacheDir),
+                    )
+                }
+
+                "openRepairSettings" -> {
+                    val target =
+                        call.argument<String>("target")
+                            ?.trim()
+                            .orEmpty()
+                    result.success(
+                        openRepairSettings(
+                            activity,
+                            target,
+                        ),
+                    )
+                }
+
+                "openAppDetails" -> {
+                    val packageName =
+                        call.argument<String>("packageName")
+                            ?.trim()
+                            .orEmpty()
+                    result.success(
+                        openAppDetails(
+                            activity,
+                            packageName,
+                        ),
+                    )
+                }
+
+                "requestUninstall" -> {
+                    val packageName =
+                        call.argument<String>("packageName")
+                            ?.trim()
+                            .orEmpty()
+                    result.success(
+                        requestUninstall(
+                            activity,
+                            packageName,
+                        ),
+                    )
+                }
+
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    private fun diagnose(
+        context: Context,
+    ): Map<String, Any?> {
+        val memoryInfo =
+            ActivityManager.MemoryInfo()
+
+        val activityManager =
+            context.getSystemService(
+                Context.ACTIVITY_SERVICE,
+            ) as ActivityManager
+
+        activityManager.getMemoryInfo(
+            memoryInfo,
+        )
+
+        val stat = StatFs(
+            Environment
+                .getDataDirectory()
+                .absolutePath,
+        )
+
+        val totalStorage =
+            stat.totalBytes
+        val freeStorage =
+            stat.availableBytes
+
+        val batteryIntent =
+            context.registerReceiver(
+                null,
+                IntentFilter(
+                    Intent.ACTION_BATTERY_CHANGED,
+                ),
+            )
+
+        val batteryLevelRaw =
+            batteryIntent?.getIntExtra(
+                BatteryManager.EXTRA_LEVEL,
+                -1,
+            ) ?: -1
+        val batteryScale =
+            batteryIntent?.getIntExtra(
+                BatteryManager.EXTRA_SCALE,
+                100,
+            ) ?: 100
+
+        val batteryPercent =
+            if (
+                batteryLevelRaw >= 0 &&
+                batteryScale > 0
+            ) {
+                (
+                    batteryLevelRaw *
+                        100.0 /
+                        batteryScale
+                    ).roundToInt()
+            } else {
+                -1
+            }
+
+        val batteryStatus =
+            batteryIntent?.getIntExtra(
+                BatteryManager.EXTRA_STATUS,
+                -1,
+            ) ?: -1
+
+        val batteryHealth =
+            batteryIntent?.getIntExtra(
+                BatteryManager.EXTRA_HEALTH,
+                BatteryManager
+                    .BATTERY_HEALTH_UNKNOWN,
+            ) ?: BatteryManager
+                .BATTERY_HEALTH_UNKNOWN
+
+        val batteryTemperature =
+            batteryIntent?.getIntExtra(
+                BatteryManager.EXTRA_TEMPERATURE,
+                -1,
+            ) ?: -1
+
+        val connectivity =
+            context.getSystemService(
+                Context.CONNECTIVITY_SERVICE,
+            ) as ConnectivityManager
+
+        val activeNetwork =
+            connectivity.activeNetwork
+
+        val networkCapabilities =
+            activeNetwork?.let {
+                connectivity
+                    .getNetworkCapabilities(it)
+            }
+
+        val hasInternet =
+            networkCapabilities?.hasCapability(
+                NetworkCapabilities
+                    .NET_CAPABILITY_INTERNET,
+            ) == true
+
+        val validatedInternet =
+            networkCapabilities?.hasCapability(
+                NetworkCapabilities
+                    .NET_CAPABILITY_VALIDATED,
+            ) == true
+
+        val bluetoothEnabled =
+            try {
+                val bluetoothManager =
+                    context.getSystemService(
+                        Context.BLUETOOTH_SERVICE,
+                    ) as BluetoothManager
+                bluetoothManager
+                    .adapter
+                    ?.isEnabled
+            } catch (_: Throwable) {
+                null
+            }
+
+        val freeRatio =
+            if (totalStorage > 0) {
+                freeStorage.toDouble() /
+                    totalStorage.toDouble()
+            } else {
+                1.0
+            }
+
+        val lowStorage =
+            freeStorage <
+                1024L * 1024L * 1024L ||
+                freeRatio < 0.10
+
+        val issues =
+            mutableListOf<
+                Map<String, Any?>>()
+
+        if (lowStorage) {
+            issues.add(
+                mapOf(
+                    "code" to "low_storage",
+                    "severity" to "high",
+                    "summary" to
+                        "Internal storage is low.",
+                    "repair" to "storage",
+                ),
+            )
+        }
+
+        if (memoryInfo.lowMemory) {
+            issues.add(
+                mapOf(
+                    "code" to "low_memory",
+                    "severity" to "medium",
+                    "summary" to
+                        "Android reports low available memory.",
+                    "repair" to "apps",
+                ),
+            )
+        }
+
+        if (
+            hasInternet &&
+            !validatedInternet
+        ) {
+            issues.add(
+                mapOf(
+                    "code" to
+                        "internet_not_validated",
+                    "severity" to "medium",
+                    "summary" to
+                        "A network is connected but Android cannot validate internet access.",
+                    "repair" to "internet",
+                ),
+            )
+        }
+
+        if (!hasInternet) {
+            issues.add(
+                mapOf(
+                    "code" to "offline",
+                    "severity" to "medium",
+                    "summary" to
+                        "No active internet-capable network is available.",
+                    "repair" to "internet",
+                ),
+            )
+        }
+
+        if (
+            batteryHealth !=
+                BatteryManager
+                    .BATTERY_HEALTH_GOOD &&
+            batteryHealth !=
+                BatteryManager
+                    .BATTERY_HEALTH_UNKNOWN
+        ) {
+            issues.add(
+                mapOf(
+                    "code" to
+                        "battery_health",
+                    "severity" to "high",
+                    "summary" to
+                        "Android reports a battery-health warning.",
+                    "repair" to "battery",
+                ),
+            )
+        }
+
+        return mapOf(
+            "manufacturer" to
+                Build.MANUFACTURER,
+            "model" to Build.MODEL,
+            "androidVersion" to
+                Build.VERSION.RELEASE,
+            "sdk" to
+                Build.VERSION.SDK_INT,
+            "memory" to mapOf(
+                "availableBytes" to
+                    memoryInfo.availMem,
+                "totalBytes" to
+                    memoryInfo.totalMem,
+                "lowMemory" to
+                    memoryInfo.lowMemory,
+                "thresholdBytes" to
+                    memoryInfo.threshold,
+            ),
+            "storage" to mapOf(
+                "availableBytes" to
+                    freeStorage,
+                "totalBytes" to
+                    totalStorage,
+                "low" to lowStorage,
+            ),
+            "battery" to mapOf(
+                "percent" to
+                    batteryPercent,
+                "status" to
+                    batteryStatus,
+                "health" to
+                    batteryHealth,
+                "temperatureC" to
+                    if (
+                        batteryTemperature >= 0
+                    ) {
+                        batteryTemperature /
+                            10.0
+                    } else {
+                        null
+                    },
+            ),
+            "network" to mapOf(
+                "hasInternetCapability" to
+                    hasInternet,
+                "validated" to
+                    validatedInternet,
+            ),
+            "bluetooth" to mapOf(
+                "enabled" to
+                    bluetoothEnabled,
+            ),
+            "issues" to issues,
+        )
+    }
+
+    private fun scanVisibleApps(
+        context: Context,
+    ): List<Map<String, Any?>> {
+        val packageManager =
+            context.packageManager
+
+        val launcherIntent =
+            Intent(Intent.ACTION_MAIN).apply {
+                addCategory(
+                    Intent.CATEGORY_LAUNCHER,
+                )
+            }
+
+        @Suppress("DEPRECATION")
+        val activities =
+            packageManager
+                .queryIntentActivities(
+                    launcherIntent,
+                    PackageManager.MATCH_ALL,
+                )
+
+        val packages =
+            linkedSetOf<String>()
+
+        activities.forEach {
+            packages.add(
+                it.activityInfo.packageName,
+            )
+        }
+
+        packages.add(
+            context.packageName,
+        )
+
+        return packages
+            .mapNotNull { packageName ->
+                try {
+                    appRisk(
+                        context,
+                        packageName,
+                    )
+                } catch (_: Throwable) {
+                    null
+                }
+            }
+            .sortedByDescending {
+                (it["riskScore"]
+                    as? Number)
+                    ?.toInt() ?: 0
+            }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun appRisk(
+        context: Context,
+        packageName: String,
+    ): Map<String, Any?> {
+        val packageManager =
+            context.packageManager
+
+        val packageInfo =
+            if (
+                Build.VERSION.SDK_INT >= 33
+            ) {
+                packageManager.getPackageInfo(
+                    packageName,
+                    PackageManager
+                        .PackageInfoFlags
+                        .of(
+                            PackageManager
+                                .GET_PERMISSIONS
+                                .toLong(),
+                        ),
+                )
+            } else {
+                packageManager
+                    .getPackageInfo(
+                        packageName,
+                        PackageManager
+                            .GET_PERMISSIONS,
+                    )
+            }
+
+        val applicationInfo =
+            packageInfo.applicationInfo
+
+        val label =
+            applicationInfo
+                ?.loadLabel(packageManager)
+                ?.toString()
+                ?: packageName
+
+        val systemApp =
+            (
+                applicationInfo?.flags ?: 0
+                ) and
+                ApplicationInfo
+                    .FLAG_SYSTEM !=
+                0
+
+        val permissions =
+            packageInfo
+                .requestedPermissions
+                ?.toSet()
+                .orEmpty()
+
+        var score = 0
+        val reasons =
+            mutableListOf<String>()
+
+        fun flag(
+            points: Int,
+            reason: String,
+        ) {
+            score += points
+            reasons.add(reason)
+        }
+
+        if (
+            "android.permission.REQUEST_INSTALL_PACKAGES"
+                in permissions
+        ) {
+            flag(
+                2,
+                "Can request installation of APK packages.",
+            )
+        }
+
+        if (
+            "android.permission.SYSTEM_ALERT_WINDOW"
+                in permissions
+        ) {
+            flag(
+                2,
+                "Requests display-over-other-apps access.",
+            )
+        }
+
+        if (
+            "android.permission.READ_SMS"
+                in permissions ||
+            "android.permission.RECEIVE_SMS"
+                in permissions
+        ) {
+            flag(
+                2,
+                "Requests SMS access.",
+            )
+        }
+
+        if (
+            "android.permission.READ_CALL_LOG"
+                in permissions ||
+            "android.permission.WRITE_CALL_LOG"
+                in permissions
+        ) {
+            flag(
+                2,
+                "Requests call-log access.",
+            )
+        }
+
+        if (
+            "android.permission.RECORD_AUDIO"
+                in permissions &&
+            "android.permission.CAMERA"
+                in permissions
+        ) {
+            flag(
+                1,
+                "Requests both camera and microphone access.",
+            )
+        }
+
+        if (
+            "android.permission.RECEIVE_BOOT_COMPLETED"
+                in permissions
+        ) {
+            flag(
+                1,
+                "Can start work after device boot.",
+            )
+        }
+
+        val installer =
+            try {
+                if (
+                    Build.VERSION.SDK_INT >=
+                    Build.VERSION_CODES.R
+                ) {
+                    packageManager
+                        .getInstallSourceInfo(
+                            packageName,
+                        )
+                        .installingPackageName
+                } else {
+                    packageManager
+                        .getInstallerPackageName(
+                            packageName,
+                        )
+                }
+            } catch (_: Throwable) {
+                null
+            }
+
+        val trustedInstallers =
+            setOf(
+                "com.android.vending",
+                "com.google.android.packageinstaller",
+                "com.android.packageinstaller",
+                "com.sec.android.app.samsungapps",
+                "com.amazon.venezia",
+            )
+
+        if (
+            !systemApp &&
+            installer != null &&
+            installer !in trustedInstallers
+        ) {
+            flag(
+                2,
+                "Installed by an unrecognized installer: $installer",
+            )
+        }
+
+        if (
+            !systemApp &&
+            installer == null &&
+            packageName != context.packageName
+        ) {
+            flag(
+                1,
+                "Installer source is unavailable.",
+            )
+        }
+
+        val cappedScore =
+            score.coerceIn(0, 10)
+
+        return mapOf(
+            "label" to label,
+            "packageName" to
+                packageName,
+            "systemApp" to
+                systemApp,
+            "installer" to
+                installer,
+            "firstInstallTime" to
+                packageInfo.firstInstallTime,
+            "lastUpdateTime" to
+                packageInfo.lastUpdateTime,
+            "riskScore" to
+                cappedScore,
+            "riskLevel" to
+                when {
+                    cappedScore >= 6 ->
+                        "high"
+                    cappedScore >= 3 ->
+                        "medium"
+                    else -> "low"
+                },
+            "reasons" to reasons,
+        )
+    }
+
+    private fun clearCache(
+        cache: File,
+    ): Boolean {
+        return try {
+            cache.listFiles()
+                ?.forEach {
+                    it.deleteRecursively()
+                }
+            true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun openRepairSettings(
+        activity: Activity,
+        target: String,
+    ): Boolean {
+        val intent =
+            when (target) {
+                "storage" ->
+                    Intent(
+                        Settings
+                            .ACTION_INTERNAL_STORAGE_SETTINGS,
+                    )
+                "internet" ->
+                    if (
+                        Build.VERSION.SDK_INT >=
+                        Build.VERSION_CODES.Q
+                    ) {
+                        Intent(
+                            Settings.Panel
+                                .ACTION_INTERNET_CONNECTIVITY,
+                        )
+                    } else {
+                        Intent(
+                            Settings
+                                .ACTION_WIRELESS_SETTINGS,
+                        )
+                    }
+                "bluetooth" ->
+                    Intent(
+                        Settings
+                            .ACTION_BLUETOOTH_SETTINGS,
+                    )
+                "battery" ->
+                    Intent(
+                        Settings
+                            .ACTION_BATTERY_SAVER_SETTINGS,
+                    )
+                "apps" ->
+                    Intent(
+                        Settings
+                            .ACTION_APPLICATION_SETTINGS,
+                    )
+                "security" ->
+                    Intent(
+                        Settings
+                            .ACTION_SECURITY_SETTINGS,
+                    )
+                else ->
+                    Intent(
+                        Settings.ACTION_SETTINGS,
+                    )
+            }
+
+        return try {
+            activity.startActivity(intent)
+            true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun openAppDetails(
+        activity: Activity,
+        packageName: String,
+    ): Boolean {
+        if (packageName.isBlank()) {
+            return false
+        }
+
+        return try {
+            activity.startActivity(
+                Intent(
+                    Settings
+                        .ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse(
+                        "package:$packageName",
+                    ),
+                ),
+            )
+            true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun requestUninstall(
+        activity: Activity,
+        packageName: String,
+    ): Boolean {
+        if (
+            packageName.isBlank() ||
+            packageName ==
+                activity.packageName
+        ) {
+            return false
+        }
+
+        return try {
+            activity.startActivity(
+                Intent(
+                    Intent.ACTION_DELETE,
+                    Uri.parse(
+                        "package:$packageName",
+                    ),
+                ).putExtra(
+                    Intent.EXTRA_RETURN_RESULT,
+                    true,
+                ),
+            )
+            true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+}
