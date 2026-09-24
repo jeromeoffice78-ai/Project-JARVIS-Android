@@ -1525,6 +1525,7 @@ def patch_debug_manifest() -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n'
+        '    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />\n'
         '    <application android:usesCleartextTraffic="true" />\n'
         '</manifest>\n',
         encoding="utf-8",
