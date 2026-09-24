@@ -1,0 +1,3 @@
+JARVIS APK RELEASE: PUBLISHED
+URL=https://github.com/jeromeoffice78-ai/Project-JARVIS-Android/releases/download/jarvis-full-app-d2a04f3/JARVIS-FULL-APP.apk
+SHA256=5c8f23958b531204a90ba1bd99d99938a4102ae43c563df28b6ec347857ed690
