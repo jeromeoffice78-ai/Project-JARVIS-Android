@@ -1,0 +1,112 @@
+name: Diagnose JARVIS ARM64 APK
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/diagnose-jarvis-arm64.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Download published ARM64 APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p diag
+          gh release download jarvis-compact-full-v1.3.0             --pattern 'JARVIS-FULL-APP-ARM64.apk'             --dir diag
+          ls -lh diag/JARVIS-FULL-APP-ARM64.apk
+
+      - name: Locate Android build tools
+        id: tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS_DIR="$(find "${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          echo "dir=$BUILD_TOOLS_DIR" >> "$GITHUB_OUTPUT"
+          echo "Using $BUILD_TOOLS_DIR"
+          ls "$BUILD_TOOLS_DIR" | grep -E 'apksigner|zipalign|aapt' || true
+
+      - name: Verify APK signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${{ steps.tools.outputs.dir }}/apksigner" verify             --verbose             --print-certs             diag/JARVIS-FULL-APP-ARM64.apk | tee diag/apksigner.txt
+
+      - name: Parse APK manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -x "${{ steps.tools.outputs.dir }}/aapt" ]; then
+            "${{ steps.tools.outputs.dir }}/aapt" dump badging               diag/JARVIS-FULL-APP-ARM64.apk | tee diag/badging.txt
+          else
+            "${{ steps.tools.outputs.dir }}/aapt2" dump badging               diag/JARVIS-FULL-APP-ARM64.apk | tee diag/badging.txt
+          fi
+
+      - name: Check Android 15 16KB ZIP alignment
+        shell: bash
+        run: |
+          set +e
+          "${{ steps.tools.outputs.dir }}/zipalign" -c -P 16 -v 4             diag/JARVIS-FULL-APP-ARM64.apk > diag/zipalign16.txt 2>&1
+          STATUS=$?
+          cat diag/zipalign16.txt
+          echo "ZIPALIGN16_STATUS=$STATUS" | tee diag/zipalign-status.txt
+          exit 0
+
+      - name: Check ARM64 ELF segment alignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p diag/unpacked
+          unzip -q diag/JARVIS-FULL-APP-ARM64.apk 'lib/arm64-v8a/*.so' -d diag/unpacked
+          python3 - <<'PY' | tee diag/elf-alignment.txt
+          import os, re, subprocess, glob
+          bad=[]
+          for path in sorted(glob.glob('diag/unpacked/lib/arm64-v8a/*.so')):
+              out=subprocess.check_output(['readelf','-lW',path], text=True, errors='replace')
+              aligns=[]
+              for line in out.splitlines():
+                  if line.strip().startswith('LOAD'):
+                      parts=line.split()
+                      try:
+                          align=parts[-1]
+                          val=int(align,16) if align.startswith('0x') else int(align,0)
+                          aligns.append(val)
+                      except Exception:
+                          pass
+              minimum=min(aligns) if aligns else 0
+              ok=minimum >= 16384
+              print(f"{os.path.basename(path)} min_LOAD_align={minimum} {'OK' if ok else 'UNALIGNED'}")
+              if not ok:
+                  bad.append(path)
+          print(f"UNALIGNED_COUNT={len(bad)}")
+          PY
+
+      - name: Upload diagnostic report
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-arm64-apk-diagnostics
+          path: |
+            diag/apksigner.txt
+            diag/badging.txt
+            diag/zipalign16.txt
+            diag/zipalign-status.txt
+            diag/elf-alignment.txt
+          retention-days: 7
