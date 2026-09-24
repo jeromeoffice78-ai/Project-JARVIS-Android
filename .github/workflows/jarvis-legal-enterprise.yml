@@ -304,6 +304,7 @@ jobs:
           python scripts/prepare_native.py
           python - <<'PY'
           from pathlib import Path
+
           manifest = Path('android/app/src/main/AndroidManifest.xml')
           text = manifest.read_text()
           text = text.replace(
@@ -311,6 +312,31 @@ jobs:
               'android:label="JARVIS AI Assistant"',
           )
           manifest.write_text(text)
+
+          gradle = Path('android/app/build.gradle.kts')
+          text = gradle.read_text()
+          if 'useLegacyPackaging = true' not in text:
+              text = text.replace(
+                  'android {',
+                  '''android {
+              packaging {
+                  jniLibs {
+                      useLegacyPackaging = true
+                  }
+              }
+          ''',
+                  1,
+              )
+          if 'abiFilters += listOf("arm64-v8a")' not in text:
+              text = text.replace(
+                  'minSdk = 26',
+                  '''minSdk = 26
+                  ndk {
+                      abiFilters += listOf("arm64-v8a")
+                  }''',
+                  1,
+              )
+          gradle.write_text(text)
           PY
 
       - name: Bundle local JARVIS avatar assets
