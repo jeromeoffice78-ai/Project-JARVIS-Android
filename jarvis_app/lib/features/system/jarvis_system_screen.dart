@@ -7,6 +7,7 @@ import '../../core/config/jarvis_config.dart';
 import '../../core/network/jarvis_ws_service.dart';
 import '../../core/network/providers.dart';
 import '../capabilities/jarvis_capability_service.dart';
+import '../security/jarvis_device_defense_screen.dart';
 
 class JarvisSystemScreen extends ConsumerStatefulWidget {
   const JarvisSystemScreen({super.key});
@@ -322,6 +323,45 @@ class _JarvisSystemScreenState
                     ),
                     label: const Text(
                       'Save Smart Home Bridge',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    'Device Defense & System Repair',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Run virus/malware risk scans, diagnose storage, memory, network, Bluetooth, battery, and other Android system problems, then launch or perform the supported repair action.',
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) =>
+                              const JarvisDeviceDefenseScreen(),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.shield_outlined),
+                    label: const Text(
+                      'Open Device Defense',
                     ),
                   ),
                 ],
