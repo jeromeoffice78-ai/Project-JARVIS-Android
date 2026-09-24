@@ -11,6 +11,7 @@ import 'package:torch_light/torch_light.dart';
 import '../../core/config/jarvis_config.dart';
 import '../music/jarvis_music_service.dart';
 import '../printer/jarvis_printer_service.dart';
+import '../security/jarvis_device_repair_service.dart';
 import '../system_control/jarvis_system_control_service.dart';
 import '../vision/jarvis_vision_service.dart';
 import '../voice/jarvis_voice_service.dart';
@@ -196,6 +197,8 @@ class JarvisCloudDeviceNetwork
     required JarvisVoiceService voiceService,
     required JarvisSystemControlService
         systemControlService,
+    required JarvisDeviceRepairService
+        deviceRepairService,
     http.Client? client,
   })  : _config = config,
         _printerService = printerService,
@@ -204,6 +207,8 @@ class JarvisCloudDeviceNetwork
         _voiceService = voiceService,
         _systemControlService =
             systemControlService,
+        _deviceRepairService =
+            deviceRepairService,
         _client = client ?? http.Client() {
     WidgetsBinding.instance.addObserver(this);
     unawaited(start());
@@ -230,6 +235,9 @@ class JarvisCloudDeviceNetwork
     'flashlight_off',
     'avatar_handoff',
     'wake_jarvis',
+    'device_diagnose',
+    'device_scan_security',
+    'device_repair',
   };
 
   final JarvisConfig _config;
@@ -239,6 +247,8 @@ class JarvisCloudDeviceNetwork
   final JarvisVoiceService _voiceService;
   final JarvisSystemControlService
       _systemControlService;
+  final JarvisDeviceRepairService
+      _deviceRepairService;
   final http.Client _client;
 
   final SharedPreferencesAsync _preferences =
@@ -503,6 +513,9 @@ class JarvisCloudDeviceNetwork
           'flashlight': true,
           'avatar_handoff': true,
           'bluetooth_le': true,
+          'device_diagnostics': true,
+          'device_security_scan': true,
+          'device_repair': true,
         },
       });
 
@@ -1020,6 +1033,104 @@ class JarvisCloudDeviceNetwork
         return const <String, dynamic>{
           'awake': true,
           'listening': true,
+        };
+
+      case 'device_diagnose':
+        final JarvisDeviceDiagnosis diagnosis =
+            await _deviceRepairService.diagnose();
+        return <String, dynamic>{
+          'healthy': diagnosis.healthy,
+          'issues': diagnosis.issues
+              .map(
+                (JarvisDeviceIssue issue) =>
+                    <String, dynamic>{
+                  'code': issue.code,
+                  'severity': issue.severity,
+                  'summary': issue.summary,
+                  'repair': issue.repair,
+                },
+              )
+              .toList(growable: false),
+        };
+
+      case 'device_scan_security':
+        final List<JarvisAppThreat> apps =
+            await _deviceRepairService.scanApps();
+        final List<JarvisAppThreat> risky =
+            apps
+                .where(
+                  (JarvisAppThreat app) =>
+                      app.needsReview,
+                )
+                .toList(growable: false);
+        return <String, dynamic>{
+          'scanned_apps': apps.length,
+          'review_count': risky.length,
+          'possible_malware_count': risky
+              .where(
+                (JarvisAppThreat app) =>
+                    app.possibleMalware,
+              )
+              .length,
+          'findings': risky
+              .map(
+                (JarvisAppThreat app) =>
+                    <String, dynamic>{
+                  'label': app.label,
+                  'package_name':
+                      app.packageName,
+                  'risk_score':
+                      app.riskScore,
+                  'risk_level':
+                      app.riskLevel,
+                  'possible_malware':
+                      app.possibleMalware,
+                  'reasons': app.reasons,
+                },
+              )
+              .toList(growable: false),
+        };
+
+      case 'device_repair':
+        final String target =
+            parameters['target']
+                    ?.toString()
+                    .trim() ??
+                '';
+        if (!const <String>{
+          'storage',
+          'memory',
+          'internet',
+          'bluetooth',
+          'battery',
+          'apps',
+          'security',
+          'system_update',
+          'date_time',
+          'display',
+          'sound',
+          'accessibility',
+          'jarvis_cache',
+        }.contains(target)) {
+          throw ArgumentError(
+            'Unsupported device repair target.',
+          );
+        }
+
+        final JarvisRepairResult repair =
+            await _deviceRepairService
+                .repairIssue(target);
+
+        if (!repair.ok) {
+          throw StateError(repair.message);
+        }
+
+        return <String, dynamic>{
+          'target': repair.target,
+          'action': repair.action,
+          'requires_user_action':
+              repair.requiresUserAction,
+          'message': repair.message,
         };
 
       case 'avatar_handoff':
