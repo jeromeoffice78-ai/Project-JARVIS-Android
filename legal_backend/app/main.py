@@ -1082,7 +1082,8 @@ async def realtime_client_secret(
                         "Send an approved command to another online JARVIS device. "
                         "Supported actions include speak_text, play_music, music_pause, "
                         "music_resume, vision_refresh, flashlight_on, flashlight_off, "
-                        "system_action, ping, and avatar_handoff."
+                        "system_action, device_diagnose, device_scan_security, "
+                        "device_repair, ping, and avatar_handoff."
                     ),
                     "parameters": {
                         "type": "object",
@@ -1167,6 +1168,66 @@ async def realtime_client_secret(
                             "enabled": {"type": "boolean"},
                         },
                         "required": ["enabled"],
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "device_diagnose",
+                    "description": (
+                        "Diagnose this Android device for storage, memory, network, "
+                        "Bluetooth, battery, and other supported system problems."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "device_scan_security",
+                    "description": (
+                        "Scan visible installed apps for concrete malware and security "
+                        "risk indicators. Findings are heuristic unless a signature or "
+                        "reputation engine independently confirms a threat."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "device_repair_issue",
+                    "description": (
+                        "Repair a diagnosed Android issue when permitted, or open the "
+                        "exact Android repair controls when user confirmation is required."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "target": {
+                                "type": "string",
+                                "enum": [
+                                    "storage",
+                                    "memory",
+                                    "internet",
+                                    "bluetooth",
+                                    "battery",
+                                    "apps",
+                                    "security",
+                                    "system_update",
+                                    "date_time",
+                                    "display",
+                                    "sound",
+                                    "accessibility",
+                                    "jarvis_cache",
+                                ],
+                            },
+                        },
+                        "required": ["target"],
                         "additionalProperties": False,
                     },
                 },

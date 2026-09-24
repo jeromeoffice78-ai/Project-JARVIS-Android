@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/network/providers.dart';
 import '../devices/jarvis_cloud_device_network.dart';
 import 'jarvis_human_avatar_view.dart';
+import 'jarvis_system_overlay_control.dart';
 import '../realtime/jarvis_realtime_voice_screen.dart';
 import '../realtime/jarvis_realtime_voice_service.dart';
 import '../voice/jarvis_voice_screen.dart';
@@ -354,8 +355,13 @@ class JarvisPresenceScreen
                   ],
                 ),
                 const SizedBox(height: 10),
+                JarvisSystemOverlayControl(
+                  voiceState: voice,
+                  active: jarvisHere,
+                ),
+                const SizedBox(height: 10),
                 const Text(
-                  'Autonomous human presence • facial expressions • lip motion • walking • device handoff',
+                  'Autonomous human presence • facial expressions • lip motion • walking • device handoff • Android system overlay',
                   style: TextStyle(
                     color: Colors.white38,
                     fontSize: 12,
