@@ -4,10 +4,14 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.location.Location
+import android.location.LocationManager
 import android.os.Build
 import android.os.IBinder
 import android.speech.tts.TextToSpeech
@@ -202,7 +206,7 @@ class JarvisCloudRelayService :
         val now = System.currentTimeMillis()
 
         if (now - lastHeartbeatAt >= 20_000L) {
-            post(
+            val heartbeat =
                 JSONObject()
                     .put("operation", "heartbeat")
                     .put("device_id", deviceId)
@@ -217,9 +221,18 @@ class JarvisCloudRelayService :
                             .put("cloud_background_relay", true)
                             .put("speech", true)
                             .put("flashlight", true)
-                            .put("avatar_handoff", true),
-                    ),
-            )
+                            .put("avatar_handoff", true)
+                            .put("device_location", true),
+                    )
+
+            latestPermittedLocation()?.let { location ->
+                heartbeat
+                    .put("latitude", location.latitude)
+                    .put("longitude", location.longitude)
+                    .put("location_accuracy_m", location.accuracy.toDouble())
+            }
+
+            post(heartbeat)
             lastHeartbeatAt = now
         }
 
@@ -246,6 +259,34 @@ class JarvisCloudRelayService :
                 commands.optJSONObject(index) ?: continue
             executeCommand(command)
         }
+    }
+
+    private fun latestPermittedLocation(): Location? {
+        val fine =
+            checkSelfPermission(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+            ) == PackageManager.PERMISSION_GRANTED
+        val coarse =
+            checkSelfPermission(
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+            ) == PackageManager.PERMISSION_GRANTED
+
+        if (!fine && !coarse) return null
+
+        val manager =
+            getSystemService(
+                Context.LOCATION_SERVICE,
+            ) as LocationManager
+
+        return manager.getProviders(true)
+            .mapNotNull { provider ->
+                try {
+                    manager.getLastKnownLocation(provider)
+                } catch (_: SecurityException) {
+                    null
+                }
+            }
+            .maxByOrNull { location -> location.time }
     }
 
     private fun executeCommand(command: JSONObject) {
