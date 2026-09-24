@@ -105,6 +105,15 @@ def patch_manifest() -> None:
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
         <intent>
+            <action android:name="android.accessibilityservice.AccessibilityService" />
+        </intent>
+        <intent>
+            <action android:name="android.service.notification.NotificationListenerService" />
+        </intent>
+        <intent>
+            <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+        </intent>
+        <intent>
             <action android:name="android.intent.action.DIAL" />
             <data android:scheme="tel" />
         </intent>
