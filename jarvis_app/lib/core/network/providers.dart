@@ -211,6 +211,9 @@ final jarvisChatControllerProvider =
     wsService: ref.watch(
       jarvisWsServiceProvider,
     ),
+    apiService: ref.watch(
+      jarvisApiServiceProvider,
+    ),
     capabilityService: ref.watch(
       jarvisCapabilityServiceProvider,
     ),
@@ -398,10 +401,28 @@ final jarvisCloudDeviceStateProvider =
 
 final jarvisConnectionStateProvider =
     StreamProvider<JarvisConnectionState>(
-  (Ref ref) {
-    return ref
-        .watch(jarvisWsServiceProvider)
-        .connectionState;
+  (Ref ref) async* {
+    final JarvisApiService api =
+        ref.watch(jarvisApiServiceProvider);
+
+    yield JarvisConnectionState.connecting;
+
+    while (true) {
+      try {
+        await api
+            .health()
+            .timeout(
+              const Duration(seconds: 20),
+            );
+        yield JarvisConnectionState.connected;
+      } on Object {
+        yield JarvisConnectionState.disconnected;
+      }
+
+      await Future<void>.delayed(
+        const Duration(seconds: 15),
+      );
+    }
   },
 );
 
