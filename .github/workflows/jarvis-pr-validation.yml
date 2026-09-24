@@ -1,0 +1,147 @@
+name: JARVIS PR Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-flutter-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Show toolchain
+        working-directory: jarvis_app
+        run: |
+          flutter --version
+          dart --version
+          java -version
+
+      - name: Generate Android scaffold
+        working-directory: jarvis_app
+        run: |
+          flutter create --platforms=android .
+          rm -f test/widget_test.dart
+          python scripts/prepare_native.py
+
+      - name: Bundle standalone Jarvis 3D model
+        working-directory: jarvis_app
+        run: |
+          set -euo pipefail
+          mkdir -p assets/models
+          curl --fail --location --retry 5 --retry-delay 3 \
+            https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/CesiumMan/glTF-Binary/CesiumMan.glb \
+            --output assets/models/CesiumMan.glb
+          test -s assets/models/CesiumMan.glb
+
+      - name: Bundle local Three.js avatar runtime
+        working-directory: jarvis_app
+        run: |
+          set -euo pipefail
+          mkdir -p assets/vendor/three/addons/loaders
+          mkdir -p assets/vendor/three/addons/utils
+          curl --fail --location --retry 5 --retry-delay 3 \
+            https://raw.githubusercontent.com/mrdoob/three.js/r180/build/three.module.js \
+            --output assets/vendor/three/three.module.js
+          curl --fail --location --retry 5 --retry-delay 3 \
+            https://raw.githubusercontent.com/mrdoob/three.js/r180/examples/jsm/loaders/GLTFLoader.js \
+            --output assets/vendor/three/addons/loaders/GLTFLoader.js
+          curl --fail --location --retry 5 --retry-delay 3 \
+            https://raw.githubusercontent.com/mrdoob/three.js/r180/examples/jsm/utils/BufferGeometryUtils.js \
+            --output assets/vendor/three/addons/utils/BufferGeometryUtils.js
+          test -s assets/vendor/three/three.module.js
+          test -s assets/vendor/three/addons/loaders/GLTFLoader.js
+          test -s assets/vendor/three/addons/utils/BufferGeometryUtils.js
+
+      - name: Bundle photoreal human Jarvis assets
+        working-directory: jarvis_app
+        run: |
+          set -euo pipefail
+          mkdir -p assets/models
+          curl --fail --location --retry 5 --retry-delay 3 \
+            https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/vitruvian_body.glb \
+            --output assets/models/vitruvian_body.glb
+          curl --fail --location --retry 5 --retry-delay 3 \
+            https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/vitruvian_head.glb \
+            --output assets/models/vitruvian_head.glb
+          curl --fail --location --retry 5 --retry-delay 3 \
+            https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/hairtool_cards.glb \
+            --output assets/models/hairtool_cards.glb
+          for asset in vit_face_bc.png vit_mouth.png vit_sclera.png vit_iris.png vit_hair_atlas.png vit_hair_opacity.png; do
+            curl --fail --location --retry 5 --retry-delay 3 \
+              "https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/$asset" \
+              --output "assets/models/$asset"
+          done
+          test -s assets/models/vitruvian_body.glb
+          test -s assets/models/vitruvian_head.glb
+          test -s assets/models/hairtool_cards.glb
+          test -s assets/models/vit_face_bc.png
+          test -s assets/models/vit_mouth.png
+          test -s assets/models/vit_sclera.png
+          test -s assets/models/vit_iris.png
+          test -s assets/models/vit_hair_atlas.png
+          test -s assets/models/vit_hair_opacity.png
+          flutter pub get
+
+      - name: Bundle on-device speaker identity model
+        working-directory: jarvis_app
+        run: |
+          set -euo pipefail
+          mkdir -p assets/models
+          curl --fail --location --retry 5 --retry-delay 3 \
+            "https://huggingface.co/mlboydaisuke/ECAPA-TDNN-Speaker-ExecuTorch/resolve/main/speaker_ecapa_xnnpack_fp32.pte?download=true" \
+            --output assets/models/speaker_ecapa_xnnpack_fp32.pte
+          test "$(stat -c %s assets/models/speaker_ecapa_xnnpack_fp32.pte)" -gt 80000000
+
+      - name: Flutter analyze
+        working-directory: jarvis_app
+        run: flutter analyze --no-fatal-warnings --no-fatal-infos
+
+      - name: Build debug APK
+        working-directory: jarvis_app
+        env:
+          JARVIS_HTTP_BASE: ${{ secrets.JARVIS_HTTP_BASE }}
+          JARVIS_WS_URL: ${{ secrets.JARVIS_WS_URL }}
+          JARVIS_CLIENT_TOKEN: ${{ secrets.JARVIS_CLIENT_TOKEN }}
+        run: |
+          HTTP_BASE="${JARVIS_HTTP_BASE:-http://10.0.2.2:8000}"
+          WS_URL="${JARVIS_WS_URL:-ws://10.0.2.2:8000/ws/jarvis}"
+          TOKEN="${JARVIS_CLIENT_TOKEN:-}"
+          flutter build apk --debug \
+            --dart-define=JARVIS_HTTP_BASE="$HTTP_BASE" \
+            --dart-define=JARVIS_WS_URL="$WS_URL" \
+            --dart-define=JARVIS_CLIENT_TOKEN="$TOKEN"
+
+      - name: Stage APK
+        run: |
+          mkdir -p dist
+          cp jarvis_app/build/app/outputs/flutter-apk/app-debug.apk dist/JARVIS-device-defense-debug.apk
+          sha256sum dist/JARVIS-device-defense-debug.apk > dist/JARVIS-device-defense-debug.apk.sha256
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-device-defense-debug
+          path: |
+            dist/JARVIS-device-defense-debug.apk
+            dist/JARVIS-device-defense-debug.apk.sha256
+          retention-days: 7
