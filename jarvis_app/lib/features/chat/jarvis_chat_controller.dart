@@ -799,6 +799,7 @@ class JarvisChatController {
     parts.add(
       "Number region is not the caller's live GPS location",
     );
+
     return parts.join('. ') + '.';
   }
 
@@ -1493,6 +1494,7 @@ Then add one blank line and the complete document body. Do not include markdown 
     if (callerLookupMatch != null) {
       final String number =
           callerLookupMatch.group(1)?.trim() ?? '';
+
       if (number.isNotEmpty) {
         return _runLocalCapability(
           action: 'phone_caller_lookup',
