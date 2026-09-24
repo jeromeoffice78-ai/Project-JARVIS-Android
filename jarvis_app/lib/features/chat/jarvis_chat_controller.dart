@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:torch_light/torch_light.dart';
 
+import '../../core/network/jarvis_api_service.dart';
 import '../../core/network/jarvis_ws_service.dart';
 import '../../core/protocol/jarvis_protocol.dart';
 import '../capabilities/jarvis_capability_service.dart';
@@ -47,8 +48,10 @@ final class JarvisChatState {
 class JarvisChatController {
   JarvisChatController({
     required JarvisWsService wsService,
+    required JarvisApiService apiService,
     required JarvisCapabilityService capabilityService,
   })  : _wsService = wsService,
+        _apiService = apiService,
         _capabilityService = capabilityService {
     _messageSubscription = _wsService.incomingMessages.listen(
       (Map<String, dynamic> rawMap) {
@@ -69,6 +72,7 @@ class JarvisChatController {
   }
 
   final JarvisWsService _wsService;
+  final JarvisApiService _apiService;
   final JarvisCapabilityService _capabilityService;
 
   final StreamController<JarvisChatState> _stateController =
@@ -153,16 +157,14 @@ class JarvisChatController {
         ? _buildAutoPrintQuery(normalized)
         : normalized;
 
-    final UserTextQueryEvent event =
-        UserTextQueryEvent(text: effectiveQuery);
+    final String requestId =
+        _newLocalRequestId('remote');
 
     if (autoPrint) {
-      _autoPrintRequestIds.add(
-        event.requestId,
-      );
+      _autoPrintRequestIds.add(requestId);
     }
 
-    _activeRequestId = event.requestId;
+    _activeRequestId = requestId;
     _currentResponseBuffer = '';
     _expectedChunkIndex = 0;
 
@@ -170,34 +172,92 @@ class JarvisChatController {
       JarvisChatState(
         status: JarvisChatStatus.thinking,
         responseText: '',
-        requestId: event.requestId,
+        requestId: requestId,
+      ),
+    );
+    _emitResponseBuffer();
+
+    unawaited(
+      _executeRemoteHttpQuery(
+        requestId: requestId,
+        prompt: effectiveQuery,
+        autoPrint: autoPrint,
       ),
     );
 
-    _emitResponseBuffer();
+    return requestId;
+  }
 
+  Future<void> _executeRemoteHttpQuery({
+    required String requestId,
+    required String prompt,
+    required bool autoPrint,
+  }) async {
     try {
-      _wsService.sendJson(event.toJson());
-      return event.requestId;
-    } on Object catch (error) {
-      _autoPrintRequestIds.remove(
-        event.requestId,
+      final JarvisFrontierResult result =
+          await _apiService.frontierQuery(
+        prompt: prompt,
+        mode: 'reason',
       );
-      _activeRequestId = null;
+
+      if (_disposed ||
+          _activeRequestId != requestId) {
+        return;
+      }
+
+      final String response =
+          result.answer.trim();
+
+      if (response.isEmpty) {
+        throw const FormatException(
+          'Jarvis backend returned an empty response.',
+        );
+      }
+
+      _currentResponseBuffer = response;
+      _emitResponseBuffer();
+
+      _emitState(
+        JarvisChatState(
+          status: JarvisChatStatus.completed,
+          responseText: response,
+          requestId: requestId,
+        ),
+      );
+
+      if (autoPrint) {
+        _autoPrintRequestIds.remove(requestId);
+        unawaited(
+          _routeCompletedDocumentForPrinting(
+            requestId: requestId,
+            rawResponse: response,
+          ),
+        );
+      }
+    } on Object catch (error) {
+      if (_disposed ||
+          _activeRequestId != requestId) {
+        return;
+      }
+
+      _autoPrintRequestIds.remove(requestId);
 
       _emitState(
         JarvisChatState(
           status: JarvisChatStatus.error,
-          responseText: '',
-          requestId: event.requestId,
+          responseText:
+              _currentResponseBuffer,
+          requestId: requestId,
           errorMessage:
-              'Unable to send request: ' +
-                  error.toString(),
+              'Jarvis backend request failed: $error',
           retryable: true,
         ),
       );
-
-      return null;
+    } finally {
+      if (_activeRequestId == requestId) {
+        _activeRequestId = null;
+        _expectedChunkIndex = 0;
+      }
     }
   }
 
@@ -935,10 +995,16 @@ Then add one blank line and the complete document body. Do not include markdown 
       return;
     }
 
-    _wsService.sendJson(
-      CancelResponseEvent(
+    _autoPrintRequestIds.remove(requestId);
+    _activeRequestId = null;
+    _expectedChunkIndex = 0;
+
+    _emitState(
+      JarvisChatState(
+        status: JarvisChatStatus.cancelled,
+        responseText: _currentResponseBuffer,
         requestId: requestId,
-      ).toJson(),
+      ),
     );
   }
 
