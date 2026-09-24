@@ -14,6 +14,7 @@ import '../../features/people/jarvis_voice_identity_service.dart';
 import '../../features/printer/jarvis_printer_service.dart';
 import '../../features/printer/jarvis_print_router.dart';
 import '../../features/realtime/jarvis_realtime_voice_service.dart';
+import '../../features/security/jarvis_device_repair_service.dart';
 import '../../features/system_control/jarvis_system_control_service.dart';
 import '../../features/vision/jarvis_vision_service.dart';
 import '../../features/voice/jarvis_voice_controller.dart';
@@ -190,6 +191,13 @@ final jarvisSystemControlServiceProvider =
     Provider<JarvisSystemControlService>(
   (Ref ref) {
     return JarvisSystemControlService();
+  },
+);
+
+final jarvisDeviceRepairServiceProvider =
+    Provider<JarvisDeviceRepairService>(
+  (Ref ref) {
+    return const JarvisDeviceRepairService();
   },
 );
 
