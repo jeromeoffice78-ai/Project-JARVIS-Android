@@ -198,10 +198,9 @@ class JarvisDeviceRepairService {
             )
             .toList(growable: false),
       );
-    } on PlatformException {
-      return const JarvisDeviceDiagnosis(
-        raw: <String, dynamic>{},
-        issues: <JarvisDeviceIssue>[],
+    } on PlatformException catch (error) {
+      throw StateError(
+        'Android device diagnosis is unavailable: ${error.message ?? error.code}',
       );
     }
   }
@@ -231,8 +230,10 @@ class JarvisDeviceRepairService {
                     .fromMap(item),
           )
           .toList(growable: false);
-    } on PlatformException {
-      return const <JarvisAppThreat>[];
+    } on PlatformException catch (error) {
+      throw StateError(
+        'Android security scan is unavailable: ${error.message ?? error.code}',
+      );
     }
   }
 
@@ -350,23 +351,22 @@ class JarvisDeviceRepairService {
     }
   }
 
-  Future<bool> isPackageInstalled(
+  Future<bool?> isPackageInstalled(
     String packageName,
   ) async {
     if (!isSupported) {
-      return false;
+      return null;
     }
 
     try {
       return await _channel.invokeMethod<bool>(
-            'isPackageInstalled',
-            <String, Object?>{
-              'packageName': packageName,
-            },
-          ) ??
-          false;
+        'isPackageInstalled',
+        <String, Object?>{
+          'packageName': packageName,
+        },
+      );
     } on PlatformException {
-      return false;
+      return null;
     }
   }
 }
