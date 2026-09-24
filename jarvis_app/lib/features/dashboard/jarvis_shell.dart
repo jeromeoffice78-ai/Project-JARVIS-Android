@@ -400,14 +400,10 @@ class _ConnectionBanner extends ConsumerWidget {
       child: InkWell(
         onTap: connected
             ? null
-            : () async {
-                try {
-                  await ref
-                      .read(jarvisWsServiceProvider)
-                      .connect();
-                } on Object {
-                  // WebSocket service exposes errors separately.
-                }
+            : () {
+                ref.invalidate(
+                  jarvisConnectionStateProvider,
+                );
               },
         child: Padding(
           padding: const EdgeInsets.symmetric(
