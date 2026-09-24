@@ -24,9 +24,16 @@ final class JarvisAuthSession {
       _currentToken.trim();
 
   static Future<String> loadToken() async {
-    _currentToken =
-        (await _storage.read(key: _tokenKey) ?? '')
-            .trim();
+    try {
+      _currentToken =
+          (await _storage.read(key: _tokenKey) ?? '')
+              .trim();
+    } on Object {
+      // A restored install can contain encrypted preferences whose Android
+      // Keystore key no longer exists. Never let that prevent JARVIS from
+      // opening; treat the missing/unreadable session as signed out.
+      _currentToken = '';
+    }
     return _currentToken;
   }
 
@@ -52,9 +59,12 @@ final class JarvisAuthSession {
 
   static Future<void> clear() async {
     _currentToken = '';
-    await _storage.delete(key: _tokenKey);
-    await _storage.delete(key: _expiresKey);
-    await _storage.delete(key: _emailKey);
+    try {
+      await _storage.deleteAll();
+    } on Object {
+      // Secure storage is optional for local mode. A device Keystore failure
+      // must not crash the app during startup or sign-out.
+    }
   }
 }
 
@@ -119,45 +129,44 @@ class _JarvisChairmanAuthGateState
   }
 
   Future<void> _initialize() async {
-    final String token =
-        await JarvisAuthSession.loadToken();
-
-    if (token.isNotEmpty &&
-        await _verifySession(token)) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _checking = false;
-        _authenticated = true;
-        _error = null;
-      });
-      return;
-    }
-
     try {
-      final GoogleSignInAccount? account =
-          await _google.signInSilently();
+      final String token = await JarvisAuthSession.loadToken()
+          .timeout(const Duration(seconds: 8));
 
-      if (account != null) {
-        await _exchangeGoogleIdentity(
-          account,
-          interactive: false,
-        );
+      if (token.isNotEmpty && await _verifySession(token)) {
+        if (!mounted) return;
+        setState(() {
+          _checking = false;
+          _authenticated = true;
+          _error = null;
+        });
         return;
       }
-    } on Object {
-      // Interactive sign-in remains available.
-    }
 
-    if (!mounted) {
-      return;
+      try {
+        final GoogleSignInAccount? account = await _google
+            .signInSilently()
+            .timeout(const Duration(seconds: 8));
+        if (account != null) {
+          await _exchangeGoogleIdentity(account, interactive: false);
+          return;
+        }
+      } on Object {
+        // Interactive sign-in and local mode remain available.
+      }
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Secure sign-in is unavailable. Local JARVIS features are ready.';
+      });
+    } finally {
+      if (mounted && _checking) {
+        setState(() {
+          _checking = false;
+          _authenticated = false;
+        });
+      }
     }
-
-    setState(() {
-      _checking = false;
-      _authenticated = false;
-    });
   }
 
   Future<bool> _verifySession(
