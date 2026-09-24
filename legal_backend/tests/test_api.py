@@ -493,90 +493,89 @@ def test_youtube_video_id_parses_supported_url_shapes():
 
 
 def test_phone_receptionist_status_and_messages(monkeypatch):
-    async def fake_watch_bridge(path, authorization):
-        assert authorization == "Bearer test-client-token"
-        if path == "/main/phone/status":
-            return {
-                "active": True,
-                "provider": "vapi",
-                "phoneNumber": "+15318679252",
-                "assistantName": "JARVIS Phone Receptionist v2",
-            }
-        if path == "/main/phone/messages":
-            return {
-                "phoneNumber": "+15318679252",
-                "messages": [
-                    {
-                        "id": "call_test_1",
+    monkeypatch.setenv("VAPI_API_KEY", "vapi_test")
+
+    async def fake_bind_existing_phone():
+        return {
+            "assistant": {
+                "id": "assistant_test_1",
+                "name": "JARVIS Phone Receptionist v2",
+            },
+            "phone": {
+                "id": "phone_test_1",
+                "number": "+15318679252",
+                "assistantId": "assistant_test_1",
+            },
+        }
+
+    async def fake_vapi_request(method, path, payload=None):
+        assert method == "GET"
+        assert path == "/call"
+        assert payload is None
+        return [
+            {
+                "id": "call_test_1",
+                "customer": {"number": "+15551234567"},
+                "analysis": {
+                    "summary": "Please call back today.",
+                    "structuredData": {
                         "callerName": "Marcus",
-                        "callerPhone": "+15551234567",
                         "callbackNumber": "+15551234567",
                         "urgent": True,
-                        "summary": "Please call back today.",
-                        "transcript": "This is Marcus. Please call me back today.",
-                        "status": "ended",
-                        "createdAt": "2026-09-24T12:00:00Z",
-                        "endedAt": "2026-09-24T12:05:00Z",
-                    }
-                ],
+                    },
+                },
+                "artifact": {
+                    "transcript": "This is Marcus. Please call me back today."
+                },
+                "status": "ended",
+                "createdAt": "2026-09-24T12:00:00Z",
+                "endedAt": "2026-09-24T12:05:00Z",
             }
-        raise AssertionError(path)
+        ]
 
     monkeypatch.setattr(
         api,
-        "_watch_bridge_phone_get",
-        fake_watch_bridge,
+        "_vapi_bind_existing_phone",
+        fake_bind_existing_phone,
+    )
+    monkeypatch.setattr(
+        api,
+        "_vapi_request",
+        fake_vapi_request,
     )
 
     with TestClient(api.app) as client:
         status_response = client.get(
             "/v1/phone/status",
-            headers={
-                "Authorization":
-                    "Bearer test-client-token"
-            },
+            headers={"Authorization": "Bearer test-client-token"},
         )
         assert status_response.status_code == 200
         status_payload = status_response.json()
         assert status_payload["configured"] is True
         assert status_payload["provider"] == "vapi"
-        assert (
-            status_payload["phone_number"]
-            == "+15318679252"
-        )
+        assert status_payload["phone_number"] == "+15318679252"
 
         messages_response = client.get(
             "/v1/phone/messages",
-            headers={
-                "Authorization":
-                    "Bearer test-client-token"
-            },
+            headers={"Authorization": "Bearer test-client-token"},
         )
         assert messages_response.status_code == 200
         messages = messages_response.json()["messages"]
         assert len(messages) == 1
         assert messages[0]["caller_name"] == "Marcus"
         assert messages[0]["urgent"] is True
-        assert (
-            messages[0]["callback_number"]
-            == "+15551234567"
-        )
+        assert messages[0]["callback_number"] == "+15551234567"
+        assert messages[0]["transcript"].startswith("This is Marcus")
 
 
-def test_phone_receptionist_falls_back_when_watch_bridge_unavailable(monkeypatch):
-    async def fake_watch_bridge(path, authorization):
-        raise RuntimeError("watch bridge unavailable")
+def test_phone_receptionist_falls_back_without_vapi(monkeypatch):
+    monkeypatch.delenv("VAPI_API_KEY", raising=False)
 
     async def fake_phone_gateway_call(operation, **payload):
         assert operation == "list_messages"
         assert payload["limit"] == 100
         return {"messages": []}
 
-    monkeypatch.setattr(
-        api,
-        "_watch_bridge_phone_get",
-        fake_watch_bridge,
-    )
     monkeypatch.setattr(
         api,
         "_phone_gateway_call",
@@ -596,10 +595,7 @@ def test_phone_receptionist_falls_back_when_watch_bridge_unavailable(monkeypatch
     with TestClient(api.app) as client:
         status_response = client.get(
             "/v1/phone/status",
-            headers={
-                "Authorization":
-                    "Bearer test-client-token"
-            },
+            headers={"Authorization": "Bearer test-client-token"},
         )
         assert status_response.status_code == 200
         payload = status_response.json()
@@ -608,13 +604,41 @@ def test_phone_receptionist_falls_back_when_watch_bridge_unavailable(monkeypatch
 
         messages_response = client.get(
             "/v1/phone/messages",
-            headers={
-                "Authorization":
-                    "Bearer test-client-token"
-            },
+            headers={"Authorization": "Bearer test-client-token"},
         )
         assert messages_response.status_code == 200
         assert messages_response.json()["messages"] == []
+
+
+def test_vapi_webhook_records_end_of_call_report():
+    api.RECENT_VAPI_CALL_EVENTS.clear()
+    with TestClient(api.app) as client:
+        response = client.post(
+            "/v1/phone/vapi-webhook",
+            json={
+                "message": {
+                    "type": "end-of-call-report",
+                    "call": {
+                        "id": "call_webhook_1",
+                        "customer": {"number": "+15551230000"},
+                        "status": "ended",
+                    },
+                    "analysis": {
+                        "summary": "Caller requested a return call.",
+                        "structuredData": {
+                            "callerName": "Dana",
+                            "urgent": False,
+                        },
+                    },
+                    "artifact": {"transcript": "Please call me back."},
+                    "endedAt": "2026-09-24T12:15:00Z",
+                }
+            },
+        )
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert api.RECENT_VAPI_CALL_EVENTS[0]["caller_name"] == "Dana"
+    assert api.RECENT_VAPI_CALL_EVENTS[0]["call_id"] == "call_webhook_1"
 
 
 def test_phone_receptionist_requires_authentication():
