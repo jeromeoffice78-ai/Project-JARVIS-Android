@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/network/providers.dart';
 import '../distribution/jarvis_share_screen.dart';
@@ -140,6 +141,73 @@ class _JarvisDevicesScreenState
         ),
       );
     }
+  }
+
+  Future<void> _navigateToDevice(
+    JarvisCloudDevice device,
+  ) async {
+    if (!device.hasLocation) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'This device has not reported a location yet.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final Uri uri = Uri.https(
+      'www.google.com',
+      '/maps/dir/',
+      <String, String>{
+        'api': '1',
+        'destination':
+            '${device.latitude},${device.longitude}',
+      },
+    );
+
+    final bool opened = await launchUrl(
+      uri,
+      mode: LaunchMode.externalApplication,
+    );
+
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Navigation could not be opened.',
+          ),
+        ),
+      );
+    }
+  }
+
+  String _cloudLocationStatus(
+    JarvisCloudDevice device,
+  ) {
+    if (!device.hasLocation) {
+      return ' • location unavailable';
+    }
+
+    final double? accuracy =
+        device.locationAccuracyMeters;
+    final DateTime? updated =
+        device.locationUpdatedAt?.toLocal();
+
+    final String accuracyText =
+        accuracy == null
+            ? ''
+            : ' ±${accuracy.round()}m';
+    final String updatedText =
+        updated == null
+            ? ''
+            : ' • ${updated.month}/${updated.day} '
+                '${updated.hour.toString().padLeft(2, '0')}:'
+                '${updated.minute.toString().padLeft(2, '0')}';
+
+    return ' • location saved$accuracyText$updatedText';
   }
 
   Future<void> _checkBackgroundRelay(
@@ -410,14 +478,16 @@ class _JarvisDevicesScreenState
                             : '') +
                         (device.activeAvatar
                             ? ' • Jarvis active here'
-                            : ''),
+                            : '') +
+                        _cloudLocationStatus(device),
                   ),
                   trailing: isThisDevice
                       ? null
                       : PopupMenuButton<
                           String>(
                           enabled:
-                              device.online,
+                              device.online ||
+                                  device.hasLocation,
                           onSelected:
                               (String action) {
                             if (action ==
@@ -438,32 +508,52 @@ class _JarvisDevicesScreenState
                                 cloudNetwork,
                                 device,
                               );
+                            } else if (action ==
+                                'navigate') {
+                              _navigateToDevice(
+                                device,
+                              );
                             }
                           },
                           itemBuilder:
                               (BuildContext
                                       context) =>
-                                  const <
+                                  <
                                       PopupMenuEntry<
                                           String>>[
                             PopupMenuItem<
                                 String>(
+                              value: 'navigate',
+                              enabled:
+                                  device.hasLocation,
+                              child: const Text(
+                                'Navigate to Device',
+                              ),
+                            ),
+                            PopupMenuItem<
+                                String>(
                               value: 'handoff',
-                              child: Text(
+                              enabled:
+                                  device.online,
+                              child: const Text(
                                 'Move Jarvis Here',
                               ),
                             ),
                             PopupMenuItem<
                                 String>(
                               value: 'speak',
-                              child: Text(
+                              enabled:
+                                  device.online,
+                              child: const Text(
                                 'Test Voice',
                               ),
                             ),
                             PopupMenuItem<
                                 String>(
                               value: 'ping',
-                              child: Text(
+                              enabled:
+                                  device.online,
+                              child: const Text(
                                 'Ping Device',
                               ),
                             ),
