@@ -42,7 +42,6 @@ flutter:
   uses-material-design: true
   assets:
     - assets/models/SPEAKER-ECAPA-LICENSE.md
-    - assets/models/CesiumMan.glb
     - assets/models/CesiumMan-LICENSE.md
     - assets/avatar/jarvis_human_avatar.html
     - assets/avatar/VITRUVIAN-NOTICE.md
@@ -50,12 +49,3 @@ flutter:
     - assets/vendor/three/addons/loaders/GLTFLoader.js
     - assets/vendor/three/addons/utils/BufferGeometryUtils.js
     - assets/vendor/three/THREE-LICENSE.md
-    - assets/models/vitruvian_body.glb
-    - assets/models/vitruvian_head.glb
-    - assets/models/hairtool_cards.glb
-    - assets/models/vit_face_bc.png
-    - assets/models/vit_mouth.png
-    - assets/models/vit_sclera.png
-    - assets/models/vit_iris.png
-    - assets/models/vit_hair_atlas.png
-    - assets/models/vit_hair_opacity.png
