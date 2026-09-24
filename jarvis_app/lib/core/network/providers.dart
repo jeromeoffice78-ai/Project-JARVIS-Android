@@ -374,6 +374,9 @@ final jarvisCloudDeviceNetworkProvider =
       systemControlService: ref.watch(
         jarvisSystemControlServiceProvider,
       ),
+      deviceRepairService: ref.watch(
+        jarvisDeviceRepairServiceProvider,
+      ),
     );
 
     ref.onDispose(() {
