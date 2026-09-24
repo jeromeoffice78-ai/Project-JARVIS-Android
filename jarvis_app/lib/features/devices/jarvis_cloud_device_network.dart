@@ -11,6 +11,7 @@ import 'package:torch_light/torch_light.dart';
 import '../../core/config/jarvis_config.dart';
 import '../music/jarvis_music_service.dart';
 import '../printer/jarvis_printer_service.dart';
+import '../system/jarvis_device_repair_service.dart';
 import '../system_control/jarvis_system_control_service.dart';
 import '../vision/jarvis_vision_service.dart';
 import '../voice/jarvis_voice_service.dart';
@@ -196,6 +197,8 @@ class JarvisCloudDeviceNetwork
     required JarvisVoiceService voiceService,
     required JarvisSystemControlService
         systemControlService,
+    required JarvisDeviceRepairService
+        deviceRepairService,
     http.Client? client,
   })  : _config = config,
         _printerService = printerService,
@@ -204,6 +207,8 @@ class JarvisCloudDeviceNetwork
         _voiceService = voiceService,
         _systemControlService =
             systemControlService,
+        _deviceRepairService =
+            deviceRepairService,
         _client = client ?? http.Client() {
     WidgetsBinding.instance.addObserver(this);
     unawaited(start());
@@ -230,6 +235,11 @@ class JarvisCloudDeviceNetwork
     'flashlight_off',
     'avatar_handoff',
     'wake_jarvis',
+    'device_diagnose',
+    'malware_scan',
+    'repair_action',
+    'remove_suspicious_app',
+    'verify_app_removed',
   };
 
   final JarvisConfig _config;
@@ -239,6 +249,8 @@ class JarvisCloudDeviceNetwork
   final JarvisVoiceService _voiceService;
   final JarvisSystemControlService
       _systemControlService;
+  final JarvisDeviceRepairService
+      _deviceRepairService;
   final http.Client _client;
 
   final SharedPreferencesAsync _preferences =
@@ -503,6 +515,8 @@ class JarvisCloudDeviceNetwork
           'flashlight': true,
           'avatar_handoff': true,
           'bluetooth_le': true,
+          'device_repair': true,
+          'malware_scan': true,
         },
       });
 
@@ -1031,6 +1045,90 @@ class JarvisCloudDeviceNetwork
           'animate_entry':
               parameters['animate_entry'] ==
                   true,
+        };
+
+      case 'device_diagnose':
+        return await _deviceRepairService
+            .diagnose();
+
+      case 'malware_scan':
+        return await _deviceRepairService
+            .malwareSummary();
+
+      case 'repair_action':
+        final String target =
+            parameters['target']
+                    ?.toString()
+                    .trim()
+                    .toLowerCase() ??
+                '';
+        if (target.isEmpty) {
+          throw ArgumentError(
+            'repair_action requires target.',
+          );
+        }
+        return await _deviceRepairService
+            .repairTarget(target);
+
+      case 'remove_suspicious_app':
+        final String packageName =
+            parameters['package_name']
+                    ?.toString()
+                    .trim() ??
+                '';
+        if (packageName.isEmpty) {
+          throw ArgumentError(
+            'remove_suspicious_app requires package_name.',
+          );
+        }
+        final bool installed =
+            await _deviceRepairService
+                .isPackageInstalled(
+          packageName,
+        );
+        if (!installed) {
+          return <String, dynamic>{
+            'package_name': packageName,
+            'installed': false,
+            'removed': true,
+          };
+        }
+        final bool opened =
+            await _deviceRepairService
+                .requestUninstall(
+          packageName,
+        );
+        return <String, dynamic>{
+          'package_name': packageName,
+          'uninstall_prompt_opened':
+              opened,
+          'removed': false,
+          'requires_android_confirmation':
+              true,
+          'verification_required':
+              true,
+        };
+
+      case 'verify_app_removed':
+        final String packageName =
+            parameters['package_name']
+                    ?.toString()
+                    .trim() ??
+                '';
+        if (packageName.isEmpty) {
+          throw ArgumentError(
+            'verify_app_removed requires package_name.',
+          );
+        }
+        final bool installed =
+            await _deviceRepairService
+                .isPackageInstalled(
+          packageName,
+        );
+        return <String, dynamic>{
+          'package_name': packageName,
+          'installed': installed,
+          'removed': !installed,
         };
     }
 
