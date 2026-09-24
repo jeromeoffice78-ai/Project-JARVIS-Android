@@ -20,6 +20,7 @@ import '../system_control/jarvis_system_control_service.dart';
 import '../vision/jarvis_vision_service.dart';
 import '../voice/jarvis_voice_service.dart';
 import '../printer/jarvis_print_router.dart';
+import '../security/jarvis_device_repair_service.dart';
 
 class JarvisCapabilityResult {
   const JarvisCapabilityResult({
@@ -43,6 +44,7 @@ class JarvisCapabilityService {
     required JarvisVoiceService voiceService,
     required JarvisPhoneService phoneService,
     required JarvisSystemControlService systemControlService,
+    required JarvisDeviceRepairService deviceRepairService,
     http.Client? httpClient,
   })  : _approvalService = approvalService,
         _printRouter = printRouter,
@@ -52,6 +54,7 @@ class JarvisCapabilityService {
         _voiceService = voiceService,
         _phoneService = phoneService,
         _systemControlService = systemControlService,
+        _deviceRepairService = deviceRepairService,
         _httpClient = httpClient ?? http.Client() {
     tz_data.initializeTimeZones();
   }
@@ -67,6 +70,7 @@ class JarvisCapabilityService {
   final JarvisVoiceService _voiceService;
   final JarvisPhoneService _phoneService;
   final JarvisSystemControlService _systemControlService;
+  final JarvisDeviceRepairService _deviceRepairService;
   final http.Client _httpClient;
   final DeviceCalendarPlugin _calendar =
       DeviceCalendarPlugin();
@@ -206,6 +210,17 @@ class JarvisCapabilityService {
             requestId: requestId,
             callId: callId,
             parameters: parameters,
+          );
+
+        case 'device_diagnose':
+          return _deviceDiagnose();
+
+        case 'device_scan_security':
+          return _deviceScanSecurity();
+
+        case 'device_repair_issue':
+          return _deviceRepairIssue(
+            parameters,
           );
 
         default:
@@ -1688,6 +1703,129 @@ class JarvisCapabilityService {
       error: ok
           ? null
           : 'Android could not perform the swipe.',
+    );
+  }
+
+  Future<JarvisCapabilityResult> _deviceDiagnose() async {
+    final JarvisDeviceDiagnosis diagnosis =
+        await _deviceRepairService.diagnose();
+
+    return JarvisCapabilityResult(
+      ok: true,
+      result: <String, dynamic>{
+        'healthy': diagnosis.healthy,
+        'issues': diagnosis.issues
+            .map(
+              (JarvisDeviceIssue issue) =>
+                  <String, dynamic>{
+                'code': issue.code,
+                'severity': issue.severity,
+                'summary': issue.summary,
+                'repair': issue.repair,
+              },
+            )
+            .toList(growable: false),
+        'device': diagnosis.raw,
+      },
+    );
+  }
+
+  Future<JarvisCapabilityResult> _deviceScanSecurity() async {
+    final List<JarvisAppThreat> apps =
+        await _deviceRepairService.scanApps();
+
+    final List<JarvisAppThreat> risky =
+        apps
+            .where(
+              (JarvisAppThreat app) =>
+                  app.needsReview,
+            )
+            .toList(growable: false);
+
+    return JarvisCapabilityResult(
+      ok: true,
+      result: <String, dynamic>{
+        'scanned_apps': apps.length,
+        'review_count': risky.length,
+        'possible_malware_count': risky
+            .where(
+              (JarvisAppThreat app) =>
+                  app.possibleMalware,
+            )
+            .length,
+        'findings': risky
+            .map(
+              (JarvisAppThreat app) =>
+                  <String, dynamic>{
+                'label': app.label,
+                'package_name':
+                    app.packageName,
+                'risk_score':
+                    app.riskScore,
+                'risk_level':
+                    app.riskLevel,
+                'possible_malware':
+                    app.possibleMalware,
+                'reasons': app.reasons,
+              },
+            )
+            .toList(growable: false),
+        'note':
+            'High-risk findings are heuristic security findings, not laboratory-confirmed malware signatures.',
+      },
+    );
+  }
+
+  Future<JarvisCapabilityResult> _deviceRepairIssue(
+    Map<String, dynamic> parameters,
+  ) async {
+    final String target =
+        parameters['target']
+                ?.toString()
+                .trim() ??
+            '';
+
+    const Set<String> allowedTargets =
+        <String>{
+      'storage',
+      'memory',
+      'internet',
+      'bluetooth',
+      'battery',
+      'apps',
+      'security',
+      'system_update',
+      'date_time',
+      'display',
+      'sound',
+      'accessibility',
+      'jarvis_cache',
+    };
+
+    if (!allowedTargets.contains(target)) {
+      return JarvisCapabilityResult(
+        ok: false,
+        error:
+            'Unsupported repair target: $target',
+      );
+    }
+
+    final JarvisRepairResult repair =
+        await _deviceRepairService.repairIssue(
+      target,
+    );
+
+    return JarvisCapabilityResult(
+      ok: repair.ok,
+      result: <String, dynamic>{
+        'target': repair.target,
+        'action': repair.action,
+        'requires_user_action':
+            repair.requiresUserAction,
+        'message': repair.message,
+      },
+      error:
+          repair.ok ? null : repair.message,
     );
   }
 
