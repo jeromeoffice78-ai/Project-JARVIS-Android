@@ -59,6 +59,7 @@ def patch_manifest() -> None:
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
 
@@ -81,6 +82,7 @@ def patch_manifest() -> None:
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application""",
             1,
@@ -98,6 +100,10 @@ def patch_manifest() -> None:
         <package android:name="com.google.android.apps.healthdata" />
         <intent><action android:name="android.speech.RecognitionService" /></intent>
         <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.DIAL" />
             <data android:scheme="tel" />
@@ -299,6 +305,10 @@ class MainActivity : FlutterFragmentActivity() {{
             flutterEngine,
         )
         JarvisOverlayBridge.register(
+            this,
+            flutterEngine,
+        )
+        JarvisDeviceRepairBridge.register(
             this,
             flutterEngine,
         )
@@ -913,6 +923,26 @@ class JarvisTextPrintAdapter(
     )
     (path.parent / "JarvisOverlayService.kt").write_text(
         overlay_service_text,
+        encoding="utf-8",
+    )
+
+    device_repair_template = (
+        ROOT
+        / "scripts"
+        / "native"
+        / "JarvisDeviceRepairBridge.kt.template"
+    )
+    if not device_repair_template.exists():
+        raise RuntimeError(
+            "JarvisDeviceRepairBridge.kt.template is missing"
+        )
+
+    device_repair_text = device_repair_template.read_text(
+        encoding="utf-8"
+    ).replace("__PACKAGE__", package_name)
+
+    (path.parent / "JarvisDeviceRepairBridge.kt").write_text(
+        device_repair_text,
         encoding="utf-8",
     )
 
