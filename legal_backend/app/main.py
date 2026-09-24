@@ -1973,6 +1973,46 @@ async def realtime_client_secret(
                 },
                 {
                     "type": "function",
+                    "name": "get_cloud_device_location",
+                    "description": (
+                        "Get the last known GPS location reported by a JARVIS device, "
+                        "including whether it is currently online and when the location "
+                        "was last updated."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "target_device_name": {
+                                "type": "string",
+                                "description": "Name of the JARVIS device to locate.",
+                            },
+                        },
+                        "required": ["target_device_name"],
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "navigate_to_cloud_device",
+                    "description": (
+                        "Open navigation to the last known location of one of the user's "
+                        "JARVIS devices. This may use a saved location when the target "
+                        "device is currently offline."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "target_device_name": {
+                                "type": "string",
+                                "description": "Name of the JARVIS device to navigate to.",
+                            },
+                        },
+                        "required": ["target_device_name"],
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
                     "name": "handoff_jarvis_device",
                     "description": (
                         "Move JARVIS presence to another online JARVIS device by "
