@@ -565,3 +565,248 @@ def test_phone_receptionist_requires_authentication():
     with TestClient(api.app) as client:
         response = client.get("/v1/phone/status")
         assert response.status_code == 401
+
+
+
+def test_memory_and_people_contract_routes(monkeypatch):
+    calls = []
+
+    async def fake_gateway(operation, authorization, **payload):
+        calls.append((operation, authorization, payload))
+        if operation == "save_memory":
+            return {"memory_id": "memory-test-1"}
+        if operation == "query_memory":
+            return {"context": "[fact] Jerome prefers direct answers."}
+        if operation == "list_people":
+            return {
+                "people": [
+                    {
+                        "person_id": "person-test-1",
+                        "display_name": "Marcus",
+                        "relationship": "Friend",
+                        "notes": "Met through Jerome.",
+                        "last_seen_at": None,
+                    }
+                ]
+            }
+        if operation == "create_person":
+            return {
+                "person": {
+                    "person_id": "person-created-1",
+                    "display_name": payload["display_name"],
+                    "relationship": payload["relationship"],
+                    "notes": payload["notes"],
+                    "last_seen_at": None,
+                }
+            }
+        if operation == "confirm_present":
+            return {"status": "confirmed"}
+        if operation == "current_presence":
+            return {
+                "person": {
+                    "person_id": "person-test-1",
+                    "display_name": "Marcus",
+                    "relationship": "Friend",
+                    "notes": "",
+                    "last_seen_at": None,
+                }
+            }
+        if operation == "clear_presence":
+            return {"status": "cleared"}
+        if operation == "delete_person":
+            return {"status": "deleted"}
+        raise AssertionError(operation)
+
+    monkeypatch.setattr(
+        api,
+        "_memory_gateway_call",
+        fake_gateway,
+    )
+
+    headers = {
+        "Authorization": "Bearer test-client-token",
+    }
+
+    with TestClient(api.app) as client:
+        save = client.post(
+            "/memory",
+            headers=headers,
+            json={
+                "text": "Jerome prefers direct answers.",
+                "kind": "preference",
+                "importance": 0.9,
+            },
+        )
+        assert save.status_code == 200
+        assert save.json()["memory_id"] == "memory-test-1"
+
+        query = client.get(
+            "/memory/context?q=direct",
+            headers=headers,
+        )
+        assert query.status_code == 200
+        assert "Jerome" in query.json()["context"]
+
+        listed = client.get(
+            "/people",
+            headers=headers,
+        )
+        assert listed.status_code == 200
+        assert listed.json()["people"][0]["display_name"] == "Marcus"
+
+        created = client.post(
+            "/people",
+            headers=headers,
+            json={
+                "display_name": "Dana",
+                "relationship": "Friend",
+                "notes": "Voice profile may be enrolled.",
+            },
+        )
+        assert created.status_code == 200
+        assert created.json()["person"]["display_name"] == "Dana"
+
+        present = client.post(
+            "/people/person-test-1/present",
+            headers=headers,
+        )
+        assert present.status_code == 200
+        assert present.json()["status"] == "confirmed"
+
+        current = client.get(
+            "/people/presence/current",
+            headers=headers,
+        )
+        assert current.status_code == 200
+        assert current.json()["person"]["display_name"] == "Marcus"
+
+        cleared = client.delete(
+            "/people/presence/current",
+            headers=headers,
+        )
+        assert cleared.status_code == 200
+        assert cleared.json()["status"] == "cleared"
+
+        deleted = client.delete(
+            "/people/person-test-1",
+            headers=headers,
+        )
+        assert deleted.status_code == 200
+        assert deleted.json()["status"] == "deleted"
+
+    assert all(
+        authorization == "Bearer test-client-token"
+        for _, authorization, _ in calls
+    )
+
+
+def test_camera_frame_is_attached_to_frontier_query():
+    api.LATEST_VISION_FRAMES.clear()
+
+    with TestClient(api.app) as client:
+        fake = _FakeFrontierOpenAI()
+        api.app.state.frontier_openai = fake
+        headers = {
+            "Authorization": "Bearer test-client-token",
+        }
+
+        upload = client.post(
+            "/vision/frame",
+            headers=headers,
+            files={
+                "frame": (
+                    "camera.jpg",
+                    b"\xff\xd8\xff\xe0fake-jpeg-frame",
+                    "image/jpeg",
+                )
+            },
+        )
+        assert upload.status_code == 200
+        assert upload.json()["status"] == "accepted"
+
+        response = client.post(
+            "/v1/frontier/query",
+            headers=headers,
+            json={
+                "prompt": (
+                    "What do you see?\n\n"
+                    "JARVIS VISION CONTEXT: Use the latest camera frame."
+                ),
+                "mode": "reason",
+            },
+        )
+        assert response.status_code == 200
+
+        call = fake.responses.calls[-1]
+        assert isinstance(call["input"], list)
+        image = call["input"][0]["content"][1]
+        assert image["type"] == "input_image"
+        assert image["image_url"].startswith(
+            "data:image/jpeg;base64,"
+        )
+
+
+def test_camera_frame_can_be_cleared():
+    api.LATEST_VISION_FRAMES.clear()
+
+    with TestClient(api.app) as client:
+        fake = _FakeFrontierOpenAI()
+        api.app.state.frontier_openai = fake
+        headers = {
+            "Authorization": "Bearer test-client-token",
+        }
+
+        assert (
+            client.post(
+                "/vision/frame",
+                headers=headers,
+                files={
+                    "frame": (
+                        "camera.jpg",
+                        b"\xff\xd8\xff\xe0fake-jpeg-frame",
+                        "image/jpeg",
+                    )
+                },
+            ).status_code
+            == 200
+        )
+
+        cleared = client.delete(
+            "/vision/frame",
+            headers=headers,
+        )
+        assert cleared.status_code == 200
+        assert cleared.json()["status"] == "cleared"
+
+        response = client.post(
+            "/v1/frontier/query",
+            headers=headers,
+            json={
+                "prompt": "What do you see through the camera?",
+                "mode": "reason",
+            },
+        )
+        assert response.status_code == 200
+        call = fake.responses.calls[-1]
+        assert isinstance(call["input"], str)
+
+
+def test_jarvis_websocket_authenticated_handshake():
+    with TestClient(api.app) as client:
+        with client.websocket_connect(
+            "/ws/jarvis?ticket=test-client-token"
+        ) as websocket:
+            online = websocket.receive_json()
+            assert online["type"] == "system"
+            assert online["message"] == "Jarvis online."
+            assert online["role"] == "client"
+
+            websocket.send_json(
+                {
+                    "type": "cancel_response",
+                    "request_id": "request-test-1",
+                }
+            )
+            cancelled = websocket.receive_json()
+            assert cancelled["type"] == "response_cancelled"
+            assert cancelled["request_id"] == "request-test-1"
