@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'core/auth/jarvis_chairman_auth.dart';
 import 'core/network/providers.dart';
 import 'core/theme/jarvis_theme.dart';
 import 'features/dashboard/jarvis_shell.dart';
@@ -52,7 +53,9 @@ class _JarvisBootstrapState extends ConsumerState<JarvisBootstrap> {
           theme: JarvisTheme.light,
           darkTheme: JarvisTheme.dark,
           themeMode: snapshot.data ?? ThemeMode.dark,
-          home: const JarvisShell(),
+          home: const JarvisChairmanAuthGate(
+            child: JarvisShell(),
+          ),
         );
       },
     );
