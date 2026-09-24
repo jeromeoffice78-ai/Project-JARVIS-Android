@@ -1,0 +1,29 @@
+name: Diagnose JARVIS Backend URLs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/diagnose-jarvis-backend-urls.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check candidate backend health endpoints
+        shell: bash
+        run: |
+          set +e
+          for base in             "https://jarvis-legal-enterprise-api.onrender.com"             "https://project-jarvis-android.onrender.com"
+          do
+            echo "=== $base ==="
+            code=$(curl -L -sS -o /tmp/body.txt -w "%{http_code}" --connect-timeout 10 --max-time 30 "$base/health")
+            echo "HTTP_STATUS=$code"
+            head -c 500 /tmp/body.txt || true
+            echo
+          done
