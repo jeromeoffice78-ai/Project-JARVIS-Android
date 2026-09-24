@@ -280,6 +280,12 @@ class JarvisDeviceRepairService {
       'battery',
       'apps',
       'security',
+      'system_update',
+      'date_time',
+      'display',
+      'sound',
+      'accessibility',
+      'memory',
       'settings',
     };
 
