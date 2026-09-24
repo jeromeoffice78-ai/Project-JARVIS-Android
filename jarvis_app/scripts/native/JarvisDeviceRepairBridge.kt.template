@@ -924,6 +924,12 @@ object JarvisDeviceRepairBridge {
         activity: Activity,
         target: String,
     ): Boolean {
+        if (target == "system_update") {
+            return openSystemUpdateSettings(
+                activity,
+            )
+        }
+
         val intent =
             when (target) {
                 "storage" ->
@@ -966,11 +972,6 @@ object JarvisDeviceRepairBridge {
                         Settings
                             .ACTION_SECURITY_SETTINGS,
                     )
-                "system_update" ->
-                    Intent(
-                        Settings
-                            .ACTION_SYSTEM_UPDATE_SETTINGS,
-                    )
                 "date_time" ->
                     Intent(
                         Settings
@@ -1003,6 +1004,47 @@ object JarvisDeviceRepairBridge {
             }
 
         return try {
+            activity.startActivity(intent)
+            true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun openSystemUpdateSettings(
+        activity: Activity,
+    ): Boolean {
+        val intent =
+            Intent(
+                "android.settings.SYSTEM_UPDATE_SETTINGS",
+            )
+
+        val packageManager =
+            activity.packageManager
+
+        @Suppress("DEPRECATION")
+        val candidates =
+            packageManager.queryIntentActivities(
+                intent,
+                PackageManager.MATCH_SYSTEM_ONLY,
+            )
+
+        val best =
+            candidates
+                .filter {
+                    it.priority > 0 &&
+                        it.activityInfo != null
+                }
+                .maxByOrNull {
+                    it.priority
+                }
+                ?: return false
+
+        return try {
+            intent.setClassName(
+                best.activityInfo.packageName,
+                best.activityInfo.name,
+            )
             activity.startActivity(intent)
             true
         } catch (_: Throwable) {
