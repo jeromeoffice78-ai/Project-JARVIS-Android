@@ -123,6 +123,92 @@ class JarvisPhoneReceptionistMessage {
   }
 }
 
+
+class JarvisCallerIntelligence {
+  const JarvisCallerIntelligence({
+    required this.queryNumber,
+    required this.phoneNumber,
+    required this.nationalFormat,
+    required this.valid,
+    required this.callerName,
+    required this.callerType,
+    required this.carrierName,
+    required this.lineType,
+    required this.mobileCountryCode,
+    required this.mobileNetworkCode,
+    required this.countryCode,
+    required this.region,
+    required this.timeZones,
+    required this.provider,
+    required this.lookupConfigured,
+    required this.lookupError,
+    required this.locationNote,
+  });
+
+  final String queryNumber;
+  final String phoneNumber;
+  final String nationalFormat;
+  final bool valid;
+  final String callerName;
+  final String callerType;
+  final String carrierName;
+  final String lineType;
+  final String mobileCountryCode;
+  final String mobileNetworkCode;
+  final String countryCode;
+  final String region;
+  final List<String> timeZones;
+  final String provider;
+  final bool lookupConfigured;
+  final String lookupError;
+  final String locationNote;
+
+  factory JarvisCallerIntelligence.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final Object? rawZones = json['time_zones'];
+    return JarvisCallerIntelligence(
+      queryNumber:
+          json['query_number']?.toString() ?? '',
+      phoneNumber:
+          json['phone_number']?.toString() ?? '',
+      nationalFormat:
+          json['national_format']?.toString() ?? '',
+      valid: json['valid'] == true,
+      callerName:
+          json['caller_name']?.toString() ?? '',
+      callerType:
+          json['caller_type']?.toString() ?? '',
+      carrierName:
+          json['carrier_name']?.toString() ?? '',
+      lineType:
+          json['line_type']?.toString() ?? '',
+      mobileCountryCode:
+          json['mobile_country_code']?.toString() ?? '',
+      mobileNetworkCode:
+          json['mobile_network_code']?.toString() ?? '',
+      countryCode:
+          json['country_code']?.toString() ?? '',
+      region:
+          json['region']?.toString() ?? '',
+      timeZones: rawZones is List
+          ? rawZones
+              .map((Object? value) => value?.toString() ?? '')
+              .where((String value) => value.isNotEmpty)
+              .toList(growable: false)
+          : const <String>[],
+      provider:
+          json['provider']?.toString() ?? '',
+      lookupConfigured:
+          json['lookup_configured'] == true,
+      lookupError:
+          json['lookup_error']?.toString() ?? '',
+      locationNote:
+          json['location_note']?.toString() ?? '',
+    );
+  }
+}
+
 class JarvisApiService {
   JarvisApiService({
     required JarvisConfig config,
@@ -249,6 +335,49 @@ class JarvisApiService {
         )
         .toList(growable: false);
   }
+
+  Future<JarvisCallerIntelligence> callerIntelligence(
+    String number,
+  ) async {
+    final String normalized = number.trim();
+    if (normalized.isEmpty) {
+      throw ArgumentError('A phone number is required.');
+    }
+
+    final Uri uri = Uri.parse(
+      '${_config.httpBaseUrl}/v1/phone/caller-intelligence',
+    ).replace(
+      queryParameters: <String, String>{
+        'number': normalized,
+      },
+    );
+
+    final response = await _client.get(
+      uri,
+      headers: _headers,
+    );
+
+    final Object? decoded = jsonDecode(response.body);
+
+    if (response.statusCode != 200) {
+      final String detail = decoded is Map
+          ? decoded['detail']?.toString() ??
+              'Caller intelligence lookup failed.'
+          : 'Caller intelligence lookup failed.';
+      throw StateError(detail);
+    }
+
+    if (decoded is! Map) {
+      throw const FormatException(
+        'Invalid caller intelligence response.',
+      );
+    }
+
+    return JarvisCallerIntelligence.fromJson(
+      Map<String, dynamic>.from(decoded),
+    );
+  }
+
 
   Future<JarvisMusicTrack> searchMusic(
     String query,
