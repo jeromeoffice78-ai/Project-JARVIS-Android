@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:torch_light/torch_light.dart';
 
+import '../../core/auth/jarvis_chairman_auth.dart';
 import '../../core/config/jarvis_config.dart';
 import '../music/jarvis_music_service.dart';
 import '../printer/jarvis_printer_service.dart';
@@ -278,8 +279,16 @@ class JarvisCloudDeviceNetwork
 
   JarvisCloudDeviceState get state => _state;
 
+  String get _authToken {
+    final String session =
+        JarvisAuthSession.currentToken;
+    return session.isNotEmpty
+        ? session
+        : _config.clientToken.trim();
+  }
+
   bool get isConfigured =>
-      _config.clientToken.trim().isNotEmpty &&
+      _authToken.isNotEmpty &&
       _config.deviceGatewayUrl.trim().isNotEmpty;
 
   bool get _supportsNativeRelay =>
@@ -1180,8 +1189,7 @@ class JarvisCloudDeviceNetwork
                 'content-type':
                     'application/json',
                 'authorization':
-                    'Bearer ' +
-                        _config.clientToken,
+                    'Bearer ' + _authToken,
               },
               body: jsonEncode(body),
             )
