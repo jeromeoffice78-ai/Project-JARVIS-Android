@@ -50,7 +50,9 @@ class _JarvisDeviceDefenseScreenState
     }
   }
 
-  Future<void> _scanEverything() async {
+  Future<void> _scanEverything({
+    bool preserveStatusMessage = false,
+  }) async {
     if (_scanning) {
       return;
     }
@@ -58,7 +60,9 @@ class _JarvisDeviceDefenseScreenState
     setState(() {
       _scanning = true;
       _error = null;
-      _statusMessage = null;
+      if (!preserveStatusMessage) {
+        _statusMessage = null;
+      }
     });
 
     try {
@@ -74,8 +78,10 @@ class _JarvisDeviceDefenseScreenState
       setState(() {
         _diagnosis = diagnosis;
         _apps = apps;
-        _statusMessage =
-            'Scan complete. JARVIS analyzed ${apps.length} visible apps and ${diagnosis.issues.length} device issue(s).';
+        if (!preserveStatusMessage) {
+          _statusMessage =
+              'Scan complete. JARVIS analyzed ${apps.length} visible apps and ${diagnosis.issues.length} device issue(s).';
+        }
       });
     } on Object catch (error) {
       if (mounted) {
@@ -187,7 +193,7 @@ class _JarvisDeviceDefenseScreenState
       return;
     }
 
-    final bool stillInstalled =
+    final bool? stillInstalled =
         await _service.isPackageInstalled(packageName);
 
     if (!mounted) {
@@ -196,12 +202,18 @@ class _JarvisDeviceDefenseScreenState
 
     setState(() {
       _pendingUninstallPackage = null;
-      _statusMessage = stillInstalled
-          ? 'Removal was not completed. The app is still installed.'
-          : 'Threat removal verified. The app is no longer installed.';
+      _statusMessage = stillInstalled == null
+          ? 'JARVIS could not verify whether the app was removed. Check Android app settings before treating the threat as cleared.'
+          : stillInstalled
+              ? 'Removal was not completed. The app is still installed.'
+              : 'Threat removal verified. The app is no longer installed.';
     });
 
-    await _scanEverything();
+    if (stillInstalled != null) {
+      await _scanEverything(
+        preserveStatusMessage: true,
+      );
+    }
   }
 
   @override
