@@ -146,6 +146,12 @@ class JarvisCapabilityService {
         case 'list_cloud_devices':
           return _listCloudDevices();
 
+        case 'get_cloud_device_location':
+          return _getCloudDeviceLocation(parameters);
+
+        case 'navigate_to_cloud_device':
+          return _navigateToCloudDevice(parameters);
+
         case 'send_cloud_device_command':
           return _sendCloudDeviceCommand(
             parameters,
@@ -1028,6 +1034,13 @@ class JarvisCapabilityService {
                     device.activeAvatar,
                 'capabilities':
                     device.capabilities,
+                'latitude': device.latitude,
+                'longitude': device.longitude,
+                'location_accuracy_m':
+                    device.locationAccuracyMeters,
+                'location_updated_at':
+                    device.locationUpdatedAt
+                        ?.toIso8601String(),
               },
             )
             .toList(growable: false);
@@ -1039,6 +1052,116 @@ class JarvisCapabilityService {
             _deviceNetwork.state.deviceId,
         'devices': devices,
       },
+    );
+  }
+
+  Future<JarvisCapabilityResult>
+      _getCloudDeviceLocation(
+    Map<String, dynamic> parameters,
+  ) async {
+    final JarvisCloudDevice? target =
+        await _resolveCloudDevice(
+      parameters,
+      requireOnline: false,
+    );
+
+    if (target == null) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error:
+            'No unique JARVIS device matched the requested target.',
+      );
+    }
+
+    if (!target.hasLocation) {
+      return JarvisCapabilityResult(
+        ok: false,
+        result: <String, dynamic>{
+          'target_device_id': target.deviceId,
+          'target_device_name':
+              target.deviceName,
+          'online': target.online,
+        },
+        error:
+            'That JARVIS device has not reported a location yet.',
+      );
+    }
+
+    return JarvisCapabilityResult(
+      ok: true,
+      result: <String, dynamic>{
+        'target_device_id': target.deviceId,
+        'target_device_name':
+            target.deviceName,
+        'online': target.online,
+        'latitude': target.latitude,
+        'longitude': target.longitude,
+        'accuracy_meters':
+            target.locationAccuracyMeters,
+        'location_updated_at':
+            target.locationUpdatedAt
+                ?.toIso8601String(),
+      },
+    );
+  }
+
+  Future<JarvisCapabilityResult>
+      _navigateToCloudDevice(
+    Map<String, dynamic> parameters,
+  ) async {
+    final JarvisCloudDevice? target =
+        await _resolveCloudDevice(
+      parameters,
+      requireOnline: false,
+    );
+
+    if (target == null) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error:
+            'No unique JARVIS device matched the requested target.',
+      );
+    }
+
+    if (!target.hasLocation) {
+      return JarvisCapabilityResult(
+        ok: false,
+        result: <String, dynamic>{
+          'target_device_id': target.deviceId,
+          'target_device_name':
+              target.deviceName,
+          'online': target.online,
+        },
+        error:
+            'That JARVIS device has not reported a location yet.',
+      );
+    }
+
+    final JarvisCapabilityResult navigation =
+        await _openNavigation(
+      <String, dynamic>{
+        'destination':
+            '${target.latitude},${target.longitude}',
+      },
+    );
+
+    return JarvisCapabilityResult(
+      ok: navigation.ok,
+      result: <String, dynamic>{
+        ...navigation.result,
+        'target_device_id': target.deviceId,
+        'target_device_name':
+            target.deviceName,
+        'online': target.online,
+        'latitude': target.latitude,
+        'longitude': target.longitude,
+        'accuracy_meters':
+            target.locationAccuracyMeters,
+        'location_updated_at':
+            target.locationUpdatedAt
+                ?.toIso8601String(),
+      },
+      error: navigation.error,
     );
   }
 
@@ -1308,8 +1431,9 @@ class JarvisCapabilityService {
 
   Future<JarvisCloudDevice?>
       _resolveCloudDevice(
-    Map<String, dynamic> parameters,
-  ) async {
+    Map<String, dynamic> parameters, {
+    bool requireOnline = true,
+  }) async {
     await _deviceNetwork.refreshDevices();
 
     final String requestedId =
@@ -1325,17 +1449,18 @@ class JarvisCapabilityService {
                 .toLowerCase() ??
             '';
 
-    final List<JarvisCloudDevice> online =
+    final List<JarvisCloudDevice> candidates =
         _deviceNetwork.state.devices
             .where(
               (JarvisCloudDevice device) =>
+                  !requireOnline ||
                   device.online,
             )
             .toList(growable: false);
 
     if (requestedId.isNotEmpty) {
       final List<JarvisCloudDevice> matches =
-          online
+          candidates
               .where(
                 (JarvisCloudDevice device) =>
                     device.deviceId ==
@@ -1352,7 +1477,7 @@ class JarvisCapabilityService {
     }
 
     final List<JarvisCloudDevice> exact =
-        online
+        candidates
             .where(
               (JarvisCloudDevice device) =>
                   device.deviceName
@@ -1366,7 +1491,7 @@ class JarvisCapabilityService {
     }
 
     final List<JarvisCloudDevice> partial =
-        online
+        candidates
             .where(
               (JarvisCloudDevice device) =>
                   device.deviceName
