@@ -1082,7 +1082,8 @@ async def realtime_client_secret(
                         "Send an approved command to another online JARVIS device. "
                         "Supported actions include speak_text, play_music, music_pause, "
                         "music_resume, vision_refresh, flashlight_on, flashlight_off, "
-                        "system_action, ping, and avatar_handoff."
+                        "system_action, device_diagnose, device_scan_security, "
+                        "device_repair, ping, and avatar_handoff."
                     ),
                     "parameters": {
                         "type": "object",
