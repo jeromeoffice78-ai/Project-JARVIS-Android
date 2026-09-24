@@ -1,0 +1,153 @@
+package __PACKAGE__
+
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
+import org.json.JSONObject
+
+object JarvisOverlayBridge {
+    private const val CHANNEL = "jarvis.overlay"
+
+    fun register(
+        activity: Activity,
+        flutterEngine: FlutterEngine,
+    ) {
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "canDrawOverlays" -> {
+                    result.success(
+                        Settings.canDrawOverlays(activity),
+                    )
+                }
+
+                "openOverlaySettings" -> {
+                    try {
+                        val intent = Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse(
+                                "package:" +
+                                    activity.packageName,
+                            ),
+                        )
+                        activity.startActivity(intent)
+                        result.success(true)
+                    } catch (error: Throwable) {
+                        result.error(
+                            "overlay_settings_failed",
+                            error.message
+                                ?: "Unable to open display-over-other-apps settings.",
+                            null,
+                        )
+                    }
+                }
+
+                "isRunning" -> {
+                    result.success(
+                        JarvisOverlayService.isRunning,
+                    )
+                }
+
+                "startOverlay" -> {
+                    if (!Settings.canDrawOverlays(activity)) {
+                        result.success(false)
+                    } else {
+                        try {
+                            val state =
+                                call.argument<Map<String, Any?>>("state")
+                            val intent = Intent(
+                                activity,
+                                JarvisOverlayService::class.java,
+                            )
+                                .setAction(
+                                    JarvisOverlayService.ACTION_START,
+                                )
+                                .putExtra(
+                                    JarvisOverlayService.EXTRA_STATE_JSON,
+                                    encodeState(state),
+                                )
+
+                            if (
+                                Build.VERSION.SDK_INT >=
+                                Build.VERSION_CODES.O
+                            ) {
+                                activity.startForegroundService(intent)
+                            } else {
+                                activity.startService(intent)
+                            }
+
+                            result.success(true)
+                        } catch (error: Throwable) {
+                            result.error(
+                                "overlay_start_failed",
+                                error.message
+                                    ?: "Unable to start the JARVIS overlay.",
+                                null,
+                            )
+                        }
+                    }
+                }
+
+                "stopOverlay" -> {
+                    try {
+                        val stopped = activity.stopService(
+                            Intent(
+                                activity,
+                                JarvisOverlayService::class.java,
+                            ),
+                        )
+                        result.success(
+                            stopped || !JarvisOverlayService.isRunning,
+                        )
+                    } catch (error: Throwable) {
+                        result.error(
+                            "overlay_stop_failed",
+                            error.message
+                                ?: "Unable to stop the JARVIS overlay.",
+                            null,
+                        )
+                    }
+                }
+
+                "updateState" -> {
+                    val state =
+                        call.argument<Map<String, Any?>>("state")
+                    val service =
+                        JarvisOverlayService.instance
+
+                    if (service == null) {
+                        result.success(false)
+                    } else {
+                        service.updateAvatarState(
+                            encodeState(state),
+                        )
+                        result.success(true)
+                    }
+                }
+
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    private fun encodeState(
+        state: Map<String, Any?>?,
+    ): String {
+        val json = JSONObject()
+
+        state?.forEach { entry ->
+            json.put(
+                entry.key,
+                entry.value,
+            )
+        }
+
+        return json.toString()
+    }
+}
