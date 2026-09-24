@@ -1,0 +1,42 @@
+name: Verify Live JARVIS Backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/verify-live-jarvis-backend.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      JARVIS_CLIENT_TOKEN: ${{ secrets.JARVIS_CLIENT_TOKEN }}
+    steps:
+      - name: Verify health and authenticated AI endpoint
+        shell: bash
+        run: |
+          set +e
+          BASE="https://jarvis-legal-enterprise-api.onrender.com"
+
+          echo "=== HEALTH ==="
+          code=$(curl -L -sS -o /tmp/health.txt -w "%{http_code}"             --connect-timeout 15 --max-time 90 "$BASE/health")
+          echo "HEALTH_STATUS=$code"
+          head -c 1000 /tmp/health.txt || true
+          echo
+
+          if [ -n "$JARVIS_CLIENT_TOKEN" ]; then
+            echo "TOKEN_CONFIGURED=yes"
+          else
+            echo "TOKEN_CONFIGURED=no"
+          fi
+
+          echo "=== FRONTIER ==="
+          frontier=$(curl -L -sS -o /tmp/frontier.txt -w "%{http_code}"             --connect-timeout 15 --max-time 90             -H "Content-Type: application/json"             -H "Authorization: Bearer $JARVIS_CLIENT_TOKEN"             -d '{"prompt":"Reply with exactly: JARVIS BACKEND ONLINE","mode":"reason","image_base64":null}'             "$BASE/v1/frontier/query")
+          echo "FRONTIER_STATUS=$frontier"
+          head -c 1500 /tmp/frontier.txt || true
+          echo
