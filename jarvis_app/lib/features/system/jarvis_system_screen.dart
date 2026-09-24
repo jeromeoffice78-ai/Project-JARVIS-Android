@@ -214,7 +214,7 @@ class _JarvisSystemScreenState
         padding: const EdgeInsets.all(18),
         children: <Widget>[
           _StatusCard(
-            title: 'WebSocket',
+            title: 'Backend',
             value: state.name.toUpperCase(),
             icon: Icons.swap_horiz,
           ),
