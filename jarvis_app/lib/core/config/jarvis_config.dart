@@ -17,11 +17,11 @@ class JarvisConfig {
     return const JarvisConfig(
       httpBaseUrl: String.fromEnvironment(
         'JARVIS_HTTP_BASE',
-        defaultValue: 'http://10.0.2.2:8000',
+        defaultValue: 'https://jarvis-legal-enterprise-api.onrender.com',
       ),
       wsUrl: String.fromEnvironment(
         'JARVIS_WS_URL',
-        defaultValue: 'ws://10.0.2.2:8000/ws/jarvis',
+        defaultValue: 'wss://jarvis-legal-enterprise-api.onrender.com/ws/jarvis',
       ),
       clientToken: String.fromEnvironment(
         'JARVIS_CLIENT_TOKEN',
