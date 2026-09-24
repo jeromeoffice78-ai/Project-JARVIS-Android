@@ -1,0 +1,64 @@
+name: Publish JARVIS APK Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/publish-jarvis-apk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download validated JARVIS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: jarvis-device-defense-debug
+          path: release
+          repository: jeromeoffice78-ai/Project-JARVIS-Android
+          run-id: 35941576877
+          github-token: ${{ github.token }}
+
+      - name: Prepare standalone APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK_PATH="$(find release -type f -name '*.apk' | head -n 1)"
+          if [ -z "$APK_PATH" ]; then
+            echo "Validated APK not found in artifact."
+            find release -maxdepth 3 -type f -print
+            exit 1
+          fi
+          cp "$APK_PATH" release/JARVIS-FULL-APP.apk
+          sha256sum release/JARVIS-FULL-APP.apk | tee release/JARVIS-FULL-APP.apk.sha256
+          test "$(sha256sum release/JARVIS-FULL-APP.apk | awk '{print $1}')" = "5c8f23958b531204a90ba1bd99d99938a4102ae43c563df28b6ec347857ed690"
+
+      - name: Publish downloadable GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="jarvis-full-app-d2a04f3"
+          TITLE="JARVIS Full Android App"
+          NOTES="Validated JARVIS Android debug APK with Device Defense, system repair, cloud-device controls, realtime assistant features, and system overlay. SHA-256: 5c8f23958b531204a90ba1bd99d99938a4102ae43c563df28b6ec347857ed690"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release/JARVIS-FULL-APP.apk release/JARVIS-FULL-APP.apk.sha256 --clobber
+          else
+            gh release create "$TAG" \
+              release/JARVIS-FULL-APP.apk \
+              release/JARVIS-FULL-APP.apk.sha256 \
+              --target d2a04f34762eba1248cdf1954622dac335b1f225 \
+              --title "$TITLE" \
+              --notes "$NOTES"
+          fi
