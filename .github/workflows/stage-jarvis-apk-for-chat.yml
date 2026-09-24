@@ -1,0 +1,37 @@
+name: Stage JARVIS APK For Chat
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/stage-jarvis-apk-for-chat.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download validated JARVIS APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p chat-download
+          gh release download jarvis-ultra-fast-install-v1.3.0             --pattern 'JARVIS-ULTRA-FAST-INSTALL-ARM64.apk'             --dir chat-download
+          test -s chat-download/JARVIS-ULTRA-FAST-INSTALL-ARM64.apk
+          sha256sum chat-download/JARVIS-ULTRA-FAST-INSTALL-ARM64.apk
+
+      - name: Upload APK for chat handoff
+        uses: actions/upload-artifact@v4
+        with:
+          name: JARVIS-ULTRA-FAST-INSTALL-ARM64
+          path: chat-download/JARVIS-ULTRA-FAST-INSTALL-ARM64.apk
+          compression-level: 0
+          retention-days: 7
