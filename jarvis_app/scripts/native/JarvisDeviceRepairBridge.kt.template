@@ -401,6 +401,42 @@ object JarvisDeviceRepairBridge {
             )
         }
 
+        val riskyServiceActions =
+            listOf(
+                "android.accessibilityservice.AccessibilityService",
+                "android.service.notification.NotificationListenerService",
+            )
+
+        riskyServiceActions.forEach { action ->
+            val intent = Intent(action)
+
+            @Suppress("DEPRECATION")
+            packageManager
+                .queryIntentServices(
+                    intent,
+                    PackageManager.MATCH_ALL,
+                )
+                .forEach {
+                    packages.add(
+                        it.serviceInfo.packageName,
+                    )
+                }
+        }
+
+        @Suppress("DEPRECATION")
+        packageManager
+            .queryBroadcastReceivers(
+                Intent(
+                    "android.app.action.DEVICE_ADMIN_ENABLED",
+                ),
+                PackageManager.MATCH_ALL,
+            )
+            .forEach {
+                packages.add(
+                    it.activityInfo.packageName,
+                )
+            }
+
         packages.add(
             context.packageName,
         )
