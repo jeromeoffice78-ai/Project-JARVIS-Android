@@ -114,6 +114,37 @@ class JarvisDeviceDiagnosis {
   bool get healthy => issues.isEmpty;
 }
 
+class JarvisRepairResult {
+  const JarvisRepairResult({
+    required this.ok,
+    required this.target,
+    required this.action,
+    required this.requiresUserAction,
+    required this.message,
+  });
+
+  final bool ok;
+  final String target;
+  final String action;
+  final bool requiresUserAction;
+  final String message;
+
+  factory JarvisRepairResult.fromMap(
+    Map<dynamic, dynamic> raw,
+  ) {
+    return JarvisRepairResult(
+      ok: raw['ok'] == true,
+      target: raw['target']?.toString() ?? '',
+      action: raw['action']?.toString() ?? '',
+      requiresUserAction:
+          raw['requiresUserAction'] == true,
+      message:
+          raw['message']?.toString() ??
+              'Repair action completed.',
+    );
+  }
+}
+
 class JarvisDeviceRepairService {
   const JarvisDeviceRepairService();
 
@@ -217,6 +248,45 @@ class JarvisDeviceRepairService {
           false;
     } on PlatformException {
       return false;
+    }
+  }
+
+  Future<JarvisRepairResult> repairIssue(
+    String target,
+  ) async {
+    if (!isSupported) {
+      return JarvisRepairResult(
+        ok: false,
+        target: target,
+        action: 'unsupported',
+        requiresUserAction: false,
+        message:
+            'Device repair is available on Android.',
+      );
+    }
+
+    try {
+      final Map<dynamic, dynamic>? raw =
+          await _channel.invokeMethod<
+              Map<dynamic, dynamic>>(
+        'repairIssue',
+        <String, Object?>{
+          'target': target,
+        },
+      );
+
+      return JarvisRepairResult.fromMap(
+        raw ?? const <dynamic, dynamic>{},
+      );
+    } on PlatformException catch (error) {
+      return JarvisRepairResult(
+        ok: false,
+        target: target,
+        action: 'platform_error',
+        requiresUserAction: false,
+        message:
+            'Repair action failed: ${error.message ?? error.code}',
+      );
     }
   }
 
