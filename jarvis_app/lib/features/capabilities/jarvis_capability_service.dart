@@ -16,6 +16,7 @@ import 'jarvis_action_approval_service.dart';
 import '../devices/jarvis_cloud_device_network.dart';
 import '../music/jarvis_music_service.dart';
 import '../phone/jarvis_phone_service.dart';
+import '../system/jarvis_device_repair_service.dart';
 import '../system_control/jarvis_system_control_service.dart';
 import '../vision/jarvis_vision_service.dart';
 import '../voice/jarvis_voice_service.dart';
@@ -43,6 +44,7 @@ class JarvisCapabilityService {
     required JarvisVoiceService voiceService,
     required JarvisPhoneService phoneService,
     required JarvisSystemControlService systemControlService,
+    required JarvisDeviceRepairService deviceRepairService,
     http.Client? httpClient,
   })  : _approvalService = approvalService,
         _printRouter = printRouter,
@@ -52,6 +54,7 @@ class JarvisCapabilityService {
         _voiceService = voiceService,
         _phoneService = phoneService,
         _systemControlService = systemControlService,
+        _deviceRepairService = deviceRepairService,
         _httpClient = httpClient ?? http.Client() {
     tz_data.initializeTimeZones();
   }
@@ -67,6 +70,7 @@ class JarvisCapabilityService {
   final JarvisVoiceService _voiceService;
   final JarvisPhoneService _phoneService;
   final JarvisSystemControlService _systemControlService;
+  final JarvisDeviceRepairService _deviceRepairService;
   final http.Client _httpClient;
   final DeviceCalendarPlugin _calendar =
       DeviceCalendarPlugin();
@@ -206,6 +210,27 @@ class JarvisCapabilityService {
             requestId: requestId,
             callId: callId,
             parameters: parameters,
+          );
+
+        case 'device_diagnose':
+          return _deviceDiagnose();
+
+        case 'device_malware_scan':
+          return _deviceMalwareScan();
+
+        case 'device_repair':
+          return _deviceRepair(parameters);
+
+        case 'device_remove_suspicious_app':
+          return _deviceRemoveSuspiciousApp(
+            requestId: requestId,
+            callId: callId,
+            parameters: parameters,
+          );
+
+        case 'device_verify_app_removed':
+          return _deviceVerifyAppRemoved(
+            parameters,
           );
 
         default:
