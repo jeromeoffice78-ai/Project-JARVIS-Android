@@ -2,7 +2,7 @@ name: JARVIS Legal Backend CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'fix/jarvis-runtime-backend-contract']
     paths:
       - 'legal_backend/**'
       - '.github/workflows/jarvis-legal-backend.yml'
