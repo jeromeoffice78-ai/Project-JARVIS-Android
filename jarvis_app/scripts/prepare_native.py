@@ -1520,6 +1520,97 @@ class JarvisAccessibilityService : AccessibilityService() {{
     )
 
 
+
+def patch_branding() -> None:
+    """Apply JARVIS AI Assistant branding after flutter create regenerates Android."""
+    res = ROOT / "android" / "app" / "src" / "main" / "res"
+
+    drawable = res / "drawable" / "jarvis_launcher.xml"
+    drawable.parent.mkdir(parents=True, exist_ok=True)
+    drawable.write_text(
+        """<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#050A14"
+        android:pathData="M0,0h108v108h-108z" />
+    <path
+        android:fillColor="#071426"
+        android:pathData="M54,6A48,48 0,1 1,53.99,6z" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#35D6FF"
+        android:strokeWidth="4"
+        android:pathData="M54,11A43,43 0,1 1,53.99,11z" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#9AEAFF"
+        android:strokeWidth="1.6"
+        android:pathData="M54,19A35,35 0,1 1,53.99,19z" />
+    <path
+        android:fillColor="#111B2A"
+        android:strokeColor="#8FE9FF"
+        android:strokeWidth="1.5"
+        android:pathData="M31,35 L43,23 L65,23 L77,35 L73,70 L62,83 L46,83 L35,70z" />
+    <path
+        android:fillColor="#28CFFF"
+        android:pathData="M37,49 L49,45 L47,53 L37,55z" />
+    <path
+        android:fillColor="#28CFFF"
+        android:pathData="M71,49 L59,45 L61,53 L71,55z" />
+    <path
+        android:fillColor="#C7F6FF"
+        android:pathData="M51,29h6v31h-6z" />
+    <path
+        android:fillColor="#28CFFF"
+        android:pathData="M54,17A8,8 0,1 1,53.99,17z" />
+    <path
+        android:fillColor="#E8FCFF"
+        android:pathData="M54,21A4,4 0,1 1,53.99,21z" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#5BE2FF"
+        android:strokeWidth="2"
+        android:pathData="M43,68 L49,74 L59,74 L65,68" />
+</vector>
+""",
+        encoding="utf-8",
+    )
+
+    launch = res / "drawable" / "launch_background.xml"
+    launch.parent.mkdir(parents=True, exist_ok=True)
+    launch.write_text(
+        """<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="#050A14" />
+    <item
+        android:width="220dp"
+        android:height="220dp"
+        android:gravity="center"
+        android:drawable="@drawable/jarvis_launcher" />
+</layer-list>
+""",
+        encoding="utf-8",
+    )
+
+    manifest = ROOT / "android" / "app" / "src" / "main" / "AndroidManifest.xml"
+    text = manifest.read_text(encoding="utf-8")
+    text = text.replace('android:label="project_jarvis"', 'android:label="JARVIS AI Assistant"')
+    text = text.replace('android:icon="@mipmap/ic_launcher"', 'android:icon="@drawable/jarvis_launcher"')
+    if 'android:roundIcon=' in text:
+        import re as _re
+        text = _re.sub(
+            r'android:roundIcon="[^"]+"',
+            'android:roundIcon="@drawable/jarvis_launcher"',
+            text,
+            count=1,
+        )
+    manifest.write_text(text, encoding="utf-8")
+
+
 def patch_debug_manifest() -> None:
     path = ROOT / "android" / "app" / "src" / "debug" / "AndroidManifest.xml"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1543,6 +1634,7 @@ def main() -> None:
     patch_gradle()
     patch_manifest()
     patch_activity()
+    patch_branding()
     patch_debug_manifest()
     patch_proguard()
     print("Project Jarvis Android host prepared.")
