@@ -1,0 +1,127 @@
+name: Build JARVIS Clean Install ARM64
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/build-jarvis-clean-install.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate clean Android package
+        working-directory: jarvis_app
+        run: |
+          set -euo pipefail
+          flutter create --platforms=android --org com.jeromeoffice .
+          rm -f test/widget_test.dart
+          python scripts/prepare_native.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/src/main/AndroidManifest.xml')
+          s=p.read_text()
+          s=s.replace('android:label="project_jarvis"', 'android:label="JARVIS"')
+          p.write_text(s)
+
+          g=Path('android/app/build.gradle.kts')
+          s=g.read_text()
+          marker='android {'
+          if 'useLegacyPackaging = true' not in s:
+              s=s.replace(marker, marker + '''
+              packaging {
+                  jniLibs {
+                      useLegacyPackaging = true
+                  }
+              }
+          ''', 1)
+          g.write_text(s)
+          PY
+
+      - name: Bundle runtime assets
+        working-directory: jarvis_app
+        run: |
+          set -euo pipefail
+          mkdir -p assets/models assets/vendor/three/addons/loaders assets/vendor/three/addons/utils
+
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/CesiumMan/glTF-Binary/CesiumMan.glb             --output assets/models/CesiumMan.glb
+
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/mrdoob/three.js/r180/build/three.module.js             --output assets/vendor/three/three.module.js
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/mrdoob/three.js/r180/examples/jsm/loaders/GLTFLoader.js             --output assets/vendor/three/addons/loaders/GLTFLoader.js
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/mrdoob/three.js/r180/examples/jsm/utils/BufferGeometryUtils.js             --output assets/vendor/three/addons/utils/BufferGeometryUtils.js
+
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/vitruvian_body.glb             --output assets/models/vitruvian_body.glb
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/vitruvian_head.glb             --output assets/models/vitruvian_head.glb
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/hairtool_cards.glb             --output assets/models/hairtool_cards.glb
+
+          for asset in vit_face_bc.png vit_mouth.png vit_sclera.png vit_iris.png vit_hair_atlas.png vit_hair_opacity.png; do
+            curl --fail --location --retry 5 --retry-delay 3               "https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/$asset"               --output "assets/models/$asset"
+          done
+
+          curl --fail --location --retry 5 --retry-delay 3             "https://huggingface.co/mlboydaisuke/ECAPA-TDNN-Speaker-ExecuTorch/resolve/main/speaker_ecapa_xnnpack_fp32.pte?download=true"             --output assets/models/speaker_ecapa_xnnpack_fp32.pte
+
+          test "$(stat -c %s assets/models/speaker_ecapa_xnnpack_fp32.pte)" -gt 80000000
+          flutter pub get
+
+      - name: Build clean ARM64 release
+        working-directory: jarvis_app
+        env:
+          JARVIS_HTTP_BASE: ${{ vars.JARVIS_HTTP_BASE }}
+          JARVIS_WS_URL: ${{ vars.JARVIS_WS_URL }}
+          JARVIS_CLIENT_TOKEN: ${{ secrets.JARVIS_CLIENT_TOKEN }}
+        run: |
+          set -euo pipefail
+          HTTP_BASE="${JARVIS_HTTP_BASE:-https://project-jarvis-android.onrender.com}"
+          WS_URL="${JARVIS_WS_URL:-wss://project-jarvis-android.onrender.com/ws/jarvis}"
+          TOKEN="${JARVIS_CLIENT_TOKEN:-}"
+          flutter build apk --release --target-platform android-arm64             --dart-define=JARVIS_HTTP_BASE="$HTTP_BASE"             --dart-define=JARVIS_WS_URL="$WS_URL"             --dart-define=JARVIS_CLIENT_TOKEN="$TOKEN"
+
+      - name: Validate clean APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp jarvis_app/build/app/outputs/flutter-apk/app-release.apk dist/JARVIS-CLEAN-INSTALL-ARM64.apk
+          BUILD_TOOLS_DIR="$(find "${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          "$BUILD_TOOLS_DIR/apksigner" verify --verbose --print-certs dist/JARVIS-CLEAN-INSTALL-ARM64.apk
+          if [ -x "$BUILD_TOOLS_DIR/aapt" ]; then
+            "$BUILD_TOOLS_DIR/aapt" dump badging dist/JARVIS-CLEAN-INSTALL-ARM64.apk | tee dist/badging.txt
+          else
+            "$BUILD_TOOLS_DIR/aapt2" dump badging dist/JARVIS-CLEAN-INSTALL-ARM64.apk | tee dist/badging.txt
+          fi
+          grep "package: name='com.jeromeoffice.project_jarvis'" dist/badging.txt
+          sha256sum dist/JARVIS-CLEAN-INSTALL-ARM64.apk | tee dist/JARVIS-CLEAN-INSTALL-ARM64.apk.sha256
+          ls -lh dist/JARVIS-CLEAN-INSTALL-ARM64.apk
+
+      - name: Publish clean install release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TAG="jarvis-clean-install-v1.3.0"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG"               dist/JARVIS-CLEAN-INSTALL-ARM64.apk               dist/JARVIS-CLEAN-INSTALL-ARM64.apk.sha256               --clobber
+          else
+            gh release create "$TAG"               dist/JARVIS-CLEAN-INSTALL-ARM64.apk               dist/JARVIS-CLEAN-INSTALL-ARM64.apk.sha256               --target "${GITHUB_SHA}"               --title "JARVIS Clean Install ARM64"               --notes "Clean-install JARVIS ARM64 release using package com.jeromeoffice.project_jarvis to avoid certificate conflicts with older com.example.project_jarvis builds. Native libraries use compatibility packaging."
+          fi
