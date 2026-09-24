@@ -82,11 +82,8 @@ const state={
   audioLevelAvailable:false
 };
 
-const REMOTE_AVATAR_BASE =
-  'https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/';
-
 function asset(rel){
-  return REMOTE_AVATAR_BASE + encodeURIComponent(rel);
+  return new URL('../models/'+rel, window.location.href).href;
 }
 
 function texture(rel, srgb=true){
@@ -96,7 +93,6 @@ function texture(rel, srgb=true){
   return t;
 }
 
-status.textContent='Loading JARVIS 3D avatar…';
 const faceBC=texture('vit_face_bc.png',true);
 const mouthTex=texture('vit_mouth.png',true);
 const scleraTex=texture('vit_sclera.png',true);
