@@ -12,6 +12,7 @@ import 'package:timezone/data/latest.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/network/jarvis_api_service.dart';
 import 'jarvis_action_approval_service.dart';
 import '../devices/jarvis_cloud_device_network.dart';
 import '../music/jarvis_music_service.dart';
@@ -43,6 +44,7 @@ class JarvisCapabilityService {
     required JarvisVisionService visionService,
     required JarvisVoiceService voiceService,
     required JarvisPhoneService phoneService,
+    required JarvisApiService apiService,
     required JarvisSystemControlService systemControlService,
     required JarvisDeviceRepairService deviceRepairService,
     http.Client? httpClient,
@@ -53,6 +55,7 @@ class JarvisCapabilityService {
         _visionService = visionService,
         _voiceService = voiceService,
         _phoneService = phoneService,
+        _apiService = apiService,
         _systemControlService = systemControlService,
         _deviceRepairService = deviceRepairService,
         _httpClient = httpClient ?? http.Client() {
@@ -69,6 +72,7 @@ class JarvisCapabilityService {
   final JarvisVisionService _visionService;
   final JarvisVoiceService _voiceService;
   final JarvisPhoneService _phoneService;
+  final JarvisApiService _apiService;
   final JarvisSystemControlService _systemControlService;
   final JarvisDeviceRepairService _deviceRepairService;
   final http.Client _httpClient;
@@ -159,6 +163,9 @@ class JarvisCapabilityService {
 
         case 'phone_active_call':
           return _phoneActiveCall();
+
+        case 'phone_caller_lookup':
+          return _phoneCallerLookup(parameters);
 
         case 'phone_answer_call':
           return _phoneControl(
@@ -1373,6 +1380,54 @@ class JarvisCapabilityService {
     return partial.length == 1
         ? partial.single
         : null;
+  }
+
+  Future<JarvisCapabilityResult> _phoneCallerLookup(
+    Map<String, dynamic> parameters,
+  ) async {
+    String number =
+        parameters['phone_number']
+                ?.toString()
+                .trim() ??
+            '';
+
+    if (number.isEmpty) {
+      final JarvisActiveCall? active =
+          await _phoneService.getActiveCall();
+      number = active?.phoneNumber.trim() ?? '';
+    }
+
+    if (number.isEmpty) {
+      return const JarvisCapabilityResult(
+        ok: false,
+        error:
+            'There is no active caller and no phone number was supplied.',
+      );
+    }
+
+    final JarvisCallerIntelligence info =
+        await _apiService.callerIntelligence(number);
+
+    return JarvisCapabilityResult(
+      ok: true,
+      result: <String, dynamic>{
+        'phone_number': info.phoneNumber,
+        'national_format': info.nationalFormat,
+        'caller_name': info.callerName,
+        'caller_type': info.callerType,
+        'carrier_name': info.carrierName,
+        'line_type': info.lineType,
+        'country_code': info.countryCode,
+        'region': info.region,
+        'time_zones': info.timeZones,
+        'valid': info.valid,
+        'provider': info.provider,
+        'lookup_configured':
+            info.lookupConfigured,
+        'lookup_error': info.lookupError,
+        'location_note': info.locationNote,
+      },
+    );
   }
 
   Future<JarvisCapabilityResult>
