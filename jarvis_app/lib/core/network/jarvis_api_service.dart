@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../auth/jarvis_chairman_auth.dart';
 import '../config/jarvis_config.dart';
 import '../../features/people/person_profile.dart';
 
@@ -132,11 +133,21 @@ class JarvisApiService {
   final JarvisConfig _config;
   final http.Client _client;
 
-  Map<String, String> get _headers => <String, String>{
-        'Content-Type': 'application/json',
-        if (_config.clientToken.isNotEmpty)
-          'Authorization': 'Bearer ${_config.clientToken}',
-      };
+  Map<String, String> get _headers {
+    final String sessionToken =
+        JarvisAuthSession.currentToken;
+    final String fallbackToken =
+        _config.clientToken.trim();
+    final String token = sessionToken.isNotEmpty
+        ? sessionToken
+        : fallbackToken;
+
+    return <String, String>{
+      'Content-Type': 'application/json',
+      if (token.isNotEmpty)
+        'Authorization': 'Bearer $token',
+    };
+  }
 
   Future<Map<String, dynamic>> health() async {
     final response = await _client.get(
