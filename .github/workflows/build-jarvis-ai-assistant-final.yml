@@ -1,0 +1,171 @@
+name: Build JARVIS AI Assistant Final
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-jarvis-ai-assistant-final.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  JARVIS_HTTP_BASE: https://jarvis-legal-enterprise-api.onrender.com
+  GOOGLE_SERVER_CLIENT_ID: 498363735983-nka03bna11698m7o6ao0l7vnga8fb80e.apps.googleusercontent.com
+  JARVIS_SIGNING_BASE: https://jarvis-watch-bridge.floot.app
+  JARVIS_SIGNING_CERT_SHA256: 004905e15f747bc9a635366138c01357b1c06615dfe6f3c3af9d3b1d52c1187f
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Obtain permanent JARVIS signing identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/jarvis_signing
+          OIDC_JSON="$(curl -fsSL             -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}"             "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=jarvis-android-signing")"
+          OIDC_TOKEN="$(OIDC_JSON="$OIDC_JSON" python3 - <<'PY'
+          import json, os
+          payload=json.loads(os.environ['OIDC_JSON'])
+          token=payload.get('value','')
+          if not token:
+              raise SystemExit('GitHub OIDC token was not returned.')
+          print(token)
+          PY
+          )"
+          curl -fsSL -X POST             -H "Authorization: Bearer ${OIDC_TOKEN}"             "${JARVIS_SIGNING_BASE}/_api/v1/internal/android-signing"             -o /tmp/jarvis_signing/identity.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('/tmp/jarvis_signing/identity.json').read_text())
+          key=p.get('privateKeyPem','')
+          cert=p.get('certificatePem','')
+          fp=p.get('certificateSha256','').lower()
+          expected='004905e15f747bc9a635366138c01357b1c06615dfe6f3c3af9d3b1d52c1187f'
+          if not key.startswith('-----BEGIN') or not cert.startswith('-----BEGIN CERTIFICATE-----'):
+              raise SystemExit('Invalid signing identity.')
+          if fp != expected:
+              raise SystemExit('Signing fingerprint mismatch.')
+          Path('/tmp/jarvis_signing/private-key.pem').write_text(key)
+          Path('/tmp/jarvis_signing/certificate.pem').write_text(cert)
+          PY
+          chmod 600 /tmp/jarvis_signing/private-key.pem
+          openssl pkcs8 -topk8 -inform PEM -outform DER -nocrypt             -in /tmp/jarvis_signing/private-key.pem             -out /tmp/jarvis_signing/private-key.pk8
+
+      - name: Generate stable Android package
+        working-directory: jarvis_app
+        run: |
+          set -euo pipefail
+          flutter create --platforms=android --org com.jarvis .
+          rm -f test/widget_test.dart
+          python scripts/prepare_native.py
+          python3 - <<'PY'
+          from pathlib import Path
+          manifest=Path('android/app/src/main/AndroidManifest.xml')
+          text=manifest.read_text()
+          text=text.replace('android:label="project_jarvis"', 'android:label="JARVIS AI Assistant"')
+          manifest.write_text(text)
+          PY
+
+      - name: Bundle local Three.js and human avatar assets
+        working-directory: jarvis_app
+        run: |
+          set -euo pipefail
+          mkdir -p assets/models assets/vendor/three/addons/loaders assets/vendor/three/addons/utils
+
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/mrdoob/three.js/r180/build/three.module.js             --output assets/vendor/three/three.module.js
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/mrdoob/three.js/r180/examples/jsm/loaders/GLTFLoader.js             --output assets/vendor/three/addons/loaders/GLTFLoader.js
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/mrdoob/three.js/r180/examples/jsm/utils/BufferGeometryUtils.js             --output assets/vendor/three/addons/utils/BufferGeometryUtils.js
+
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/vitruvian_body.glb             --output assets/models/vitruvian_body.glb
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/vitruvian_head.glb             --output assets/models/vitruvian_head.glb
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/hairtool_cards.glb             --output assets/models/hairtool_cards.glb
+
+          for asset in vit_face_bc.png vit_mouth.png vit_sclera.png vit_iris.png vit_hair_atlas.png vit_hair_opacity.png; do
+            curl --fail --location --retry 5 --retry-delay 3               "https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/$asset"               --output "assets/models/$asset"
+          done
+
+          test "$(stat -c %s assets/models/vitruvian_body.glb)" -eq 6879364
+          test "$(stat -c %s assets/models/vitruvian_head.glb)" -eq 10189832
+          test "$(stat -c %s assets/models/hairtool_cards.glb)" -eq 14839096
+          test ! -f assets/models/speaker_ecapa_xnnpack_fp32.pte
+
+          flutter pub get
+
+      - name: Analyze
+        working-directory: jarvis_app
+        run: flutter analyze --no-fatal-warnings --no-fatal-infos
+
+      - name: Build ARM64 release
+        working-directory: jarvis_app
+        run: |
+          set -euo pipefail
+          flutter build apk --release --target-platform android-arm64             --dart-define=JARVIS_HTTP_BASE="$JARVIS_HTTP_BASE"             --dart-define=GOOGLE_SERVER_CLIENT_ID="$GOOGLE_SERVER_CLIENT_ID"
+
+      - name: Sign and validate final APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APKSIGNER="$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          AAPT="$(find "${ANDROID_HOME}/build-tools" -type f -name aapt | sort -V | tail -1)"
+          mkdir -p dist
+
+          "$APKSIGNER" sign             --key /tmp/jarvis_signing/private-key.pk8             --cert /tmp/jarvis_signing/certificate.pem             --out dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk             jarvis_app/build/app/outputs/flutter-apk/app-release.apk
+
+          "$APKSIGNER" verify --verbose --print-certs             dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk
+
+          "$AAPT" dump badging dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk             | tee dist/badging.txt
+          grep "package: name='com.jarvis.project_jarvis'" dist/badging.txt
+          grep "native-code: 'arm64-v8a'" dist/badging.txt
+          grep "application-label:'JARVIS AI Assistant'" dist/badging.txt
+
+          SHA1_COLON="$(openssl x509 -in /tmp/jarvis_signing/certificate.pem -noout -fingerprint -sha1 | sed 's/^sha1 Fingerprint=//I')"
+          echo "ANDROID_PACKAGE=com.jarvis.project_jarvis" | tee dist/OAUTH-ANDROID-IDENTITY.txt
+          echo "SIGNING_SHA1=${SHA1_COLON}" | tee -a dist/OAUTH-ANDROID-IDENTITY.txt
+          sha256sum dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk             | tee dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk.sha256
+          ls -lh dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk
+
+          rm -f /tmp/jarvis_signing/identity.json             /tmp/jarvis_signing/private-key.pem             /tmp/jarvis_signing/private-key.pk8
+
+      - name: Upload final APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: JARVIS-AI-ASSISTANT-FINAL-ARM64
+          path: |
+            dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk
+            dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk.sha256
+            dist/OAUTH-ANDROID-IDENTITY.txt
+          compression-level: 0
+          retention-days: 30
+
+      - name: Publish final release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TAG="jarvis-ai-assistant-final-v1.3.0"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG"               dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk               dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk.sha256               dist/OAUTH-ANDROID-IDENTITY.txt               --clobber
+          else
+            gh release create "$TAG"               dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk               dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk.sha256               dist/OAUTH-ANDROID-IDENTITY.txt               --target "$GITHUB_SHA"               --title "JARVIS AI Assistant Final ARM64"               --notes "Stable JARVIS AI Assistant build with local 3D avatar assets, live backend health, secure Chairman session support, HTTP AI chat, and permanent Android signing."
+          fi
