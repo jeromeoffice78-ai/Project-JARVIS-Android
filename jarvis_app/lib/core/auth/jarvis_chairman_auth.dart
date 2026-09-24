@@ -43,18 +43,23 @@ final class JarvisAuthSession {
     required String email,
   }) async {
     _currentToken = token.trim();
-    await _storage.write(
-      key: _tokenKey,
-      value: _currentToken,
-    );
-    await _storage.write(
-      key: _expiresKey,
-      value: expiresAt,
-    );
-    await _storage.write(
-      key: _emailKey,
-      value: email,
-    );
+    try {
+      await _storage.write(
+        key: _tokenKey,
+        value: _currentToken,
+      );
+      await _storage.write(
+        key: _expiresKey,
+        value: expiresAt,
+      );
+      await _storage.write(
+        key: _emailKey,
+        value: email,
+      );
+    } on Object {
+      // Keep the authenticated in-memory session active even when a device
+      // Keystore cannot persist it. The next launch can sign in again.
+    }
   }
 
   static Future<void> clear() async {
