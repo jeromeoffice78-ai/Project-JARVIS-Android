@@ -317,6 +317,17 @@ async def lifespan(app: FastAPI):
     app.state.ai_model = model
     app.state.frontier_openai = frontier_client
 
+    print(
+        "JARVIS_PHONE_RUNTIME "
+        f"openai={bool(frontier_key)} "
+        f"webhook={bool(PHONE_WEBHOOK_SECRET)} "
+        f"twilio_account={bool(TWILIO_ACCOUNT_SID)} "
+        f"twilio_auth={bool(TWILIO_AUTH_TOKEN)} "
+        f"twilio_api_key={bool(TWILIO_API_KEY)} "
+        f"twilio_api_secret={bool(TWILIO_API_SECRET)}",
+        flush=True,
+    )
+
     yield
 
     if client is not None:
