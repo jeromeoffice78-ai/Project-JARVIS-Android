@@ -10,7 +10,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Any
 
 import httpx
 import phonenumbers
@@ -84,10 +84,20 @@ PHONE_GATEWAY_URL = os.getenv(
     "JARVIS_PHONE_GATEWAY_URL",
     "https://idpneeyysraraznqmiio.supabase.co/functions/v1/jarvis-phone-gateway",
 ).strip()
-WATCH_BRIDGE_PHONE_URL = os.getenv(
-    "JARVIS_WATCH_BRIDGE_PHONE_URL",
-    "https://jarvis-watch-bridge-api.onrender.com",
+VAPI_BASE = os.getenv("VAPI_BASE", "https://api.vapi.ai").strip().rstrip("/")
+VAPI_PHONE_NUMBER = (
+    os.getenv("JARVIS_VAPI_PHONE_NUMBER", "+15318679252").strip()
+    or "+15318679252"
+)
+VAPI_ASSISTANT_NAMES = (
+    "JARVIS Phone Receptionist v2",
+    "JARVIS Phone Receptionist",
+)
+JARVIS_PUBLIC_BASE_URL = os.getenv(
+    "JARVIS_PUBLIC_BASE_URL",
+    "https://jarvis-legal-enterprise-api.onrender.com",
 ).strip().rstrip("/")
+RECENT_VAPI_CALL_EVENTS: list[dict[str, object]] = []
 MEMORY_GATEWAY_URL = os.getenv(
     "JARVIS_MEMORY_GATEWAY_URL",
     "https://idpneeyysraraznqmiio.supabase.co/functions/v1/jarvis-memory-gateway",
@@ -707,37 +717,230 @@ def _sip_number(headers: list[dict[str, str]], name: str) -> str:
     return ""
 
 
-async def _watch_bridge_phone_get(
-    path: str,
-    authorization: str | None,
-) -> dict[str, object]:
-    auth = (authorization or "").strip()
-    if not auth or not WATCH_BRIDGE_PHONE_URL:
-        raise RuntimeError("Watch Bridge phone transport is not configured.")
+def _vapi_key() -> str:
+    key = os.getenv("VAPI_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("VAPI_API_KEY is not configured.")
+    return key
 
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        response = await client.get(
-            f"{WATCH_BRIDGE_PHONE_URL}{path}",
-            headers={"Authorization": auth},
+
+def _vapi_normalize_phone(value: object) -> str:
+    digits = re.sub(r"[^0-9+]", "", str(value or ""))
+    if not digits:
+        return ""
+    if digits.startswith("+"):
+        return digits
+    if len(digits) == 11 and digits.startswith("1"):
+        return f"+{digits}"
+    if len(digits) == 10:
+        return f"+1{digits}"
+    return digits
+
+
+async def _vapi_request(
+    method: str,
+    path: str,
+    payload: dict[str, object] | None = None,
+) -> Any:
+    headers = {
+        "Authorization": f"Bearer {_vapi_key()}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.request(
+            method,
+            f"{VAPI_BASE}{path}",
+            headers=headers,
+            json=payload,
         )
 
     try:
-        payload = response.json()
+        body: Any = response.json() if response.content else None
     except ValueError:
-        payload = {}
+        body = response.text
 
     if response.status_code < 200 or response.status_code >= 300:
-        detail = (
-            str(payload.get("detail", "")).strip()
-            if isinstance(payload, dict)
+        raise RuntimeError(
+            f"Vapi HTTP {response.status_code}: {str(body)[:500]}"
+        )
+    return body
+
+
+async def _vapi_find_or_create_assistant() -> dict[str, object]:
+    raw_assistants = await _vapi_request("GET", "/assistant")
+    assistants = raw_assistants if isinstance(raw_assistants, list) else []
+    assistant = next(
+        (
+            item
+            for name in VAPI_ASSISTANT_NAMES
+            for item in assistants
+            if isinstance(item, dict) and item.get("name") == name
+        ),
+        None,
+    )
+
+    webhook_url = (
+        f"{JARVIS_PUBLIC_BASE_URL}/v1/phone/vapi-webhook"
+        if JARVIS_PUBLIC_BASE_URL
+        else ""
+    )
+    desired: dict[str, object] = {
+        "name": "JARVIS Phone Receptionist v2",
+        "firstMessage": (
+            "Hello, you have reached Jerome's JARVIS AI assistant. "
+            "I can take a message for him. May I have your name?"
+        ),
+        "maxDurationSeconds": 300,
+        "model": {
+            "provider": "openai",
+            "model": os.getenv("JARVIS_VAPI_MODEL", "gpt-4o-mini"),
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are JARVIS, Jerome's AI receptionist. Clearly identify "
+                        "yourself as an AI assistant. Ask for the caller's name, "
+                        "callback number, concise reason for calling, and whether it "
+                        "is urgent. Be natural, concise, and professional. Never claim "
+                        "to be Jerome. Confirm the message before ending the call."
+                    ),
+                }
+            ],
+        },
+        "serverMessages": ["end-of-call-report"],
+    }
+    if webhook_url:
+        desired["server"] = {"url": webhook_url, "timeoutSeconds": 20}
+
+    if assistant is None:
+        created = await _vapi_request("POST", "/assistant", desired)
+        if not isinstance(created, dict):
+            raise RuntimeError("Vapi returned an invalid assistant payload.")
+        return created
+
+    patch: dict[str, object] = {}
+    if webhook_url:
+        existing_server = assistant.get("server")
+        current_url = (
+            str(existing_server.get("url", ""))
+            if isinstance(existing_server, dict)
             else ""
         )
-        raise RuntimeError(
-            detail
-            or f"Watch Bridge phone transport HTTP {response.status_code}."
-        )
+        if current_url != webhook_url:
+            patch["server"] = desired["server"]
+    if assistant.get("serverMessages") != ["end-of-call-report"]:
+        patch["serverMessages"] = ["end-of-call-report"]
 
-    return payload if isinstance(payload, dict) else {}
+    if patch:
+        assistant_id = str(assistant.get("id", "")).strip()
+        if not assistant_id:
+            raise RuntimeError("Vapi assistant is missing an id.")
+        updated = await _vapi_request(
+            "PATCH",
+            f"/assistant/{assistant_id}",
+            patch,
+        )
+        if isinstance(updated, dict):
+            assistant = updated
+    return assistant
+
+
+async def _vapi_bind_existing_phone() -> dict[str, object] | None:
+    assistant = await _vapi_find_or_create_assistant()
+    raw_numbers = await _vapi_request("GET", "/phone-number")
+    numbers = raw_numbers if isinstance(raw_numbers, list) else []
+    phone = next(
+        (
+            item
+            for item in numbers
+            if isinstance(item, dict)
+            and _vapi_normalize_phone(item.get("number")) == VAPI_PHONE_NUMBER
+        ),
+        None,
+    )
+    if phone is None:
+        phone = next(
+            (
+                item
+                for item in numbers
+                if isinstance(item, dict) and item.get("name") == "JARVIS Free Line"
+            ),
+            None,
+        )
+    if phone is None:
+        return None
+
+    assistant_id = str(assistant.get("id", "")).strip()
+    phone_id = str(phone.get("id", "")).strip()
+    if not assistant_id or not phone_id:
+        raise RuntimeError("Vapi assistant or phone number is missing an id.")
+
+    if phone.get("assistantId") != assistant_id:
+        updated = await _vapi_request(
+            "PATCH",
+            f"/phone-number/{phone_id}",
+            {"assistantId": assistant_id, "name": "JARVIS Free Line"},
+        )
+        if isinstance(updated, dict):
+            phone = updated
+    return {"assistant": assistant, "phone": phone}
+
+
+def _vapi_message_from_call(call: dict[str, object]) -> dict[str, object]:
+    analysis = call.get("analysis")
+    artifact = call.get("artifact")
+    customer = call.get("customer")
+    analysis_map = analysis if isinstance(analysis, dict) else {}
+    artifact_map = artifact if isinstance(artifact, dict) else {}
+    customer_map = customer if isinstance(customer, dict) else {}
+    structured = (
+        artifact_map.get("structuredOutputs")
+        or analysis_map.get("structuredData")
+        or {}
+    )
+    structured_map = structured if isinstance(structured, dict) else {}
+    summary = str(
+        analysis_map.get("summary")
+        or artifact_map.get("summary")
+        or "Call completed."
+    )
+    caller_number = str(customer_map.get("number") or "")
+    caller_name = str(
+        structured_map.get("callerName")
+        or structured_map.get("name")
+        or ""
+    )
+    callback_number = str(
+        structured_map.get("callbackNumber")
+        or caller_number
+        or ""
+    )
+    urgency_value = (
+        structured_map.get("urgent")
+        or structured_map.get("urgency")
+        or ""
+    )
+    urgent = str(urgency_value).lower() in {
+        "true", "urgent", "high", "yes", "1"
+    }
+    return {
+        "call_id": str(call.get("id") or ""),
+        "from_number": caller_number,
+        "to_number": VAPI_PHONE_NUMBER,
+        "caller_name": caller_name,
+        "callback_number": callback_number,
+        "urgent": urgent,
+        "summary": summary,
+        "transcript": str(
+            artifact_map.get("transcript")
+            or call.get("transcript")
+            or ""
+        ),
+        "assistant_transcript": "",
+        "status": str(call.get("status") or "completed"),
+        "started_at": call.get("createdAt"),
+        "completed_at": call.get("endedAt"),
+    }
 
 
 async def _phone_gateway_call(
@@ -1416,85 +1619,89 @@ async def phone_caller_intelligence(
 
 @app.get("/v1/phone/status", response_model=PhoneReceptionistStatus)
 async def phone_receptionist_status(
-    authorization: Annotated[str | None, Header()] = None,
-    authenticated_role: Annotated[str, Depends(authenticate_request)] = "client",
+    authenticated_role: Annotated[str, Depends(authenticate_request)],
 ) -> PhoneReceptionistStatus:
     del authenticated_role
 
-    try:
-        payload = await _watch_bridge_phone_get(
-            "/main/phone/status",
-            authorization,
-        )
-        return PhoneReceptionistStatus(
-            configured=bool(payload.get("active", False)),
-            provider=str(payload.get("provider", "vapi") or "vapi"),
-            phone_number=str(
-                payload.get("phoneNumber", "+15318679252") or "+15318679252"
-            ),
-            active_calls=0,
-        )
-    except Exception:
-        return PhoneReceptionistStatus(
-            configured=bool(
-                os.getenv("OPENAI_API_KEY", "").strip()
-                and PHONE_WEBHOOK_SECRET
-            ),
-            provider="openai_sip",
-            phone_number=RECEPTIONIST_NUMBER,
-            active_calls=len(ACTIVE_PHONE_CALLS),
-        )
+    if os.getenv("VAPI_API_KEY", "").strip():
+        try:
+            bound = await _vapi_bind_existing_phone()
+            if bound is not None:
+                phone = bound.get("phone")
+                phone_map = phone if isinstance(phone, dict) else {}
+                return PhoneReceptionistStatus(
+                    configured=True,
+                    provider="vapi",
+                    phone_number=str(
+                        phone_map.get("number") or VAPI_PHONE_NUMBER
+                    ),
+                    active_calls=0,
+                )
+        except Exception:
+            pass
+
+    return PhoneReceptionistStatus(
+        configured=bool(
+            os.getenv("OPENAI_API_KEY", "").strip()
+            and PHONE_WEBHOOK_SECRET
+        ),
+        provider="openai_sip",
+        phone_number=RECEPTIONIST_NUMBER,
+        active_calls=len(ACTIVE_PHONE_CALLS),
+    )
 
 
 @app.get("/v1/phone/messages")
 async def phone_receptionist_messages(
-    authorization: Annotated[str | None, Header()] = None,
-    authenticated_role: Annotated[str, Depends(authenticate_request)] = "client",
+    authenticated_role: Annotated[str, Depends(authenticate_request)],
 ) -> dict[str, object]:
     del authenticated_role
 
-    try:
-        payload = await _watch_bridge_phone_get(
-            "/main/phone/messages",
-            authorization,
-        )
-        raw_messages = payload.get("messages", [])
-        messages: list[dict[str, object]] = []
-
-        if isinstance(raw_messages, list):
-            for item in raw_messages:
-                if not isinstance(item, dict):
-                    continue
-                messages.append(
-                    {
-                        "call_id": str(item.get("id", "") or ""),
-                        "from_number": str(item.get("callerPhone", "") or ""),
-                        "to_number": str(payload.get("phoneNumber", "") or ""),
-                        "caller_name": str(item.get("callerName", "") or ""),
-                        "callback_number": str(
-                            item.get("callbackNumber", "") or ""
-                        ),
-                        "urgent": bool(item.get("urgent", False)),
-                        "summary": str(item.get("summary", "") or ""),
-                        "transcript": str(item.get("transcript", "") or ""),
-                        "assistant_transcript": "",
-                        "status": str(item.get("status", "completed") or "completed"),
-                        "started_at": item.get("createdAt"),
-                        "completed_at": item.get("endedAt"),
-                    }
-                )
-
-        return {"messages": messages}
-    except Exception:
+    if os.getenv("VAPI_API_KEY", "").strip():
         try:
-            payload = await _phone_gateway_call("list_messages", limit=100)
-            messages = payload.get("messages", [])
-            return {"messages": messages if isinstance(messages, list) else []}
-        except Exception as exc:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Phone message storage unavailable: {type(exc).__name__}",
-            ) from exc
+            raw_calls = await _vapi_request("GET", "/call")
+            calls = raw_calls if isinstance(raw_calls, list) else []
+            return {
+                "messages": [
+                    _vapi_message_from_call(call)
+                    for call in calls[:100]
+                    if isinstance(call, dict)
+                ]
+            }
+        except Exception:
+            pass
+
+    try:
+        payload = await _phone_gateway_call("list_messages", limit=100)
+        messages = payload.get("messages", [])
+        return {"messages": messages if isinstance(messages, list) else []}
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Phone message storage unavailable: {type(exc).__name__}",
+        ) from exc
+
+
+@app.post("/v1/phone/vapi-webhook", include_in_schema=False)
+async def phone_vapi_webhook(request: Request) -> dict[str, bool]:
+    payload = await request.json()
+    message = payload.get("message") if isinstance(payload, dict) else None
+    if not isinstance(message, dict):
+        return {"ok": True}
+
+    if message.get("type") == "end-of-call-report":
+        call: dict[str, object] = dict(message.get("call") or {})
+        if message.get("artifact") is not None:
+            call["artifact"] = message.get("artifact")
+        if message.get("analysis") is not None:
+            call["analysis"] = message.get("analysis")
+        if message.get("endedAt") is not None:
+            call["endedAt"] = message.get("endedAt")
+        event = _vapi_message_from_call(call)
+        event["received_at"] = datetime.now(timezone.utc).isoformat()
+        RECENT_VAPI_CALL_EVENTS.insert(0, event)
+        del RECENT_VAPI_CALL_EVENTS[50:]
+    return {"ok": True}
 
 
 @app.post("/v1/phone/openai-webhook", include_in_schema=False)
