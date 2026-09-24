@@ -60,6 +60,7 @@ def patch_manifest() -> None:
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
 
@@ -83,6 +84,7 @@ def patch_manifest() -> None:
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application""",
             1,
@@ -220,6 +222,24 @@ def patch_manifest() -> None:
         text = text.replace(
             "    </application>",
             cloud_relay_service + "    </application>",
+            1,
+        )
+
+    if "JarvisBootReceiver" not in text:
+        boot_receiver = """\
+        <receiver
+            android:name=".JarvisBootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+"""
+        text = text.replace(
+            "    </application>",
+            boot_receiver + "    </application>",
             1,
         )
 
@@ -873,6 +893,12 @@ class JarvisTextPrintAdapter(
         / "native"
         / "JarvisCloudRelayService.kt.template"
     )
+    cloud_relay_boot_template = (
+        ROOT
+        / "scripts"
+        / "native"
+        / "JarvisBootReceiver.kt.template"
+    )
     if not cloud_relay_bridge_template.exists():
         raise RuntimeError(
             "JarvisCloudRelayBridge.kt.template is missing"
@@ -881,11 +907,18 @@ class JarvisTextPrintAdapter(
         raise RuntimeError(
             "JarvisCloudRelayService.kt.template is missing"
         )
+    if not cloud_relay_boot_template.exists():
+        raise RuntimeError(
+            "JarvisBootReceiver.kt.template is missing"
+        )
 
     cloud_relay_bridge_text = cloud_relay_bridge_template.read_text(
         encoding="utf-8"
     ).replace("__PACKAGE__", package_name)
     cloud_relay_service_text = cloud_relay_service_template.read_text(
+        encoding="utf-8"
+    ).replace("__PACKAGE__", package_name)
+    cloud_relay_boot_text = cloud_relay_boot_template.read_text(
         encoding="utf-8"
     ).replace("__PACKAGE__", package_name)
 
@@ -895,6 +928,10 @@ class JarvisTextPrintAdapter(
     )
     (path.parent / "JarvisCloudRelayService.kt").write_text(
         cloud_relay_service_text,
+        encoding="utf-8",
+    )
+    (path.parent / "JarvisBootReceiver.kt").write_text(
+        cloud_relay_boot_text,
         encoding="utf-8",
     )
 
