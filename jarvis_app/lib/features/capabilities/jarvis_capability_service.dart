@@ -1258,25 +1258,14 @@ class JarvisCapabilityService {
       );
     }
 
-    final String commandId =
+    final JarvisCloudCommandResult
+        verification =
         await _deviceNetwork.handoffJarvisTo(
       target.deviceId,
     );
 
-    if (commandId.isEmpty) {
-      return const JarvisCapabilityResult(
-        ok: false,
-        error:
-            'Jarvis handoff could not be queued.',
-      );
-    }
-
-    final JarvisCloudCommandResult
-        verification =
-        await _deviceNetwork.waitForCommand(
-      commandId,
-      timeout: const Duration(seconds: 20),
-    );
+    final String commandId =
+        verification.commandId;
 
     final bool completed =
         verification.completed;
