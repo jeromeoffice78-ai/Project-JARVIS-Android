@@ -1172,6 +1172,66 @@ async def realtime_client_secret(
                 },
                 {
                     "type": "function",
+                    "name": "device_diagnose",
+                    "description": (
+                        "Diagnose this Android device for storage, memory, network, "
+                        "Bluetooth, battery, and other supported system problems."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "device_scan_security",
+                    "description": (
+                        "Scan visible installed apps for concrete malware and security "
+                        "risk indicators. Findings are heuristic unless a signature or "
+                        "reputation engine independently confirms a threat."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "device_repair_issue",
+                    "description": (
+                        "Repair a diagnosed Android issue when permitted, or open the "
+                        "exact Android repair controls when user confirmation is required."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "target": {
+                                "type": "string",
+                                "enum": [
+                                    "storage",
+                                    "memory",
+                                    "internet",
+                                    "bluetooth",
+                                    "battery",
+                                    "apps",
+                                    "security",
+                                    "system_update",
+                                    "date_time",
+                                    "display",
+                                    "sound",
+                                    "accessibility",
+                                    "jarvis_cache",
+                                ],
+                            },
+                        },
+                        "required": ["target"],
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
                     "name": "system_global_action",
                     "description": "Perform an Android Back, Home, Recents, Notifications, or Quick Settings action.",
                     "parameters": {
