@@ -493,27 +493,90 @@ def test_youtube_video_id_parses_supported_url_shapes():
 
 
 def test_phone_receptionist_status_and_messages(monkeypatch):
+    async def fake_watch_bridge(path, authorization):
+        assert authorization == "Bearer test-client-token"
+        if path == "/main/phone/status":
+            return {
+                "active": True,
+                "provider": "vapi",
+                "phoneNumber": "+15318679252",
+                "assistantName": "JARVIS Phone Receptionist v2",
+            }
+        if path == "/main/phone/messages":
+            return {
+                "phoneNumber": "+15318679252",
+                "messages": [
+                    {
+                        "id": "call_test_1",
+                        "callerName": "Marcus",
+                        "callerPhone": "+15551234567",
+                        "callbackNumber": "+15551234567",
+                        "urgent": True,
+                        "summary": "Please call back today.",
+                        "transcript": "This is Marcus. Please call me back today.",
+                        "status": "ended",
+                        "createdAt": "2026-09-24T12:00:00Z",
+                        "endedAt": "2026-09-24T12:05:00Z",
+                    }
+                ],
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(
+        api,
+        "_watch_bridge_phone_get",
+        fake_watch_bridge,
+    )
+
+    with TestClient(api.app) as client:
+        status_response = client.get(
+            "/v1/phone/status",
+            headers={
+                "Authorization":
+                    "Bearer test-client-token"
+            },
+        )
+        assert status_response.status_code == 200
+        status_payload = status_response.json()
+        assert status_payload["configured"] is True
+        assert status_payload["provider"] == "vapi"
+        assert (
+            status_payload["phone_number"]
+            == "+15318679252"
+        )
+
+        messages_response = client.get(
+            "/v1/phone/messages",
+            headers={
+                "Authorization":
+                    "Bearer test-client-token"
+            },
+        )
+        assert messages_response.status_code == 200
+        messages = messages_response.json()["messages"]
+        assert len(messages) == 1
+        assert messages[0]["caller_name"] == "Marcus"
+        assert messages[0]["urgent"] is True
+        assert (
+            messages[0]["callback_number"]
+            == "+15551234567"
+        )
+
+
+def test_phone_receptionist_falls_back_when_watch_bridge_unavailable(monkeypatch):
+    async def fake_watch_bridge(path, authorization):
+        raise RuntimeError("watch bridge unavailable")
+
     async def fake_phone_gateway_call(operation, **payload):
         assert operation == "list_messages"
         assert payload["limit"] == 100
-        return {
-            "messages": [
-                {
-                    "call_id": "call_test_1",
-                    "provider": "openai_sip",
-                    "from_number": "+15551234567",
-                    "to_number": "+15557654321",
-                    "caller_name": "Marcus",
-                    "callback_number": "+15551234567",
-                    "urgent": True,
-                    "summary": "Please call back today.",
-                    "transcript": "This is Marcus. Please call me back today.",
-                    "assistant_transcript": "I will pass that message along.",
-                    "status": "completed",
-                }
-            ]
-        }
+        return {"messages": []}
 
+    monkeypatch.setattr(
+        api,
+        "_watch_bridge_phone_get",
+        fake_watch_bridge,
+    )
     monkeypatch.setattr(
         api,
         "_phone_gateway_call",
@@ -539,13 +602,9 @@ def test_phone_receptionist_status_and_messages(monkeypatch):
             },
         )
         assert status_response.status_code == 200
-        status_payload = status_response.json()
-        assert status_payload["configured"] is True
-        assert status_payload["provider"] == "openai_sip"
-        assert (
-            status_payload["phone_number"]
-            == "+15557654321"
-        )
+        payload = status_response.json()
+        assert payload["provider"] == "openai_sip"
+        assert payload["phone_number"] == "+15557654321"
 
         messages_response = client.get(
             "/v1/phone/messages",
@@ -555,10 +614,7 @@ def test_phone_receptionist_status_and_messages(monkeypatch):
             },
         )
         assert messages_response.status_code == 200
-        messages = messages_response.json()["messages"]
-        assert len(messages) == 1
-        assert messages[0]["caller_name"] == "Marcus"
-        assert messages[0]["urgent"] is True
+        assert messages_response.json()["messages"] == []
 
 
 def test_phone_receptionist_requires_authentication():

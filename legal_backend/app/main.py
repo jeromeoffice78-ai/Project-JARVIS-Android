@@ -84,6 +84,10 @@ PHONE_GATEWAY_URL = os.getenv(
     "JARVIS_PHONE_GATEWAY_URL",
     "https://idpneeyysraraznqmiio.supabase.co/functions/v1/jarvis-phone-gateway",
 ).strip()
+WATCH_BRIDGE_PHONE_URL = os.getenv(
+    "JARVIS_WATCH_BRIDGE_PHONE_URL",
+    "https://jarvis-watch-bridge-api.onrender.com",
+).strip().rstrip("/")
 MEMORY_GATEWAY_URL = os.getenv(
     "JARVIS_MEMORY_GATEWAY_URL",
     "https://idpneeyysraraznqmiio.supabase.co/functions/v1/jarvis-memory-gateway",
@@ -690,6 +694,39 @@ def _sip_number(headers: list[dict[str, str]], name: str) -> str:
             return match.group(1)
         return value[:100]
     return ""
+
+
+async def _watch_bridge_phone_get(
+    path: str,
+    authorization: str | None,
+) -> dict[str, object]:
+    auth = (authorization or "").strip()
+    if not auth or not WATCH_BRIDGE_PHONE_URL:
+        raise RuntimeError("Watch Bridge phone transport is not configured.")
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.get(
+            f"{WATCH_BRIDGE_PHONE_URL}{path}",
+            headers={"Authorization": auth},
+        )
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+
+    if response.status_code < 200 or response.status_code >= 300:
+        detail = (
+            str(payload.get("detail", "")).strip()
+            if isinstance(payload, dict)
+            else ""
+        )
+        raise RuntimeError(
+            detail
+            or f"Watch Bridge phone transport HTTP {response.status_code}."
+        )
+
+    return payload if isinstance(payload, dict) else {}
 
 
 async def _phone_gateway_call(
@@ -1368,34 +1405,85 @@ async def phone_caller_intelligence(
 
 @app.get("/v1/phone/status", response_model=PhoneReceptionistStatus)
 async def phone_receptionist_status(
-    authenticated_role: Annotated[str, Depends(authenticate_request)],
+    authorization: Annotated[str | None, Header()] = None,
+    authenticated_role: Annotated[str, Depends(authenticate_request)] = "client",
 ) -> PhoneReceptionistStatus:
     del authenticated_role
-    return PhoneReceptionistStatus(
-        configured=bool(
-            os.getenv("OPENAI_API_KEY", "").strip()
-            and PHONE_WEBHOOK_SECRET
-        ),
-        provider="openai_sip",
-        phone_number=RECEPTIONIST_NUMBER,
-        active_calls=len(ACTIVE_PHONE_CALLS),
-    )
+
+    try:
+        payload = await _watch_bridge_phone_get(
+            "/main/phone/status",
+            authorization,
+        )
+        return PhoneReceptionistStatus(
+            configured=bool(payload.get("active", False)),
+            provider=str(payload.get("provider", "vapi") or "vapi"),
+            phone_number=str(
+                payload.get("phoneNumber", "+15318679252") or "+15318679252"
+            ),
+            active_calls=0,
+        )
+    except Exception:
+        return PhoneReceptionistStatus(
+            configured=bool(
+                os.getenv("OPENAI_API_KEY", "").strip()
+                and PHONE_WEBHOOK_SECRET
+            ),
+            provider="openai_sip",
+            phone_number=RECEPTIONIST_NUMBER,
+            active_calls=len(ACTIVE_PHONE_CALLS),
+        )
 
 
 @app.get("/v1/phone/messages")
 async def phone_receptionist_messages(
-    authenticated_role: Annotated[str, Depends(authenticate_request)],
+    authorization: Annotated[str | None, Header()] = None,
+    authenticated_role: Annotated[str, Depends(authenticate_request)] = "client",
 ) -> dict[str, object]:
     del authenticated_role
+
     try:
-        payload = await _phone_gateway_call("list_messages", limit=100)
-        messages = payload.get("messages", [])
-        return {"messages": messages if isinstance(messages, list) else []}
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Phone message storage unavailable: {type(exc).__name__}",
-        ) from exc
+        payload = await _watch_bridge_phone_get(
+            "/main/phone/messages",
+            authorization,
+        )
+        raw_messages = payload.get("messages", [])
+        messages: list[dict[str, object]] = []
+
+        if isinstance(raw_messages, list):
+            for item in raw_messages:
+                if not isinstance(item, dict):
+                    continue
+                messages.append(
+                    {
+                        "call_id": str(item.get("id", "") or ""),
+                        "from_number": str(item.get("callerPhone", "") or ""),
+                        "to_number": str(payload.get("phoneNumber", "") or ""),
+                        "caller_name": str(item.get("callerName", "") or ""),
+                        "callback_number": str(
+                            item.get("callbackNumber", "") or ""
+                        ),
+                        "urgent": bool(item.get("urgent", False)),
+                        "summary": str(item.get("summary", "") or ""),
+                        "transcript": str(item.get("transcript", "") or ""),
+                        "assistant_transcript": "",
+                        "status": str(item.get("status", "completed") or "completed"),
+                        "started_at": item.get("createdAt"),
+                        "completed_at": item.get("endedAt"),
+                    }
+                )
+
+        return {"messages": messages}
+    except Exception:
+        try:
+            payload = await _phone_gateway_call("list_messages", limit=100)
+            messages = payload.get("messages", [])
+            return {"messages": messages if isinstance(messages, list) else []}
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Phone message storage unavailable: {type(exc).__name__}",
+            ) from exc
 
 
 @app.post("/v1/phone/openai-webhook", include_in_schema=False)
