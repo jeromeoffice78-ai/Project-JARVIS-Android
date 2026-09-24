@@ -90,6 +90,19 @@ object JarvisDeviceRepairBridge {
                     )
                 }
 
+                "isPackageInstalled" -> {
+                    val packageName =
+                        call.argument<String>("packageName")
+                            ?.trim()
+                            .orEmpty()
+                    result.success(
+                        isPackageInstalled(
+                            activity,
+                            packageName,
+                        ),
+                    )
+                }
+
                 else -> result.notImplemented()
             }
         }
@@ -418,6 +431,11 @@ object JarvisDeviceRepairBridge {
         val packageManager =
             context.packageManager
 
+        val packageFlags =
+            PackageManager.GET_PERMISSIONS or
+                PackageManager.GET_SERVICES or
+                PackageManager.GET_RECEIVERS
+
         val packageInfo =
             if (
                 Build.VERSION.SDK_INT >= 33
@@ -427,17 +445,14 @@ object JarvisDeviceRepairBridge {
                     PackageManager
                         .PackageInfoFlags
                         .of(
-                            PackageManager
-                                .GET_PERMISSIONS
-                                .toLong(),
+                            packageFlags.toLong(),
                         ),
                 )
             } else {
                 packageManager
                     .getPackageInfo(
                         packageName,
-                        PackageManager
-                            .GET_PERMISSIONS,
+                        packageFlags,
                     )
             }
 
@@ -464,6 +479,30 @@ object JarvisDeviceRepairBridge {
                 ?.toSet()
                 .orEmpty()
 
+        val hasAccessibilityService =
+            packageInfo
+                .services
+                ?.any {
+                    it.permission ==
+                        "android.permission.BIND_ACCESSIBILITY_SERVICE"
+                } == true
+
+        val hasNotificationListener =
+            packageInfo
+                .services
+                ?.any {
+                    it.permission ==
+                        "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+                } == true
+
+        val hasDeviceAdminReceiver =
+            packageInfo
+                .receivers
+                ?.any {
+                    it.permission ==
+                        "android.permission.BIND_DEVICE_ADMIN"
+                } == true
+
         var score = 0
         val reasons =
             mutableListOf<String>()
@@ -476,7 +515,14 @@ object JarvisDeviceRepairBridge {
             reasons.add(reason)
         }
 
+        if (packageName == context.packageName) {
+            reasons.add(
+                "This is the JARVIS app itself; it is not scored as suspicious.",
+            )
+        }
+
         if (
+            packageName != context.packageName &&
             "android.permission.REQUEST_INSTALL_PACKAGES"
                 in permissions
         ) {
@@ -487,6 +533,7 @@ object JarvisDeviceRepairBridge {
         }
 
         if (
+            packageName != context.packageName &&
             "android.permission.SYSTEM_ALERT_WINDOW"
                 in permissions
         ) {
@@ -497,10 +544,13 @@ object JarvisDeviceRepairBridge {
         }
 
         if (
-            "android.permission.READ_SMS"
-                in permissions ||
-            "android.permission.RECEIVE_SMS"
-                in permissions
+            packageName != context.packageName &&
+            (
+                "android.permission.READ_SMS"
+                    in permissions ||
+                "android.permission.RECEIVE_SMS"
+                    in permissions
+            )
         ) {
             flag(
                 2,
@@ -509,10 +559,13 @@ object JarvisDeviceRepairBridge {
         }
 
         if (
-            "android.permission.READ_CALL_LOG"
-                in permissions ||
-            "android.permission.WRITE_CALL_LOG"
-                in permissions
+            packageName != context.packageName &&
+            (
+                "android.permission.READ_CALL_LOG"
+                    in permissions ||
+                "android.permission.WRITE_CALL_LOG"
+                    in permissions
+            )
         ) {
             flag(
                 2,
@@ -521,6 +574,7 @@ object JarvisDeviceRepairBridge {
         }
 
         if (
+            packageName != context.packageName &&
             "android.permission.RECORD_AUDIO"
                 in permissions &&
             "android.permission.CAMERA"
@@ -533,12 +587,94 @@ object JarvisDeviceRepairBridge {
         }
 
         if (
+            packageName != context.packageName &&
             "android.permission.RECEIVE_BOOT_COMPLETED"
                 in permissions
         ) {
             flag(
                 1,
                 "Can start work after device boot.",
+            )
+        }
+
+        if (
+            packageName != context.packageName &&
+            hasAccessibilityService
+        ) {
+            flag(
+                3,
+                "Declares an accessibility service capable of observing or controlling screen interaction.",
+            )
+        }
+
+        if (
+            packageName != context.packageName &&
+            hasNotificationListener
+        ) {
+            flag(
+                2,
+                "Declares a notification-listener service.",
+            )
+        }
+
+        if (
+            packageName != context.packageName &&
+            hasDeviceAdminReceiver
+        ) {
+            flag(
+                3,
+                "Declares device-administrator capability.",
+            )
+        }
+
+        val overlayRequested =
+            "android.permission.SYSTEM_ALERT_WINDOW" in
+                permissions
+        val installRequested =
+            "android.permission.REQUEST_INSTALL_PACKAGES" in
+                permissions
+        val smsRequested =
+            "android.permission.READ_SMS" in permissions ||
+                "android.permission.RECEIVE_SMS" in permissions
+        val callLogRequested =
+            "android.permission.READ_CALL_LOG" in permissions ||
+                "android.permission.WRITE_CALL_LOG" in permissions
+        val bootPersistence =
+            "android.permission.RECEIVE_BOOT_COMPLETED" in
+                permissions
+
+        if (
+            packageName != context.packageName &&
+            overlayRequested &&
+            hasAccessibilityService
+        ) {
+            flag(
+                4,
+                "High-risk combination: display-over-apps plus accessibility service.",
+            )
+        }
+
+        if (
+            packageName != context.packageName &&
+            installRequested &&
+            (smsRequested || callLogRequested)
+        ) {
+            flag(
+                3,
+                "High-risk combination: APK installation plus SMS/call-log access.",
+            )
+        }
+
+        if (
+            packageName != context.packageName &&
+            bootPersistence &&
+            (overlayRequested ||
+                hasAccessibilityService ||
+                hasNotificationListener)
+        ) {
+            flag(
+                2,
+                "Persistence combination: starts after boot with elevated screen/notification capabilities.",
             )
         }
 
@@ -619,6 +755,21 @@ object JarvisDeviceRepairBridge {
                         "medium"
                     else -> "low"
                 },
+            "possibleMalware" to
+                (
+                    packageName !=
+                        context.packageName &&
+                    !systemApp &&
+                    cappedScore >= 6
+                    ),
+            "analysisType" to
+                "local_heuristic",
+            "accessibilityService" to
+                hasAccessibilityService,
+            "notificationListener" to
+                hasNotificationListener,
+            "deviceAdmin" to
+                hasDeviceAdminReceiver,
             "reasons" to reasons,
         )
     }
@@ -716,6 +867,41 @@ object JarvisDeviceRepairBridge {
                 ),
             )
             true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun isPackageInstalled(
+        context: Context,
+        packageName: String,
+    ): Boolean {
+        if (packageName.isBlank()) {
+            return false
+        }
+
+        return try {
+            if (
+                Build.VERSION.SDK_INT >= 33
+            ) {
+                context.packageManager
+                    .getPackageInfo(
+                        packageName,
+                        PackageManager
+                            .PackageInfoFlags
+                            .of(0),
+                    )
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager
+                    .getPackageInfo(
+                        packageName,
+                        0,
+                    )
+            }
+            true
+        } catch (_: PackageManager.NameNotFoundException) {
+            false
         } catch (_: Throwable) {
             false
         }
