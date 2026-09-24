@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/auth/jarvis_chairman_auth.dart';
 import '../../core/config/jarvis_config.dart';
 import '../../core/protocol/jarvis_protocol.dart';
 import 'jarvis_printer_service.dart';
@@ -53,8 +54,16 @@ class JarvisPrintRouter {
   String? get deviceId => _deviceId;
   String? get deviceName => _deviceName;
 
+  String get _authToken {
+    final String session =
+        JarvisAuthSession.currentToken;
+    return session.isNotEmpty
+        ? session
+        : _config.clientToken.trim();
+  }
+
   bool get isCloudRoutingConfigured =>
-      _config.clientToken.trim().isNotEmpty &&
+      _authToken.isNotEmpty &&
       _config.printGatewayUrl.trim().isNotEmpty;
 
   Future<void> start() async {
@@ -317,7 +326,7 @@ class JarvisPrintRouter {
                 'content-type':
                     'application/json',
                 'authorization':
-                    'Bearer ${_config.clientToken}',
+                    'Bearer $_authToken',
               },
               body: jsonEncode(body),
             )
