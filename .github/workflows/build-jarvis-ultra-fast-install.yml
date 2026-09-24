@@ -1,0 +1,142 @@
+name: Build JARVIS Ultra Fast Install
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/build-jarvis-ultra-fast-install.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate clean Android package
+        working-directory: jarvis_app
+        run: |
+          set -euo pipefail
+          flutter create --platforms=android --org com.jeromeoffice .
+          rm -f test/widget_test.dart
+          python scripts/prepare_native.py
+          python3 - <<'PY'
+          from pathlib import Path
+
+          manifest = Path('android/app/src/main/AndroidManifest.xml')
+          text = manifest.read_text()
+          text = text.replace('android:label="project_jarvis"', 'android:label="JARVIS"')
+          manifest.write_text(text)
+
+          gradle = Path('android/app/build.gradle.kts')
+          text = gradle.read_text()
+          if 'useLegacyPackaging = true' not in text:
+              text = text.replace(
+                  'android {',
+                  '''android {
+              packaging {
+                  jniLibs {
+                      useLegacyPackaging = true
+                  }
+              }
+          ''',
+                  1,
+              )
+          gradle.write_text(text)
+          PY
+
+      - name: Bundle lightweight Three.js runtime
+        working-directory: jarvis_app
+        run: |
+          set -euo pipefail
+          mkdir -p assets/vendor/three/addons/loaders assets/vendor/three/addons/utils
+
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/mrdoob/three.js/r180/build/three.module.js             --output assets/vendor/three/three.module.js
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/mrdoob/three.js/r180/examples/jsm/loaders/GLTFLoader.js             --output assets/vendor/three/addons/loaders/GLTFLoader.js
+          curl --fail --location --retry 5 --retry-delay 3             https://raw.githubusercontent.com/mrdoob/three.js/r180/examples/jsm/utils/BufferGeometryUtils.js             --output assets/vendor/three/addons/utils/BufferGeometryUtils.js
+
+          test -s assets/vendor/three/three.module.js
+          test -s assets/vendor/three/addons/loaders/GLTFLoader.js
+          test -s assets/vendor/three/addons/utils/BufferGeometryUtils.js
+
+          test ! -f assets/models/speaker_ecapa_xnnpack_fp32.pte
+          test ! -f assets/models/vitruvian_body.glb
+          test ! -f assets/models/vitruvian_head.glb
+          test ! -f assets/models/hairtool_cards.glb
+
+          flutter pub get
+
+      - name: Analyze
+        working-directory: jarvis_app
+        run: flutter analyze --no-fatal-warnings --no-fatal-infos
+
+      - name: Build ARM64 release APK
+        working-directory: jarvis_app
+        env:
+          JARVIS_HTTP_BASE: ${{ vars.JARVIS_HTTP_BASE }}
+          JARVIS_WS_URL: ${{ vars.JARVIS_WS_URL }}
+          JARVIS_CLIENT_TOKEN: ${{ secrets.JARVIS_CLIENT_TOKEN }}
+        run: |
+          set -euo pipefail
+          HTTP_BASE="${JARVIS_HTTP_BASE:-https://project-jarvis-android.onrender.com}"
+          WS_URL="${JARVIS_WS_URL:-wss://project-jarvis-android.onrender.com/ws/jarvis}"
+          TOKEN="${JARVIS_CLIENT_TOKEN:-}"
+
+          flutter build apk --release --target-platform android-arm64             --dart-define=JARVIS_HTTP_BASE="$HTTP_BASE"             --dart-define=JARVIS_WS_URL="$WS_URL"             --dart-define=JARVIS_CLIENT_TOKEN="$TOKEN"
+
+      - name: Validate and stage APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp jarvis_app/build/app/outputs/flutter-apk/app-release.apk dist/JARVIS-ULTRA-FAST-INSTALL-ARM64.apk
+
+          BUILD_TOOLS_DIR="$(find "${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+
+          "$BUILD_TOOLS_DIR/apksigner" verify --verbose --print-certs dist/JARVIS-ULTRA-FAST-INSTALL-ARM64.apk
+
+          if [ -x "$BUILD_TOOLS_DIR/aapt" ]; then
+            "$BUILD_TOOLS_DIR/aapt" dump badging dist/JARVIS-ULTRA-FAST-INSTALL-ARM64.apk | tee dist/badging.txt
+          else
+            "$BUILD_TOOLS_DIR/aapt2" dump badging dist/JARVIS-ULTRA-FAST-INSTALL-ARM64.apk | tee dist/badging.txt
+          fi
+
+          grep "package: name='com.jeromeoffice.project_jarvis'" dist/badging.txt
+          grep "native-code: 'arm64-v8a'" dist/badging.txt
+
+          sha256sum dist/JARVIS-ULTRA-FAST-INSTALL-ARM64.apk | tee dist/JARVIS-ULTRA-FAST-INSTALL-ARM64.apk.sha256
+          stat -c 'APK_BYTES=%s' dist/JARVIS-ULTRA-FAST-INSTALL-ARM64.apk
+          ls -lh dist/JARVIS-ULTRA-FAST-INSTALL-ARM64.apk
+
+      - name: Publish Ultra Fast Install APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TAG="jarvis-ultra-fast-install-v1.3.0"
+          NOTES="Small JARVIS ARM64 installer. Heavy voice-identity and 3D avatar model assets download on demand after installation; app features remain available."
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG"               dist/JARVIS-ULTRA-FAST-INSTALL-ARM64.apk               dist/JARVIS-ULTRA-FAST-INSTALL-ARM64.apk.sha256               --clobber
+          else
+            gh release create "$TAG"               dist/JARVIS-ULTRA-FAST-INSTALL-ARM64.apk               dist/JARVIS-ULTRA-FAST-INSTALL-ARM64.apk.sha256               --target "${GITHUB_SHA}"               --title "JARVIS Ultra Fast Install - ARM64"               --notes "$NOTES"
+          fi
