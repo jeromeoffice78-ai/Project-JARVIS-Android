@@ -105,6 +105,9 @@ final jarvisCapabilityServiceProvider =
     phoneService: ref.watch(
       jarvisPhoneServiceProvider,
     ),
+    apiService: ref.watch(
+      jarvisApiServiceProvider,
+    ),
     systemControlService: ref.watch(
       jarvisSystemControlServiceProvider,
     ),
