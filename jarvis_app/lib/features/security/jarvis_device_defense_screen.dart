@@ -93,17 +93,15 @@ class _JarvisDeviceDefenseScreenState
   }
 
   Future<void> _openRepair(String repair) async {
-    final bool opened =
-        await _service.openRepairSettings(repair);
+    final JarvisRepairResult result =
+        await _service.repairIssue(repair);
 
     if (!mounted) {
       return;
     }
 
     setState(() {
-      _statusMessage = opened
-          ? 'Android repair settings opened for $repair.'
-          : 'Android could not open the requested repair settings.';
+      _statusMessage = result.message;
     });
   }
 
