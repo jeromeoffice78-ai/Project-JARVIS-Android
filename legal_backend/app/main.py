@@ -11,6 +11,9 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 import httpx
+import phonenumbers
+from phonenumbers import geocoder as phone_geocoder
+from phonenumbers import timezone as phone_timezone
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile, status
 from openai import AsyncOpenAI, OpenAI
 import websockets
@@ -81,6 +84,10 @@ PHONE_GATEWAY_URL = os.getenv(
 ).strip()
 PHONE_WEBHOOK_SECRET = os.getenv("OPENAI_WEBHOOK_SECRET", "").strip()
 RECEPTIONIST_NUMBER = os.getenv("JARVIS_RECEPTIONIST_NUMBER", "").strip()
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
+TWILIO_API_KEY = os.getenv("TWILIO_API_KEY", "").strip()
+TWILIO_API_SECRET = os.getenv("TWILIO_API_SECRET", "").strip()
 ACTIVE_PHONE_CALLS: dict[str, dict[str, object]] = {}
 PHONE_CALL_TASKS: set[asyncio.Task[None]] = set()
 
@@ -216,6 +223,29 @@ class PhoneReceptionistMessage(BaseModel):
     status: str = "completed"
     started_at: str | None = None
     completed_at: str | None = None
+
+
+class CallerIntelligenceResponse(BaseModel):
+    query_number: str
+    phone_number: str = ""
+    national_format: str = ""
+    valid: bool = False
+    caller_name: str = ""
+    caller_type: str = ""
+    carrier_name: str = ""
+    line_type: str = ""
+    mobile_country_code: str = ""
+    mobile_network_code: str = ""
+    country_code: str = ""
+    region: str = ""
+    time_zones: list[str] = Field(default_factory=list)
+    provider: str = "local_number_plan"
+    lookup_configured: bool = False
+    lookup_error: str = ""
+    location_note: str = (
+        "Region and time zone describe the phone number's numbering-plan/service area, "
+        "not the handset's live GPS location."
+    )
 
 
 def _build_ai_client() -> tuple[AsyncOpenAI | None, str, str]:
@@ -400,6 +430,141 @@ async def _validate_youtube_video(
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _normalize_phone_number(raw: str) -> tuple[str, bool, str, list[str]]:
+    value = raw.strip()
+    if not value:
+        return "", False, "", []
+
+    try:
+        parsed = phonenumbers.parse(value, "US")
+    except phonenumbers.NumberParseException:
+        return "", False, "", []
+
+    possible = phonenumbers.is_possible_number(parsed)
+    valid = phonenumbers.is_valid_number(parsed)
+    if not possible:
+        return "", False, "", []
+
+    e164 = phonenumbers.format_number(
+        parsed,
+        phonenumbers.PhoneNumberFormat.E164,
+    )
+    region = phone_geocoder.description_for_number(parsed, "en").strip()
+    zones = list(phone_timezone.time_zones_for_number(parsed))
+    return e164, valid, region, zones
+
+
+def _twilio_lookup_credentials() -> tuple[str, str]:
+    username = TWILIO_API_KEY or TWILIO_ACCOUNT_SID
+    password = TWILIO_API_SECRET or TWILIO_AUTH_TOKEN
+    return username, password
+
+
+async def _lookup_caller_intelligence(raw_number: str) -> CallerIntelligenceResponse:
+    e164, local_valid, region, zones = _normalize_phone_number(raw_number)
+    if not e164:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Enter a valid phone number.",
+        )
+
+    username, password = _twilio_lookup_credentials()
+    base = CallerIntelligenceResponse(
+        query_number=raw_number.strip(),
+        phone_number=e164,
+        valid=local_valid,
+        region=region,
+        time_zones=zones,
+        lookup_configured=bool(username and password),
+    )
+
+    if not username or not password:
+        return base.model_copy(
+            update={
+                "lookup_error": (
+                    "Caller-name/carrier lookup is not configured on the server yet."
+                ),
+            }
+        )
+
+    encoded_number = httpx.URL(
+        "https://lookups.twilio.com"
+    ).copy_with(
+        path=f"/v2/PhoneNumbers/{e164}"
+    )
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=15.0,
+            auth=httpx.BasicAuth(username, password),
+        ) as client:
+            response = await client.get(
+                encoded_number,
+                params={
+                    "Fields": "caller_name,line_type_intelligence",
+                },
+            )
+    except httpx.HTTPError as exc:
+        return base.model_copy(
+            update={
+                "provider": "twilio",
+                "lookup_error": f"Lookup network error: {type(exc).__name__}",
+            }
+        )
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+
+    if response.status_code < 200 or response.status_code >= 300:
+        detail = ""
+        if isinstance(payload, dict):
+            detail = str(
+                payload.get("message")
+                or payload.get("detail")
+                or payload.get("code")
+                or ""
+            ).strip()
+        return base.model_copy(
+            update={
+                "provider": "twilio",
+                "lookup_error": detail or f"Twilio Lookup HTTP {response.status_code}",
+            }
+        )
+
+    if not isinstance(payload, dict):
+        return base.model_copy(
+            update={
+                "provider": "twilio",
+                "lookup_error": "Twilio returned an invalid lookup payload.",
+            }
+        )
+
+    caller = payload.get("caller_name")
+    line = payload.get("line_type_intelligence")
+    caller_map = caller if isinstance(caller, dict) else {}
+    line_map = line if isinstance(line, dict) else {}
+
+    return CallerIntelligenceResponse(
+        query_number=raw_number.strip(),
+        phone_number=str(payload.get("phone_number") or e164),
+        national_format=str(payload.get("national_format") or ""),
+        valid=bool(payload.get("valid", local_valid)),
+        caller_name=str(caller_map.get("caller_name") or ""),
+        caller_type=str(caller_map.get("caller_type") or ""),
+        carrier_name=str(line_map.get("carrier_name") or ""),
+        line_type=str(line_map.get("type") or ""),
+        mobile_country_code=str(line_map.get("mobile_country_code") or ""),
+        mobile_network_code=str(line_map.get("mobile_network_code") or ""),
+        country_code=str(payload.get("country_code") or ""),
+        region=region,
+        time_zones=zones,
+        provider="twilio",
+        lookup_configured=True,
+    )
 
 
 def _sip_number(headers: list[dict[str, str]], name: str) -> str:
@@ -755,6 +920,18 @@ async def auth_check(
     )
 
 
+
+
+@app.get(
+    "/v1/phone/caller-intelligence",
+    response_model=CallerIntelligenceResponse,
+)
+async def phone_caller_intelligence(
+    number: str,
+    authenticated_role: Annotated[str, Depends(authenticate_request)],
+) -> CallerIntelligenceResponse:
+    del authenticated_role
+    return await _lookup_caller_intelligence(number)
 
 
 @app.get("/v1/phone/status", response_model=PhoneReceptionistStatus)
