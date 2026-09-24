@@ -1045,6 +1045,95 @@ async def realtime_client_secret(
                 },
                 {
                     "type": "function",
+                    "name": "device_diagnose",
+                    "description": (
+                        "Diagnose the current Android device for storage, memory, "
+                        "battery, network, Bluetooth, and other repairable problems."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "device_malware_scan",
+                    "description": (
+                        "Scan visible installed Android apps and high-risk hidden "
+                        "components for suspicious malware-like capability combinations. "
+                        "Treat results as risk signals, not guaranteed malware verdicts."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "device_repair",
+                    "description": (
+                        "Start an Android repair for a diagnosed issue. Some repairs "
+                        "open the exact Android settings panel and require the user to "
+                        "finish the system-level change."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "target": {
+                                "type": "string",
+                                "enum": [
+                                    "jarvis_cache",
+                                    "storage",
+                                    "internet",
+                                    "bluetooth",
+                                    "battery",
+                                    "apps",
+                                    "security",
+                                    "settings",
+                                ],
+                            },
+                        },
+                        "required": ["target"],
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "device_remove_suspicious_app",
+                    "description": (
+                        "Request removal of a suspicious Android package. JARVIS must "
+                        "obtain user approval and Android will show its own uninstall "
+                        "confirmation. Do not claim removal until verified."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "package_name": {"type": "string"},
+                        },
+                        "required": ["package_name"],
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "device_verify_app_removed",
+                    "description": (
+                        "Verify whether an Android package is still installed after "
+                        "an uninstall attempt."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "package_name": {"type": "string"},
+                        },
+                        "required": ["package_name"],
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
                     "name": "list_cloud_devices",
                     "description": (
                         "List JARVIS devices registered on the user's secure cloud "
@@ -1082,7 +1171,8 @@ async def realtime_client_secret(
                         "Send an approved command to another online JARVIS device. "
                         "Supported actions include speak_text, play_music, music_pause, "
                         "music_resume, vision_refresh, flashlight_on, flashlight_off, "
-                        "system_action, ping, and avatar_handoff."
+                        "system_action, device_diagnose, malware_scan, repair_action, "
+                        "remove_suspicious_app, verify_app_removed, ping, and avatar_handoff."
                     ),
                     "parameters": {
                         "type": "object",
