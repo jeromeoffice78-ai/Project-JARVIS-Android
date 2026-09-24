@@ -19,6 +19,7 @@ import '../../features/system_control/jarvis_system_control_service.dart';
 import '../../features/vision/jarvis_vision_service.dart';
 import '../../features/voice/jarvis_voice_controller.dart';
 import '../../features/voice/jarvis_voice_service.dart';
+import '../auth/jarvis_chairman_auth.dart';
 import '../config/jarvis_config.dart';
 import 'jarvis_api_service.dart';
 import 'jarvis_ws_service.dart';
@@ -36,8 +37,14 @@ final jarvisWsServiceProvider =
       JarvisWsService(
     wsUri: Uri.parse(config.wsUrl),
     ticketProvider: () async {
-      final String token =
+      final String sessionToken =
+          JarvisAuthSession.currentToken;
+      final String fallbackToken =
           config.clientToken.trim();
+      final String token =
+          sessionToken.isNotEmpty
+              ? sessionToken
+              : fallbackToken;
       return token.isEmpty ? null : token;
     },
   );
