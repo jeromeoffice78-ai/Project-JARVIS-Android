@@ -219,15 +219,16 @@ class JarvisApiService {
   final JarvisConfig _config;
   final http.Client _client;
 
-  Map<String, String> get _headers {
+  String get _authorizationToken {
     final String sessionToken =
         JarvisAuthSession.currentToken;
-    final String fallbackToken =
-        _config.clientToken.trim();
-    final String token = sessionToken.isNotEmpty
+    return sessionToken.isNotEmpty
         ? sessionToken
-        : fallbackToken;
+        : _config.clientToken.trim();
+  }
 
+  Map<String, String> get _headers {
+    final String token = _authorizationToken;
     return <String, String>{
       'Content-Type': 'application/json',
       if (token.isNotEmpty)
@@ -576,9 +577,10 @@ class JarvisApiService {
       ),
     );
 
-    if (_config.clientToken.isNotEmpty) {
+    final String token = _authorizationToken;
+    if (token.isNotEmpty) {
       request.headers['Authorization'] =
-          'Bearer ${_config.clientToken}';
+          'Bearer $token';
     }
 
     request.fields['prompt'] = prompt;
@@ -733,9 +735,10 @@ class JarvisApiService {
       Uri.parse('${_config.httpBaseUrl}/vision/frame'),
     );
 
-    if (_config.clientToken.isNotEmpty) {
+    final String token = _authorizationToken;
+    if (token.isNotEmpty) {
       request.headers['Authorization'] =
-          'Bearer ${_config.clientToken}';
+          'Bearer $token';
     }
 
     request.files.add(
