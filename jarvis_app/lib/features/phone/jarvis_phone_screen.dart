@@ -32,6 +32,10 @@ class _JarvisPhoneScreenState
       _cloudMessages =
       const <JarvisPhoneReceptionistMessage>[];
   String? _cloudError;
+  JarvisCallerIntelligence? _callerIntelligence;
+  bool _callerIntelligenceLoading = false;
+  String? _callerIntelligenceError;
+  String? _callerLookupNumber;
   Timer? _callTimer;
 
   @override
@@ -105,6 +109,9 @@ class _JarvisPhoneScreenState
 
     if (!mounted) return;
 
+    final String? previousNumber =
+        _activeCall?.phoneNumber;
+
     if (_activeCall?.phoneNumber !=
             call?.phoneNumber ||
         _activeCall?.state != call?.state ||
@@ -113,6 +120,78 @@ class _JarvisPhoneScreenState
             call?.audioRoute) {
       setState(() {
         _activeCall = call;
+      });
+    }
+
+    if (call == null) {
+      if (previousNumber != null ||
+          _callerIntelligence != null ||
+          _callerIntelligenceError != null) {
+        setState(() {
+          _callerIntelligence = null;
+          _callerIntelligenceError = null;
+          _callerIntelligenceLoading = false;
+          _callerLookupNumber = null;
+        });
+      }
+      return;
+    }
+
+    final String number =
+        call.phoneNumber.trim();
+
+    if (number.isNotEmpty &&
+        number != _callerLookupNumber) {
+      unawaited(
+        _lookupCallerIntelligence(number),
+      );
+    }
+  }
+
+  Future<void> _lookupCallerIntelligence(
+    String number,
+  ) async {
+    final String normalized = number.trim();
+    if (normalized.isEmpty) return;
+
+    if (mounted) {
+      setState(() {
+        _callerLookupNumber = normalized;
+        _callerIntelligenceLoading = true;
+        _callerIntelligenceError = null;
+        _callerIntelligence = null;
+      });
+    }
+
+    try {
+      final JarvisCallerIntelligence result =
+          await ref
+              .read(jarvisApiServiceProvider)
+              .callerIntelligence(normalized);
+
+      if (!mounted ||
+          _callerLookupNumber != normalized) {
+        return;
+      }
+
+      setState(() {
+        _callerIntelligence = result;
+        _callerIntelligenceLoading = false;
+        _callerIntelligenceError =
+            result.lookupError.isEmpty
+                ? null
+                : result.lookupError;
+      });
+    } on Object catch (error) {
+      if (!mounted ||
+          _callerLookupNumber != normalized) {
+        return;
+      }
+
+      setState(() {
+        _callerIntelligenceLoading = false;
+        _callerIntelligenceError =
+            error.toString();
       });
     }
   }
@@ -229,6 +308,71 @@ class _JarvisPhoneScreenState
                               ),
                             ],
                           ),
+                          const SizedBox(height: 14),
+                          const Divider(),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: <Widget>[
+                              const Icon(
+                                Icons.manage_search,
+                                size: 20,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                'JARVIS Caller Intelligence',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleSmall
+                                    ?.copyWith(
+                                      fontWeight:
+                                          FontWeight.bold,
+                                    ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          if (_callerIntelligenceLoading)
+                            const Row(
+                              children: <Widget>[
+                                SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child:
+                                      CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                ),
+                                SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    'Identifying caller and carrier…',
+                                  ),
+                                ),
+                              ],
+                            )
+                          else if (_callerIntelligence != null)
+                            _CallerIntelligenceCard(
+                              intelligence:
+                                  _callerIntelligence!,
+                            )
+                          else if (_callerIntelligenceError !=
+                              null)
+                            Row(
+                              crossAxisAlignment:
+                                  CrossAxisAlignment.start,
+                              children: <Widget>[
+                                const Icon(
+                                  Icons.info_outline,
+                                  size: 18,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    _callerIntelligenceError!,
+                                  ),
+                                ),
+                              ],
+                            ),
                           const SizedBox(height: 14),
                           Wrap(
                             spacing: 10,
@@ -587,6 +731,167 @@ class _JarvisPhoneScreenState
                 ),
               ],
             ),
+    );
+  }
+}
+
+
+class _CallerIntelligenceCard
+    extends StatelessWidget {
+  const _CallerIntelligenceCard({
+    required this.intelligence,
+  });
+
+  final JarvisCallerIntelligence intelligence;
+
+  @override
+  Widget build(BuildContext context) {
+    final String displayName =
+        intelligence.callerName.isEmpty
+            ? 'Name not returned by provider'
+            : intelligence.callerName;
+
+    final String network = <String>[
+      intelligence.carrierName,
+      intelligence.lineType,
+    ].where((String value) => value.isNotEmpty)
+        .join(' • ');
+
+    final String location = <String>[
+      intelligence.region,
+      intelligence.countryCode,
+    ].where((String value) => value.isNotEmpty)
+        .join(' • ');
+
+    final String timezone =
+        intelligence.timeZones.join(', ');
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: Theme.of(context)
+            .colorScheme
+            .surface
+            .withValues(alpha: 0.55),
+        border: Border.all(
+          color: Theme.of(context)
+              .colorScheme
+              .outlineVariant,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment:
+            CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            displayName,
+            style: Theme.of(context)
+                .textTheme
+                .titleMedium
+                ?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+          ),
+          if (intelligence.callerType.isNotEmpty)
+            Text(
+              intelligence.callerType,
+              style: Theme.of(context)
+                  .textTheme
+                  .labelMedium,
+            ),
+          const SizedBox(height: 8),
+          _CallerInfoRow(
+            label: 'Number',
+            value:
+                intelligence.nationalFormat.isNotEmpty
+                    ? intelligence.nationalFormat
+                    : intelligence.phoneNumber,
+          ),
+          if (network.isNotEmpty)
+            _CallerInfoRow(
+              label: 'Carrier / line',
+              value: network,
+            ),
+          if (location.isNotEmpty)
+            _CallerInfoRow(
+              label: 'Number region',
+              value: location,
+            ),
+          if (timezone.isNotEmpty)
+            _CallerInfoRow(
+              label: 'Time zone',
+              value: timezone,
+            ),
+          _CallerInfoRow(
+            label: 'Number validity',
+            value: intelligence.valid
+                ? 'Valid numbering range'
+                : 'Not verified as valid',
+          ),
+          if (intelligence.mobileCountryCode.isNotEmpty ||
+              intelligence.mobileNetworkCode.isNotEmpty)
+            _CallerInfoRow(
+              label: 'Network codes',
+              value:
+                  '${intelligence.mobileCountryCode}/${intelligence.mobileNetworkCode}',
+            ),
+          if (intelligence.lookupError.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                intelligence.lookupError,
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall,
+              ),
+            ),
+          const SizedBox(height: 8),
+          Text(
+            intelligence.locationNote,
+            style: Theme.of(context)
+                .textTheme
+                .bodySmall,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CallerInfoRow extends StatelessWidget {
+  const _CallerInfoRow({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding:
+          const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        crossAxisAlignment:
+            CrossAxisAlignment.start,
+        children: <Widget>[
+          SizedBox(
+            width: 112,
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Expanded(
+            child: SelectableText(value),
+          ),
+        ],
+      ),
     );
   }
 }
