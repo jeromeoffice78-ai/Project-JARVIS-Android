@@ -1,0 +1,124 @@
+name: Build JARVIS ARM64 Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/build-jarvis-arm64-release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-arm64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android and native bridges
+        working-directory: jarvis_app
+        run: |
+          set -euo pipefail
+          flutter create --platforms=android .
+          rm -f test/widget_test.dart
+          python scripts/prepare_native.py
+
+      - name: Bundle runtime assets
+        working-directory: jarvis_app
+        run: |
+          set -euo pipefail
+          mkdir -p assets/models assets/vendor/three/addons/loaders assets/vendor/three/addons/utils
+
+          curl --fail --location --retry 5 --retry-delay 3 \
+            https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/CesiumMan/glTF-Binary/CesiumMan.glb \
+            --output assets/models/CesiumMan.glb
+
+          curl --fail --location --retry 5 --retry-delay 3 \
+            https://raw.githubusercontent.com/mrdoob/three.js/r180/build/three.module.js \
+            --output assets/vendor/three/three.module.js
+          curl --fail --location --retry 5 --retry-delay 3 \
+            https://raw.githubusercontent.com/mrdoob/three.js/r180/examples/jsm/loaders/GLTFLoader.js \
+            --output assets/vendor/three/addons/loaders/GLTFLoader.js
+          curl --fail --location --retry 5 --retry-delay 3 \
+            https://raw.githubusercontent.com/mrdoob/three.js/r180/examples/jsm/utils/BufferGeometryUtils.js \
+            --output assets/vendor/three/addons/utils/BufferGeometryUtils.js
+
+          curl --fail --location --retry 5 --retry-delay 3 \
+            https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/vitruvian_body.glb \
+            --output assets/models/vitruvian_body.glb
+          curl --fail --location --retry 5 --retry-delay 3 \
+            https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/vitruvian_head.glb \
+            --output assets/models/vitruvian_head.glb
+          curl --fail --location --retry 5 --retry-delay 3 \
+            https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/hairtool_cards.glb \
+            --output assets/models/hairtool_cards.glb
+
+          for asset in vit_face_bc.png vit_mouth.png vit_sclera.png vit_iris.png vit_hair_atlas.png vit_hair_opacity.png; do
+            curl --fail --location --retry 5 --retry-delay 3 \
+              "https://raw.githubusercontent.com/ibrews/VitruvianGodot/main/godot_project/$asset" \
+              --output "assets/models/$asset"
+          done
+
+          curl --fail --location --retry 5 --retry-delay 3 \
+            "https://huggingface.co/mlboydaisuke/ECAPA-TDNN-Speaker-ExecuTorch/resolve/main/speaker_ecapa_xnnpack_fp32.pte?download=true" \
+            --output assets/models/speaker_ecapa_xnnpack_fp32.pte
+
+          test "$(stat -c %s assets/models/speaker_ecapa_xnnpack_fp32.pte)" -gt 80000000
+          flutter pub get
+
+      - name: Build ARM64 release APK
+        working-directory: jarvis_app
+        env:
+          JARVIS_HTTP_BASE: ${{ vars.JARVIS_HTTP_BASE }}
+          JARVIS_WS_URL: ${{ vars.JARVIS_WS_URL }}
+          JARVIS_CLIENT_TOKEN: ${{ secrets.JARVIS_CLIENT_TOKEN }}
+        run: |
+          set -euo pipefail
+          HTTP_BASE="${JARVIS_HTTP_BASE:-https://project-jarvis-android.onrender.com}"
+          WS_URL="${JARVIS_WS_URL:-wss://project-jarvis-android.onrender.com/ws/jarvis}"
+          TOKEN="${JARVIS_CLIENT_TOKEN:-}"
+          flutter build apk --release --target-platform android-arm64 \
+            --dart-define=JARVIS_HTTP_BASE="$HTTP_BASE" \
+            --dart-define=JARVIS_WS_URL="$WS_URL" \
+            --dart-define=JARVIS_CLIENT_TOKEN="$TOKEN"
+
+      - name: Stage ARM64 APK
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp jarvis_app/build/app/outputs/flutter-apk/app-release.apk dist/JARVIS-FULL-APP-ARM64.apk
+          sha256sum dist/JARVIS-FULL-APP-ARM64.apk | tee dist/JARVIS-FULL-APP-ARM64.apk.sha256
+          ls -lh dist/JARVIS-FULL-APP-ARM64.apk
+
+      - name: Publish ARM64 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TAG="jarvis-arm64-full-v1.3.0"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/JARVIS-FULL-APP-ARM64.apk dist/JARVIS-FULL-APP-ARM64.apk.sha256 --clobber
+          else
+            gh release create "$TAG" \
+              dist/JARVIS-FULL-APP-ARM64.apk \
+              dist/JARVIS-FULL-APP-ARM64.apk.sha256 \
+              --target "${GITHUB_SHA}" \
+              --title "JARVIS Full App - ARM64 Release" \
+              --notes "Optimized ARM64 release APK for modern Android phones and tablets. Same JARVIS feature set with debug overhead and unused CPU binaries removed."
+          fi
