@@ -762,14 +762,14 @@ class JarvisChatController {
     final String error =
         result['lookup_error']?.toString().trim() ?? '';
 
-    final List<String> parts = <String>[];
-    parts.add(
+    final List<String> parts = <String>[
       name.isEmpty
           ? 'Caller name was not returned'
           : 'Caller: ' +
               name +
               (type.isEmpty ? '' : ' (' + type + ')'),
-    );
+    ];
+
     if (number.isNotEmpty) {
       parts.add('Number: ' + number);
     }
