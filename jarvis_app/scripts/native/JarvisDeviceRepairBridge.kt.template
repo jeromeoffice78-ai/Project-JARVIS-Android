@@ -1079,9 +1079,9 @@ object JarvisDeviceRepairBridge {
     private fun isPackageInstalled(
         context: Context,
         packageName: String,
-    ): Boolean {
+    ): Boolean? {
         if (packageName.isBlank()) {
-            return false
+            return null
         }
 
         return try {
@@ -1107,7 +1107,7 @@ object JarvisDeviceRepairBridge {
         } catch (_: PackageManager.NameNotFoundException) {
             false
         } catch (_: Throwable) {
-            false
+            null
         }
     }
 
