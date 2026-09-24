@@ -487,13 +487,15 @@ class _JarvisPhoneScreenState
                           ? (_cloudError ??
                               'Checking the cloud receptionist...')
                           : (_cloudStatus!.configured
-                              ? ('OpenAI SIP receptionist ready'
+                              ? ((_cloudStatus!.provider == 'vapi'
+                                      ? 'Vapi AI receptionist ready'
+                                      : 'OpenAI SIP receptionist ready')
                                   + (_cloudStatus!.phoneNumber.isEmpty
                                       ? ''
                                       : ' • ' + _cloudStatus!.phoneNumber)
                                   + ' • active calls: '
                                   + _cloudStatus!.activeCalls.toString())
-                              : 'Backend is ready; SIP/webhook activation is still required.'),
+                              : 'Cloud receptionist transport is not currently active.'),
                     ),
                     trailing:
                         _cloudStatus?.configured == true
@@ -724,8 +726,8 @@ class _JarvisPhoneScreenState
                     padding: EdgeInsets.all(16),
                     child: Text(
                       'Local Android call controls and the cloud receptionist are separate. '
-                      'The cloud receptionist handles full two-way spoken AI calls through SIP, '
-                      'then stores the caller message and transcript for Jarvis.',
+                      'The cloud receptionist handles full two-way spoken AI calls through the '
+                      'configured provider, then stores the caller message and transcript for Jarvis.',
                     ),
                   ),
                 ),
