@@ -147,8 +147,8 @@ jobs:
           JARVIS_WS_URL: ${{ vars.JARVIS_WS_URL }}
           JARVIS_CLIENT_TOKEN: ${{ secrets.JARVIS_CLIENT_TOKEN }}
         run: |
-          HTTP_BASE="${JARVIS_HTTP_BASE:-http://10.0.2.2:8000}"
-          WS_URL="${JARVIS_WS_URL:-ws://10.0.2.2:8000/ws/jarvis}"
+          HTTP_BASE="${JARVIS_HTTP_BASE:-https://jarvis-legal-enterprise-api.onrender.com}"
+          WS_URL="${JARVIS_WS_URL:-wss://jarvis-legal-enterprise-api.onrender.com/ws/jarvis}"
           TOKEN="${JARVIS_CLIENT_TOKEN:-}"
           flutter build apk --debug \
             --dart-define=JARVIS_HTTP_BASE="$HTTP_BASE" \
