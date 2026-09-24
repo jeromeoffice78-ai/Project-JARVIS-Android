@@ -94,6 +94,11 @@ class JarvisBluetoothManager {
       _connectionSubscriptions =
       <String, StreamSubscription<bool>>{};
   final Set<String> _knownDeviceIds = <String>{};
+  final Set<String> _manualDisconnectIds = <String>{};
+  final Map<String, int> _reconnectAttempts = <String, int>{};
+  final Map<String, Timer> _reconnectTimers = <String, Timer>{};
+
+  static const int _maxReconnectAttempts = 5;
 
   StreamSubscription<BleDevice>? _scanSubscription;
   StreamSubscription<AvailabilityState>?
@@ -140,7 +145,7 @@ class JarvisBluetoothManager {
       }
 
       await UniversalBle.requestPermissions(
-        withAndroidFineLocation: false,
+        withAndroidFineLocation: true,
       );
 
       final AvailabilityState availability =
@@ -175,7 +180,7 @@ class JarvisBluetoothManager {
 
     try {
       await UniversalBle.requestPermissions(
-        withAndroidFineLocation: false,
+        withAndroidFineLocation: true,
       );
 
       final AvailabilityState availability =
@@ -237,6 +242,10 @@ class JarvisBluetoothManager {
       return;
     }
 
+    _manualDisconnectIds.remove(normalized);
+    _reconnectTimers.remove(normalized)?.cancel();
+    _reconnectAttempts.remove(normalized);
+
     final bool resumeScan = _state.isScanning;
     if (resumeScan) {
       await stopScan();
@@ -249,7 +258,7 @@ class JarvisBluetoothManager {
     _rebuildState();
 
     try {
-      await UniversalBle.connect(
+      await _connectWithRetry(
         normalized,
         timeout: const Duration(seconds: 25),
       );
@@ -305,7 +314,10 @@ class JarvisBluetoothManager {
       unique.map(
         (String id) async {
           try {
-            await UniversalBle.connect(
+            _manualDisconnectIds.remove(id);
+            _reconnectTimers.remove(id)?.cancel();
+            _reconnectAttempts.remove(id);
+            await _connectWithRetry(
               id,
               timeout: const Duration(seconds: 25),
             );
@@ -337,6 +349,10 @@ class JarvisBluetoothManager {
       return;
     }
 
+    _manualDisconnectIds.add(normalized);
+    _reconnectTimers.remove(normalized)?.cancel();
+    _reconnectAttempts.remove(normalized);
+
     try {
       await UniversalBle.disconnect(normalized);
     } on Object catch (error) {
@@ -353,6 +369,9 @@ class JarvisBluetoothManager {
 
     await disconnect(deviceId);
     _knownDeviceIds.remove(deviceId);
+    _manualDisconnectIds.remove(deviceId);
+    _reconnectTimers.remove(deviceId)?.cancel();
+    _reconnectAttempts.remove(deviceId);
     _errors.remove(deviceId);
     await _saveKnownDevices();
     _rebuildState();
@@ -401,10 +420,11 @@ class JarvisBluetoothManager {
       _rebuildState();
 
       try {
-        await UniversalBle.connect(
+        await _connectWithRetry(
           deviceId,
           autoConnect: true,
           timeout: const Duration(seconds: 12),
+          attempts: 3,
         );
       } on Object catch (error) {
         _connections[deviceId] =
@@ -415,6 +435,102 @@ class JarvisBluetoothManager {
 
       _rebuildState();
     }
+  }
+
+
+  Future<void> _connectWithRetry(
+    String deviceId, {
+    bool autoConnect = false,
+    Duration timeout = const Duration(seconds: 20),
+    int attempts = _maxReconnectAttempts,
+  }) async {
+    Object? lastError;
+
+    for (int attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        await UniversalBle.connect(
+          deviceId,
+          autoConnect: autoConnect,
+          timeout: timeout,
+        );
+        _reconnectAttempts.remove(deviceId);
+        _errors.remove(deviceId);
+        return;
+      } on Object catch (error) {
+        lastError = error;
+        _reconnectAttempts[deviceId] = attempt;
+        _errors[deviceId] =
+            'Connection attempt $attempt/$attempts failed: $error';
+        _rebuildState();
+
+        if (attempt < attempts) {
+          await Future<void>.delayed(
+            Duration(seconds: 2 * attempt),
+          );
+        }
+      }
+    }
+
+    throw StateError(
+      'Bluetooth connection failed after $attempts attempts: $lastError',
+    );
+  }
+
+  void _scheduleReconnect(String deviceId) {
+    if (_disposed ||
+        _manualDisconnectIds.contains(deviceId) ||
+        !_knownDeviceIds.contains(deviceId) ||
+        _reconnectTimers.containsKey(deviceId)) {
+      return;
+    }
+
+    final int previous =
+        _reconnectAttempts[deviceId] ?? 0;
+    final int next = previous + 1;
+    _reconnectAttempts[deviceId] = next;
+
+    final int delaySeconds =
+        (next * 3).clamp(3, 30);
+
+    _errors[deviceId] =
+        'Connection lost. Jarvis will retry in ${delaySeconds}s.';
+    _rebuildState();
+
+    _reconnectTimers[deviceId] = Timer(
+      Duration(seconds: delaySeconds),
+      () async {
+        _reconnectTimers.remove(deviceId);
+        if (_disposed ||
+            _manualDisconnectIds.contains(deviceId) ||
+            !_knownDeviceIds.contains(deviceId)) {
+          return;
+        }
+
+        _connections[deviceId] =
+            JarvisBluetoothConnectionState.connecting;
+        _rebuildState();
+
+        try {
+          await _connectWithRetry(
+            deviceId,
+            autoConnect: true,
+            timeout: const Duration(seconds: 15),
+            attempts: 2,
+          );
+          _connections[deviceId] =
+              JarvisBluetoothConnectionState.connected;
+          _errors.remove(deviceId);
+        } on Object catch (error) {
+          _connections[deviceId] =
+              JarvisBluetoothConnectionState.disconnected;
+          _errors[deviceId] =
+              'Automatic reconnect failed: $error';
+          _scheduleReconnect(deviceId);
+        }
+
+        _rebuildState();
+      },
+    );
   }
 
   void _listenForConnection(String deviceId) {
@@ -433,7 +549,13 @@ class JarvisBluetoothManager {
         if (connected) {
           _errors.remove(deviceId);
           _knownDeviceIds.add(deviceId);
+          _manualDisconnectIds.remove(deviceId);
+          _reconnectAttempts.remove(deviceId);
+          _reconnectTimers.remove(deviceId)?.cancel();
           unawaited(_saveKnownDevices());
+        } else if (_knownDeviceIds.contains(deviceId) &&
+            !_manualDisconnectIds.contains(deviceId)) {
+          _scheduleReconnect(deviceId);
         }
 
         _rebuildState();
@@ -594,6 +716,10 @@ class JarvisBluetoothManager {
       await subscription.cancel();
     }
 
+    for (final Timer timer in _reconnectTimers.values) {
+      timer.cancel();
+    }
+    _reconnectTimers.clear();
     _connectionSubscriptions.clear();
     await _stateController.close();
   }
