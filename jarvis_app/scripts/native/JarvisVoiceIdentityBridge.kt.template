@@ -13,6 +13,9 @@ import android.util.Base64
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -30,9 +33,11 @@ object JarvisVoiceIdentityBridge {
     private const val CHANNEL = "jarvis.voice_identity"
     private const val SAMPLE_RATE = 16000
     private const val SAMPLE_COUNT = 48000
-    private const val MODEL_ASSET =
-        "flutter_assets/assets/models/speaker_ecapa_xnnpack_fp32.pte"
+    private const val MODEL_URL =
+        "https://huggingface.co/mlboydaisuke/ECAPA-TDNN-Speaker-ExecuTorch/resolve/main/speaker_ecapa_xnnpack_fp32.pte?download=true"
     private const val MODEL_FILE = "speaker_ecapa_xnnpack_fp32.pte"
+    private const val MODEL_PART_FILE = "speaker_ecapa_xnnpack_fp32.pte.part"
+    private const val MIN_MODEL_BYTES = 80_000_000L
     private const val PREFS = "jarvis_voice_profiles"
     private const val KEY_ALIAS = "jarvis_voice_profile_key"
     private const val MATCH_THRESHOLD = 0.60f
@@ -314,15 +319,9 @@ object JarvisVoiceIdentityBridge {
 
         if (
             !modelFile.exists() ||
-            modelFile.length() < 80_000_000L
+            modelFile.length() < MIN_MODEL_BYTES
         ) {
-            activity.assets
-                .open(MODEL_ASSET)
-                .use { input ->
-                    modelFile.outputStream().use { output ->
-                        input.copyTo(output)
-                    }
-                }
+            downloadModel(activity, modelFile)
         }
 
         return Module.load(
@@ -330,6 +329,116 @@ object JarvisVoiceIdentityBridge {
         ).also {
             module = it
         }
+    }
+
+    private fun downloadModel(
+        activity: Activity,
+        modelFile: File,
+    ) {
+        val partial = File(
+            activity.filesDir,
+            MODEL_PART_FILE,
+        )
+
+        var lastError: Throwable? = null
+
+        repeat(4) { attempt ->
+            var connection: HttpURLConnection? = null
+
+            try {
+                val existingBytes =
+                    if (partial.exists()) partial.length() else 0L
+
+                connection =
+                    (URL(MODEL_URL).openConnection() as HttpURLConnection)
+                        .apply {
+                            instanceFollowRedirects = true
+                            connectTimeout = 30_000
+                            readTimeout = 120_000
+                            requestMethod = "GET"
+                            setRequestProperty(
+                                "User-Agent",
+                                "JARVIS-Android/1.3",
+                            )
+                            if (existingBytes > 0L) {
+                                setRequestProperty(
+                                    "Range",
+                                    "bytes=${existingBytes}-",
+                                )
+                            }
+                        }
+
+                val responseCode = connection.responseCode
+                val append =
+                    existingBytes > 0L &&
+                        responseCode == HttpURLConnection.HTTP_PARTIAL
+
+                if (
+                    responseCode !in 200..299
+                ) {
+                    throw IllegalStateException(
+                        "Voice model download failed with HTTP $responseCode.",
+                    )
+                }
+
+                if (!append && partial.exists()) {
+                    partial.delete()
+                }
+
+                connection.inputStream.use { input ->
+                    FileOutputStream(
+                        partial,
+                        append,
+                    ).buffered().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+
+                if (partial.length() < MIN_MODEL_BYTES) {
+                    throw IllegalStateException(
+                        "Voice model download was incomplete.",
+                    )
+                }
+
+                if (modelFile.exists()) {
+                    modelFile.delete()
+                }
+
+                if (!partial.renameTo(modelFile)) {
+                    partial.inputStream().use { input ->
+                        modelFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    partial.delete()
+                }
+
+                if (modelFile.length() < MIN_MODEL_BYTES) {
+                    modelFile.delete()
+                    throw IllegalStateException(
+                        "Voice model could not be verified after download.",
+                    )
+                }
+
+                return
+            } catch (error: Throwable) {
+                lastError = error
+                if (attempt < 3) {
+                    try {
+                        Thread.sleep(1_500L * (attempt + 1))
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                    }
+                }
+            } finally {
+                connection?.disconnect()
+            }
+        }
+
+        throw IllegalStateException(
+            "JARVIS could not download the voice identity model. Check your internet connection and try voice identity again.",
+            lastError,
+        )
     }
 
     private fun identify(
