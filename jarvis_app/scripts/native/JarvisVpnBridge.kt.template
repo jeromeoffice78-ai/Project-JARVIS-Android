@@ -15,7 +15,7 @@ import io.flutter.plugin.common.MethodChannel
 
 object JarvisVpnBridge {
     private const val CHANNEL = "jarvis.vpn"
-    private const val WARP_PACKAGE = "com.cloudflare.onedotonedotonedotone"
+    private const val WARP_PACKAGE = "com.cloudflare.cloudflareoneagent"
     private const val CONSENT_REQUEST = 7246
     private var pendingResult: MethodChannel.Result? = null
 
@@ -108,7 +108,7 @@ object JarvisVpnBridge {
         } catch (error: Throwable) {
             result.error(
                 "warp_open_failed",
-                error.message ?: "Unable to open Cloudflare WARP.",
+                error.message ?: "Unable to open Cloudflare One Agent.",
                 null,
             )
         }
