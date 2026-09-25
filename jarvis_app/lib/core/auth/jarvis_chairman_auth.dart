@@ -136,6 +136,7 @@ class _JarvisChairmanAuthGateState
   bool _offlineMode = false;
   bool _submitting = false;
   bool _oauthConfigurationError = false;
+  String? _lastDiagnostic;
   String? _error;
 
   @override
@@ -230,12 +231,13 @@ class _JarvisChairmanAuthGateState
     setState(() {
       _submitting = true;
       _oauthConfigurationError = false;
+      _lastDiagnostic = null;
       _error = null;
     });
 
     try {
-      await _google.signOut();
-
+      // Let Google show its account picker directly. Forcing signOut before
+      // every attempt can itself fail and prevent sign-in from starting.
       final GoogleSignInAccount? account =
           await _google.signIn();
 
@@ -264,6 +266,8 @@ class _JarvisChairmanAuthGateState
         _submitting = false;
         _oauthConfigurationError =
             JarvisGoogleSignInDiagnostics.isOAuthConfigurationError(error);
+        _lastDiagnostic =
+            JarvisGoogleSignInDiagnostics.diagnosticSummary(error);
         _error = JarvisGoogleSignInDiagnostics.messageFor(error);
       });
     }
@@ -273,8 +277,24 @@ class _JarvisChairmanAuthGateState
     GoogleSignInAccount account, {
     required bool interactive,
   }) async {
-    final GoogleSignInAuthentication auth =
-        await account.authentication;
+    late final GoogleSignInAuthentication auth;
+    try {
+      auth = await account.authentication;
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _checking = false;
+        _submitting = false;
+        _oauthConfigurationError =
+            JarvisGoogleSignInDiagnostics.isOAuthConfigurationError(error);
+        _lastDiagnostic = JarvisGoogleSignInDiagnostics.diagnosticSummary(
+          error,
+          stage: 'google_id_token',
+        );
+        _error = JarvisGoogleSignInDiagnostics.messageFor(error);
+      });
+      return;
+    }
 
     final String idToken =
         auth.idToken?.trim() ?? '';
@@ -286,6 +306,8 @@ class _JarvisChairmanAuthGateState
       setState(() {
         _checking = false;
         _submitting = false;
+        _lastDiagnostic =
+            'Stage: google_id_token\nResult: no Google identity token';
         _error =
             'Google did not return an identity token.';
       });
@@ -370,6 +392,7 @@ class _JarvisChairmanAuthGateState
           _submitting = false;
           _offlineMode = false;
           _error = null;
+          _lastDiagnostic = null;
         });
         return;
       }
@@ -392,6 +415,8 @@ class _JarvisChairmanAuthGateState
         _checking = false;
         _submitting = false;
         _authenticated = false;
+        _lastDiagnostic =
+            'Stage: jarvis_backend_auth\nHTTP status: ${response.statusCode}';
         _error = message;
       });
     } on Object catch (error) {
@@ -403,8 +428,13 @@ class _JarvisChairmanAuthGateState
         _checking = false;
         _submitting = false;
         _authenticated = false;
+        _lastDiagnostic = JarvisGoogleSignInDiagnostics.diagnosticSummary(
+          error,
+          stage: 'jarvis_backend_exchange',
+        );
         _error =
-            'Unable to establish a secure JARVIS session: $error';
+            'Unable to establish a secure JARVIS session. '
+            'Copy the diagnostic code below.';
       });
     }
   }
@@ -512,6 +542,33 @@ class _JarvisChairmanAuthGateState
                             color:
                                 Colors.amberAccent,
                           ),
+                        ),
+                      ],
+                      if (_lastDiagnostic != null) ...<Widget>[
+                        const SizedBox(height: 10),
+                        SelectableText(
+                          _lastDiagnostic!,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.white70,
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: () async {
+                            await Clipboard.setData(
+                              ClipboardData(text: _lastDiagnostic!),
+                            );
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Safe error diagnostic copied.'),
+                                ),
+                              );
+                            }
+                          },
+                          icon: const Icon(Icons.copy),
+                          label: const Text('COPY ERROR DIAGNOSTICS'),
                         ),
                       ],
                       if (_oauthConfigurationError) ...<Widget>[
