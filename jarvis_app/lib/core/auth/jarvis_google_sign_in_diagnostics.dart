@@ -1,8 +1,8 @@
 import 'package:flutter/services.dart';
 
-/// Android OAuth details for the permanent production signing identity.
-/// These public values are verified by the signed-release workflow.
-/// Debug or third-party re-signed APKs have a different fingerprint.
+/// Safe, shareable diagnostics for Google Sign-In on production Android.
+/// Never include identity tokens, backend bearer tokens, emails or exception
+/// details verbatim in a user-visible diagnostic.
 abstract final class JarvisGoogleSignInDiagnostics {
   static const String androidPackage = 'com.jarvis.project_jarvis';
   static const String productionSigningSha1 =
@@ -16,28 +16,76 @@ abstract final class JarvisGoogleSignInDiagnostics {
       'as the JARVIS web OAuth server client. '
       'Use the production-signed JARVIS APK, not a debug build.';
 
+  static String? googleApiStatus(Object error) {
+    if (error is! PlatformException) return null;
+    final String message = error.message ?? '';
+    final RegExpMatch? explicit = RegExp(
+      r'(?:ApiException|status(?:Code)?)\s*[:=]\s*(\d{1,5})\b',
+      caseSensitive: false,
+    ).firstMatch(message);
+    if (explicit != null) return explicit.group(1);
+
+    // Some Android Play Services builds obfuscate ApiException as "ra.b: 10:".
+    final RegExpMatch? obfuscated = RegExp(
+      r'\b[A-Za-z][A-Za-z0-9_.]*:\s*(\d{1,5}):',
+    ).firstMatch(message);
+    return obfuscated?.group(1);
+  }
+
   static bool isOAuthConfigurationError(Object error) {
     if (error is! PlatformException) return false;
-    final String details =
-        '${error.code} ${error.message ?? ''} ${error.details ?? ''}';
-    return RegExp(
-      r'(?:ApiException:\s*10\b|DEVELOPER_ERROR|statusCode\s*[:=]\s*10\b)',
-      caseSensitive: false,
-    ).hasMatch(details);
+    return googleApiStatus(error) == '10' ||
+        (error.message ?? '').contains('DEVELOPER_ERROR');
+  }
+
+  /// Return only stage, stable platform error code and numeric Google status.
+  /// An Android exception message may contain private account information,
+  /// so it must never be copied verbatim.
+  static String diagnosticSummary(
+    Object error, {
+    String stage = 'google_account_picker',
+  }) {
+    final String safeStage =
+        stage.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+    if (error is PlatformException) {
+      final String safeCode = error.code
+          .replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+      final String status = googleApiStatus(error) ?? 'not reported';
+      return 'Stage: $safeStage\n'
+          'Android error code: $safeCode\n'
+          'Google API status: $status';
+    }
+    // Exception type is enough to distinguish a local or transport failure
+    // without inadvertently copying sensitive error descriptions.
+    return 'Stage: $safeStage\n'
+        'Error type: ${error.runtimeType}';
   }
 
   static String messageFor(Object error) {
     if (isOAuthConfigurationError(error)) {
-      return 'Google sign-in configuration error (10). '
-          'This Android app must have an OAuth Android client registered '
-          'for its exact package and signing SHA-1 in the same Google '
-          'Cloud project as the JARVIS web client. '
-          'Install the production-signed APK and use the buttons below '
-          'to copy the required settings and open Google Cloud. '
-          'Local features remain available while this is fixed.';
+      return 'Google configuration error (10). Check that the signed JARVIS '
+          'APK, Android package, signing SHA-1 and Web OAuth client are '
+          'registered in the same Google Cloud project. '
+          'Use COPY DIAGNOSTICS below if this still fails.';
     }
-    return 'Google sign-in could not complete. Check your connection '
-        'and Google Play services, then try again. '
-        'You can still continue with local features.';
+    if (error is PlatformException) {
+      if (error.code == 'sign_in_canceled') {
+        return 'Google sign-in was canceled. Tap Continue with Google '
+            'when you are ready to choose an account.';
+      }
+      if (error.code == 'network_error' || googleApiStatus(error) == '7') {
+        return 'Google reported a network error. Verify that the phone '
+            'can reach Google Play services and retry.';
+      }
+      if (error.code == 'sign_in_required') {
+        return 'Google requires an account on this phone. Add your '
+            'approved account under Android Settings, then retry.';
+      }
+      return 'Android Google Sign-In failed before JARVIS could '
+          'finish authentication. Copy the diagnostic code below '
+          'to identify the cause.';
+    }
+    return 'Google sign-in did not complete. Copy the diagnostic code '
+        'below to distinguish a device, token or network error.';
   }
 }
