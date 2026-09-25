@@ -15,7 +15,7 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 
 DEFAULT_GOOGLE_CLIENT_ID = (
-    "498363735983-nka03bna11698m7o6ao0l7vnga8fb80e.apps.googleusercontent.com"
+    "498363735983-nka03bna11698m7o6aool7vnga8fb80e.apps.googleusercontent.com"
 )
 DEFAULT_CHAIRMAN_EMAIL = "jeromeoffice78@gmail.com"
 
