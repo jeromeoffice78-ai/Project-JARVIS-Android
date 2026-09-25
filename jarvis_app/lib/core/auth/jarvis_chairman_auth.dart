@@ -24,6 +24,15 @@ final class JarvisAuthSession {
 
   static String _currentToken = '';
 
+  // Cloud-device and printer clients react to sign-in and sign-out without
+  // exposing bearer tokens through application UI or streams.
+  static final ValueNotifier<int> sessionRevision =
+      ValueNotifier<int>(0);
+
+  static void _sessionChanged() {
+    sessionRevision.value++;
+  }
+
   static String get currentToken =>
       _currentToken.trim();
 
@@ -38,6 +47,7 @@ final class JarvisAuthSession {
       // opening; treat the missing/unreadable session as signed out.
       _currentToken = '';
     }
+    _sessionChanged();
     return _currentToken;
   }
 
@@ -47,6 +57,7 @@ final class JarvisAuthSession {
     required String email,
   }) async {
     _currentToken = token.trim();
+    _sessionChanged();
     try {
       await _storage.write(
         key: _tokenKey,
@@ -68,6 +79,7 @@ final class JarvisAuthSession {
 
   static Future<void> clear() async {
     _currentToken = '';
+    _sessionChanged();
     try {
       await _storage.deleteAll();
     } on Object {
