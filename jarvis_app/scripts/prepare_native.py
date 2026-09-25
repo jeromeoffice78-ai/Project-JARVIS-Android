@@ -106,6 +106,7 @@ def patch_manifest() -> None:
     <queries>
         <package android:name="com.google.android.apps.healthdata" />
         <package android:name="com.cloudflare.cloudflareoneagent" />
+        <package android:name="com.cloudflare.onedotonedotonedotone" />
         <intent><action android:name="android.speech.RecognitionService" /></intent>
         <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
         <intent>
