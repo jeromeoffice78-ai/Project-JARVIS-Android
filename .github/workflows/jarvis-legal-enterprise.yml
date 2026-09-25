@@ -100,6 +100,22 @@ jobs:
             echo 'Missing Google server client ID.' >&2
             exit 1
           }
+          # Prevent a one-character Web OAuth ID drift between the APK
+          # and the backend; Google Android fails with ApiException 10.
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          client = os.environ["GOOGLE_SERVER_CLIENT_ID"]
+          for name in (
+              "jarvis_app/lib/core/auth/jarvis_chairman_auth.dart",
+              "legal_backend/app/auth_google.py",
+          ):
+              source = Path(name).read_text(encoding="utf-8")
+              if client not in source:
+                  raise SystemExit(f"Google Web OAuth client mismatch: {name}")
+          print("Verified identical Google Web OAuth client in APK and backend.")
+          PY
 
       - name: Prepare Android platform around checked-in app source
         working-directory: legal_app
