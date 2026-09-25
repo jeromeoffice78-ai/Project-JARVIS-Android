@@ -140,20 +140,21 @@ jobs:
         working-directory: jarvis_app
         run: flutter analyze --no-fatal-warnings --no-fatal-infos
 
+      - name: Test signed installer selection
+        working-directory: jarvis_app
+        run: flutter test test/jarvis_signed_release_test.dart
+
       - name: Build debug APK
         working-directory: jarvis_app
         env:
           JARVIS_HTTP_BASE: ${{ vars.JARVIS_HTTP_BASE }}
           JARVIS_WS_URL: ${{ vars.JARVIS_WS_URL }}
-          JARVIS_CLIENT_TOKEN: ${{ secrets.JARVIS_CLIENT_TOKEN }}
         run: |
           HTTP_BASE="${JARVIS_HTTP_BASE:-https://jarvis-legal-enterprise-api.onrender.com}"
           WS_URL="${JARVIS_WS_URL:-wss://jarvis-legal-enterprise-api.onrender.com/ws/jarvis}"
-          TOKEN="${JARVIS_CLIENT_TOKEN:-}"
           flutter build apk --debug \
             --dart-define=JARVIS_HTTP_BASE="$HTTP_BASE" \
-            --dart-define=JARVIS_WS_URL="$WS_URL" \
-            --dart-define=JARVIS_CLIENT_TOKEN="$TOKEN"
+            --dart-define=JARVIS_WS_URL="$WS_URL"
 
       - name: Stage APK
         run: |
