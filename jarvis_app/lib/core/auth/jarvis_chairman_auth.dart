@@ -252,7 +252,7 @@ class _JarvisChairmanAuthGateState
         'Expected certificate match: ${installedSha1 == JarvisGoogleSignInDiagnostics.productionSigningSha1}',
         'Google Play services version: $googlePlayServicesVersion',
         'Configured Google Web OAuth client: $_googleServerClientId',
-      ].join('\\n');
+      ].join('\n');
     } on MissingPluginException {
       return 'Installed APK identity: unavailable; this APK does not '
           'include the installed-identity diagnostic. Update JARVIS.';
@@ -269,7 +269,7 @@ class _JarvisChairmanAuthGateState
     final String identity = await _installedIdentityDiagnostic();
     if (!mounted || _lastDiagnostic == null) return;
     setState(() {
-      _lastDiagnostic = '${_lastDiagnostic!}\\n$identity';
+      _lastDiagnostic = '${_lastDiagnostic!}\n$identity';
     });
   }
 
