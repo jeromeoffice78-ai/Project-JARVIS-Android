@@ -3,14 +3,21 @@ package __PACKAGE__
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.net.ConnectivityManager
+import android.net.Ikev2VpnProfile
 import android.net.NetworkCapabilities
+import android.net.VpnManager
+import android.os.Build
 import android.provider.Settings
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 object JarvisVpnBridge {
     private const val CHANNEL = "jarvis.vpn"
+    private const val WARP_PACKAGE = "com.cloudflare.onedotonedotonedotone"
+    private const val CONSENT_REQUEST = 7246
+    private var pendingResult: MethodChannel.Result? = null
 
     fun register(
         activity: Activity,
@@ -22,6 +29,26 @@ object JarvisVpnBridge {
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "getStatus" -> result.success(status(activity))
+                "getWarpStatus" -> result.success(warpStatus(activity))
+                "openWarp" -> openWarp(activity, result)
+                "getPlatformSupport" -> result.success(platformSupport(activity))
+                "provisionIkev2" -> provisionIkev2(activity, call.arguments, result)
+                "startProvisionedVpn" -> runVpnAction(result) {
+                    vpnManager(activity).let { manager ->
+                        if (Build.VERSION.SDK_INT >= 33) {
+                            manager.startProvisionedVpnProfileSession()
+                        } else {
+                            @Suppress("DEPRECATION")
+                            manager.startProvisionedVpnProfile()
+                        }
+                    }
+                }
+                "stopProvisionedVpn" -> runVpnAction(result) {
+                    vpnManager(activity).stopProvisionedVpnProfile()
+                }
+                "deleteProvisionedVpn" -> runVpnAction(result) {
+                    vpnManager(activity).deleteProvisionedVpnProfile()
+                }
                 "openVpnSettings" -> {
                     try {
                         activity.startActivity(
@@ -38,6 +65,150 @@ object JarvisVpnBridge {
                 }
                 else -> result.notImplemented()
             }
+        }
+    }
+
+    private fun warpStatus(context: Context): Map<String, Any> {
+        val installed = try {
+            context.packageManager.getApplicationInfo(WARP_PACKAGE, 0)
+            true
+        } catch (_: Throwable) {
+            false
+        }
+        val vpn = status(context)
+        return mapOf(
+            "installed" to installed,
+            "vpnActive" to (vpn["active"] == true),
+            "packageName" to WARP_PACKAGE,
+        )
+    }
+
+    private fun openWarp(activity: Activity, result: MethodChannel.Result) {
+        try {
+            val launch = activity.packageManager.getLaunchIntentForPackage(WARP_PACKAGE)
+            if (launch != null) {
+                activity.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } else {
+                val market = Intent(
+                    Intent.ACTION_VIEW,
+                    Uri.parse("market://details?id=$WARP_PACKAGE"),
+                )
+                try {
+                    activity.startActivity(market)
+                } catch (_: Throwable) {
+                    activity.startActivity(
+                        Intent(
+                            Intent.ACTION_VIEW,
+                            Uri.parse("https://play.google.com/store/apps/details?id=$WARP_PACKAGE"),
+                        ),
+                    )
+                }
+            }
+            result.success(null)
+        } catch (error: Throwable) {
+            result.error(
+                "warp_open_failed",
+                error.message ?: "Unable to open Cloudflare WARP.",
+                null,
+            )
+        }
+    }
+
+    fun onActivityResult(requestCode: Int, resultCode: Int): Boolean {
+        if (requestCode != CONSENT_REQUEST) return false
+        val result = pendingResult ?: return true
+        pendingResult = null
+        if (resultCode == Activity.RESULT_OK) {
+            result.success(true)
+        } else {
+            result.error("vpn_consent_denied", "VPN consent was not granted.", null)
+        }
+        return true
+    }
+
+    private fun platformSupport(context: Context): Map<String, Any> = mapOf(
+        "supported" to (
+            Build.VERSION.SDK_INT >= 30 && context.packageManager.hasSystemFeature(
+                "android.software.ipsec_tunnels",
+            )
+        ),
+        "sdk" to Build.VERSION.SDK_INT,
+        "minimumSdk" to 30,
+    )
+
+    private fun provisionIkev2(
+        activity: Activity,
+        rawArguments: Any?,
+        result: MethodChannel.Result,
+    ) {
+        if (Build.VERSION.SDK_INT < 30) {
+            result.error("vpn_unsupported", "IKEv2 VPN requires Android 11 or newer.", null)
+            return
+        }
+        if (!activity.packageManager.hasSystemFeature("android.software.ipsec_tunnels")) {
+            result.error("vpn_unsupported", "This device does not support IPsec tunnels.", null)
+            return
+        }
+        if (pendingResult != null) {
+            result.error("vpn_request_active", "A VPN consent request is already active.", null)
+            return
+        }
+        try {
+            @Suppress("UNCHECKED_CAST")
+            val arguments = rawArguments as? Map<String, Any?> ?: emptyMap()
+            val server = arguments["server"]?.toString()?.trim().orEmpty()
+            val identity = arguments["identity"]?.toString()?.trim().orEmpty()
+            val authentication = arguments["authentication"]?.toString().orEmpty()
+            require(server.isNotBlank()) { "VPN server is required." }
+            require(identity.isNotBlank()) { "IKE identity is required." }
+
+            val builder = Ikev2VpnProfile.Builder(server, identity)
+                .setBypassable(false)
+                .setMetered(false)
+            when (authentication) {
+                "usernamePassword" -> {
+                    val username = arguments["username"]?.toString().orEmpty()
+                    val password = arguments["password"]?.toString().orEmpty()
+                    require(username.isNotBlank()) { "VPN username is required." }
+                    require(password.isNotEmpty()) { "VPN password is required." }
+                    builder.setAuthUsernamePassword(username, password, null)
+                }
+                "psk" -> {
+                    val psk = arguments["preSharedKey"]?.toString().orEmpty()
+                    require(psk.isNotEmpty()) { "VPN pre-shared key is required." }
+                    builder.setAuthPsk(psk.toByteArray(Charsets.UTF_8))
+                }
+                else -> error("Unsupported VPN authentication method.")
+            }
+            val consent = vpnManager(activity).provisionVpnProfile(builder.build())
+            if (consent == null) {
+                result.success(true)
+            } else {
+                pendingResult = result
+                activity.startActivityForResult(consent, CONSENT_REQUEST)
+            }
+        } catch (error: Throwable) {
+            result.error("vpn_provision_failed", error.message ?: "Unable to provision VPN.", null)
+        }
+    }
+
+    private fun vpnManager(context: Context): VpnManager {
+        if (Build.VERSION.SDK_INT < 30) {
+            error("IKEv2 VPN requires Android 11 or newer.")
+        }
+        return context.getSystemService(VpnManager::class.java)
+            ?: error("Android VPN manager is unavailable.")
+    }
+
+    private inline fun runVpnAction(
+        result: MethodChannel.Result,
+        action: () -> Unit,
+    ) {
+        try {
+            action()
+            result.success(null)
+        } catch (error: Throwable) {
+            result.error("vpn_action_failed", error.message ?: "VPN action failed.", null)
         }
     }
 
