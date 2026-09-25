@@ -170,8 +170,12 @@ jobs:
             dist/JARVIS-v1.3-debug.apk.sha256
           retention-days: 30
 
+      # This workflow intentionally produces a debug APK for CI only.
+      # Google Play Services identifies the debug signer separately and will
+      # reject production Android OAuth credentials with DEVELOPER_ERROR (10).
+      # User-downloadable builds must come from publish-jarvis-signed-release.yml.
       - name: Publish immutable JARVIS AI Assistant release
-        if: github.ref == 'refs/heads/main'
+        if: false # Never publish developer-signed APKs as production downloads
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
