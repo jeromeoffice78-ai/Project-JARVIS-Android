@@ -95,9 +95,17 @@ def patch_manifest() -> None:
             1,
         )
 
+    if "android.software.ipsec_tunnels" not in text:
+        text = text.replace(
+            "    <application",
+            '    <uses-feature android:name="android.software.ipsec_tunnels" android:required="false" />\n\n    <application',
+            1,
+        )
+
     queries = """\
     <queries>
         <package android:name="com.google.android.apps.healthdata" />
+        <package android:name="com.cloudflare.onedotonedotonedotone" />
         <intent><action android:name="android.speech.RecognitionService" /></intent>
         <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
         <intent>
@@ -296,6 +304,11 @@ class MainActivity : FlutterFragmentActivity() {{
     override fun onNewIntent(intent: Intent) {{
         super.onNewIntent(intent)
         setIntent(intent)
+    }}
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {{
+        if (JarvisVpnBridge.onActivityResult(requestCode, resultCode)) return
+        super.onActivityResult(requestCode, resultCode, data)
     }}
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {{
