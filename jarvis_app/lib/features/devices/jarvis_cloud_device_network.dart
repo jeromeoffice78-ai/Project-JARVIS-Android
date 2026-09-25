@@ -266,6 +266,9 @@ class JarvisCloudDeviceNetwork
   Timer? _pollTimer;
   Timer? _refreshTimer;
   bool _started = false;
+  bool _networkStarted = false;
+  Future<void>? _bootstrapFuture;
+  String _nativeRelayToken = '';
   bool _disposed = false;
   bool _polling = false;
   bool _refreshing = false;
@@ -296,19 +299,60 @@ class JarvisCloudDeviceNetwork
       defaultTargetPlatform ==
           TargetPlatform.android;
 
+  // Authentication can arrive after the local device has initialized.
+  // Retry network startup whenever a valid session becomes available.
   Future<void> start() async {
-    if (_started || _disposed) return;
+    if (_disposed) return;
+    _bootstrapFuture ??= _initializeDevice();
+    await _bootstrapFuture;
+    if (_disposed) return;
+
+    if (!isConfigured) {
+      _emit(_state.copyWith(configured: false));
+      return;
+    }
+
+    if (_networkStarted) {
+      if (_nativeRelayToken != _authToken) {
+        await _startNativeRelay(polling: !_foreground);
+      }
+      _emit(_state.copyWith(configured: true, clearError: true));
+      return;
+    }
+
+    _networkStarted = true;
+    _emit(_state.copyWith(configured: true, clearError: true));
+    await _startNativeRelay(polling: !_foreground);
+
+    if (_foreground && _autoRoam) {
+      _activeAvatar = true;
+    }
+
+    await refreshHeartbeat();
+    await refreshDevices();
+    await pollCommands();
+
+    _heartbeatTimer ??= Timer.periodic(
+      const Duration(seconds: 20),
+      (_) => unawaited(refreshHeartbeat()),
+    );
+    _pollTimer ??= Timer.periodic(
+      const Duration(seconds: 4),
+      (_) => unawaited(pollCommands()),
+    );
+    _refreshTimer ??= Timer.periodic(
+      const Duration(seconds: 10),
+      (_) => unawaited(refreshDevices()),
+    );
+  }
+
+  Future<void> _initializeDevice() async {
+    if (_started) return;
     _started = true;
 
-    final String deviceId =
-        await _loadOrCreateDeviceId();
-    final String deviceName =
-        await _printerService.getDeviceName();
-    _autoRoam =
-        await _preferences.getBool(
-              _autoRoamKey,
-            ) ??
-            true;
+    final String deviceId = await _loadOrCreateDeviceId();
+    final String deviceName = await _printerService.getDeviceName();
+    _autoRoam = await _preferences.getBool(_autoRoamKey) ?? true;
 
     _emit(
       _state.copyWith(
@@ -319,33 +363,6 @@ class JarvisCloudDeviceNetwork
         autoRoam: _autoRoam,
         clearError: true,
       ),
-    );
-
-    if (!isConfigured) return;
-
-    await _startNativeRelay(
-      polling: !_foreground,
-    );
-
-    if (_foreground && _autoRoam) {
-      _activeAvatar = true;
-    }
-
-    await refreshHeartbeat();
-    await refreshDevices();
-    await pollCommands();
-
-    _heartbeatTimer = Timer.periodic(
-      const Duration(seconds: 20),
-      (_) => unawaited(refreshHeartbeat()),
-    );
-    _pollTimer = Timer.periodic(
-      const Duration(seconds: 4),
-      (_) => unawaited(pollCommands()),
-    );
-    _refreshTimer = Timer.periodic(
-      const Duration(seconds: 10),
-      (_) => unawaited(refreshDevices()),
     );
   }
 
@@ -361,6 +378,7 @@ class JarvisCloudDeviceNetwork
       ),
     );
     if (isConfigured) {
+      unawaited(start());
       if (_foreground && _autoRoam) {
         _activeAvatar = true;
       }
@@ -411,12 +429,13 @@ class JarvisCloudDeviceNetwork
     }
 
     try {
+      final String activeToken = _authToken;
       await _relayChannel.invokeMethod<bool>(
         'start',
         <String, dynamic>{
           'gatewayUrl':
               _config.deviceGatewayUrl,
-          'token': _config.clientToken,
+          'token': activeToken,
           'deviceId': _state.deviceId,
           'deviceName':
               _state.deviceName.isEmpty
@@ -426,6 +445,7 @@ class JarvisCloudDeviceNetwork
         },
       );
       _nativeRelayStarted = true;
+      _nativeRelayToken = activeToken;
     } on PlatformException catch (error) {
       _emit(
         _state.copyWith(
@@ -499,6 +519,10 @@ class JarvisCloudDeviceNetwork
     }
 
     try {
+      if (_nativeRelayStarted &&
+          _nativeRelayToken != _authToken) {
+        await _startNativeRelay(polling: !_foreground);
+      }
       final Map<String, dynamic> payload =
           await _post(<String, dynamic>{
         'operation': 'heartbeat',
