@@ -22,6 +22,8 @@ class JarvisDevicesScreen
 class _JarvisDevicesScreenState
     extends ConsumerState<JarvisDevicesScreen> {
   final Set<String> _selectedIds = <String>{};
+  bool _checkingConnections = false;
+  List<String> _connectionReport = const <String>[];
 
   void _send(String prompt) {
     ref
@@ -170,6 +172,111 @@ class _JarvisDevicesScreenState
         ),
       ),
     );
+  }
+
+  Future<void> _runConnectionChecks(
+    JarvisCloudDeviceNetwork network,
+    JarvisBluetoothManager bluetooth,
+  ) async {
+    if (_checkingConnections) return;
+    setState(() {
+      _checkingConnections = true;
+      _connectionReport = const <String>[];
+    });
+
+    final List<String> report = <String>[];
+    try {
+      await network.start();
+
+      if (!network.isConfigured) {
+        report.add(
+          'Cloud: sign in to Jarvis before testing.',
+        );
+      } else {
+        await network.refreshHeartbeat();
+        await network.refreshDevices();
+
+        final String ownId = network.state.deviceId;
+        final bool registered =
+            ownId.isNotEmpty &&
+            network.state.devices.any(
+              (JarvisCloudDevice device) =>
+                  device.deviceId == ownId &&
+                  device.online,
+            );
+
+        if (registered) {
+          report.add(
+            'Cloud: this device is registered online.',
+          );
+          try {
+            final JarvisCloudCommandResult ping =
+                await network.sendCommandAndWait(
+              targetDeviceId: ownId,
+              action: 'ping',
+              timeout: const Duration(seconds: 20),
+            );
+            report.add(
+              ping.completed
+                  ? 'Command bus: this device confirmed a live ping.'
+                  : 'Command bus: ping was not confirmed.',
+            );
+          } on Object catch (error) {
+            report.add(
+              'Command bus: failed - ' +
+                  error.toString(),
+            );
+          }
+        } else {
+          report.add(
+            'Cloud: this device did not confirm online registration. ' +
+                (network.state.errorMessage ??
+                    'Check Google sign-in and internet access.'),
+          );
+        }
+
+        try {
+          final Map<String, dynamic> relay =
+              await network.nativeRelayStatus();
+          report.add(
+            relay['running'] == true
+                ? 'Background relay: running.'
+                : 'Background relay: not running; Android service may need to be restarted.',
+          );
+        } on Object catch (error) {
+          report.add(
+            'Background relay: unavailable - ' +
+                error.toString(),
+          );
+        }
+      }
+
+      final JarvisBluetoothState nearby =
+          bluetooth.state;
+      report.add(
+        !nearby.isSupported
+            ? 'Bluetooth: not supported on this device.'
+            : nearby.isReady
+                ? 'Bluetooth: ready for nearby devices.'
+                : 'Bluetooth: not ready. Enable Bluetooth and grant Android permissions.',
+      );
+      report.add(
+        'Bluetooth connections: ' +
+            nearby.connectedCount.toString(),
+      );
+    } on Object catch (error) {
+      report.add(
+        'Connection test failed: ' + error.toString(),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _checkingConnections = false;
+          _connectionReport =
+              List<String>.unmodifiable(report);
+        });
+      }
+    }
   }
 
   Future<void> _connectSelected(
@@ -345,6 +452,46 @@ class _JarvisDevicesScreenState
                     'Background Cloud Relay',
                   ),
                 ),
+                const SizedBox(height: 10),
+                FilledButton.icon(
+                  onPressed: _checkingConnections
+                      ? null
+                      : () => _runConnectionChecks(
+                            cloudNetwork,
+                            manager,
+                          ),
+                  icon: _checkingConnections
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child:
+                              CircularProgressIndicator(
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Icon(
+                          Icons.fact_check_outlined,
+                        ),
+                  label: Text(
+                    _checkingConnections
+                        ? 'Testing connections'
+                        : 'Test Cloud & Bluetooth',
+                  ),
+                ),
+                if (_connectionReport.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  for (final String line
+                      in _connectionReport)
+                    Padding(
+                      padding:
+                          const EdgeInsets.only(
+                        bottom: 5,
+                      ),
+                      child: SelectableText(
+                        line,
+                      ),
+                    ),
+                ],
               ],
             ),
           ),
@@ -659,7 +806,7 @@ class _JarvisDevicesScreenState
               'Send JARVIS to another device',
             ),
             subtitle: const Text(
-              'Privately share the exact installed JARVIS APK with another Android device using Quick Share, Drive, Messages, or another file-transfer target.',
+              'Share the latest verified production-signed JARVIS installer with another Android device using a QR code, download link, or Android share sheet.',
             ),
             trailing:
                 const Icon(Icons.chevron_right),
