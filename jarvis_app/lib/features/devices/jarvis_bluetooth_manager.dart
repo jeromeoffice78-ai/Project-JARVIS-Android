@@ -458,7 +458,6 @@ class JarvisBluetoothManager {
         return;
       } on Object catch (error) {
         lastError = error;
-        _reconnectAttempts[deviceId] = attempt;
         _errors[deviceId] =
             'Connection attempt $attempt/$attempts failed: $error';
         _rebuildState();
