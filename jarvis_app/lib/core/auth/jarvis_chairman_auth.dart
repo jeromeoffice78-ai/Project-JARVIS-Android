@@ -223,6 +223,67 @@ class _JarvisChairmanAuthGateState
     }
   }
 
+  // The Google API status alone cannot tell whether an older APK is still
+  // installed. Read the actual Android PackageManager identity at runtime.
+  Future<String> _installedIdentityDiagnostic() async {
+    try {
+      final Map<dynamic, dynamic>? identity =
+          await const MethodChannel('jarvis.auth_identity')
+              .invokeMapMethod<dynamic, dynamic>('installedIdentity');
+      if (identity == null) {
+        return 'Installed APK identity: unavailable';
+      }
+      final String installedPackage =
+          identity['package']?.toString() ?? 'unknown';
+      final String installedSha1 =
+          identity['sha1']?.toString().toUpperCase() ?? 'unavailable';
+      final String installedVersion =
+          identity['version']?.toString() ?? 'unknown';
+      final String installedVersionCode =
+          identity['versionCode']?.toString() ?? 'unknown';
+      final String googlePlayServicesVersion =
+          identity['googlePlayServicesVersion']?.toString() ??
+              'not installed or unavailable';
+      return <String>[
+        'Installed JARVIS: $installedVersion (build $installedVersionCode)',
+        'Installed Android package: $installedPackage',
+        'Installed certificate SHA-1: $installedSha1',
+        'Expected package match: ${installedPackage == JarvisGoogleSignInDiagnostics.androidPackage}',
+        'Expected certificate match: ${installedSha1 == JarvisGoogleSignInDiagnostics.productionSigningSha1}',
+        'Google Play services version: $googlePlayServicesVersion',
+        'Configured Google Web OAuth client: $_googleServerClientId',
+      ].join('\\n');
+    } on MissingPluginException {
+      return 'Installed APK identity: unavailable; this APK does not '
+          'include the installed-identity diagnostic. Update JARVIS.';
+    } on PlatformException catch (error) {
+      final String safeCode =
+          error.code.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+      return 'Installed APK identity: Android diagnostic error $safeCode';
+    } on Object {
+      return 'Installed APK identity: unavailable';
+    }
+  }
+
+  Future<void> _appendInstalledIdentityToError() async {
+    final String identity = await _installedIdentityDiagnostic();
+    if (!mounted || _lastDiagnostic == null) return;
+    setState(() {
+      _lastDiagnostic = '${_lastDiagnostic!}\\n$identity';
+    });
+  }
+
+  Future<void> _copyInstalledIdentity() async {
+    final String identity = await _installedIdentityDiagnostic();
+    await Clipboard.setData(ClipboardData(text: identity));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Installed JARVIS identity copied safely.'),
+      ),
+    );
+  }
+
   Future<void> _signInWithGoogle() async {
     if (_submitting) {
       return;
@@ -270,6 +331,7 @@ class _JarvisChairmanAuthGateState
             JarvisGoogleSignInDiagnostics.diagnosticSummary(error);
         _error = JarvisGoogleSignInDiagnostics.messageFor(error);
       });
+      await _appendInstalledIdentityToError();
     }
   }
 
@@ -293,6 +355,7 @@ class _JarvisChairmanAuthGateState
         );
         _error = JarvisGoogleSignInDiagnostics.messageFor(error);
       });
+      await _appendInstalledIdentityToError();
       return;
     }
 
@@ -598,6 +661,11 @@ class _JarvisChairmanAuthGateState
                           label: const Text('OPEN GOOGLE CLOUD OAUTH CLIENTS'),
                         ),
                       ],
+                      TextButton.icon(
+                        onPressed: _copyInstalledIdentity,
+                        icon: const Icon(Icons.verified_user_outlined),
+                        label: const Text('COPY INSTALLED APP IDENTITY'),
+                      ),
                       const SizedBox(
                         height: 20,
                       ),
