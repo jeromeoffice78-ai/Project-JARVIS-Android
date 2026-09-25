@@ -63,6 +63,25 @@ class JarvisSignedRelease {
     final Object? assets = release['assets'];
     if (assets is! List) return null;
 
+    final Set<String> assetNames = assets
+        .whereType<Map>()
+        .map(
+          (Map asset) =>
+              asset['name']?.toString() ?? '',
+        )
+        .toSet();
+
+    // Require all outputs of the signature-verifying publication
+    // workflow, not merely a similarly named APK.
+    if (!assetNames.contains(
+          'JARVIS-AI-ASSISTANT-FINAL-ARM64.apk.sha256',
+        ) ||
+        !assetNames.contains(
+          'OAUTH-ANDROID-IDENTITY.txt',
+        )) {
+      return null;
+    }
+
     for (final Object? raw in assets) {
       if (raw is! Map) continue;
       if (raw['name'] != _assetName ||
