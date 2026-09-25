@@ -116,6 +116,10 @@ jobs:
         working-directory: jarvis_app
         run: flutter analyze --no-fatal-warnings --no-fatal-infos
 
+      - name: Test Google sign-in error 10 diagnostics
+        working-directory: jarvis_app
+        run: flutter test test/jarvis_google_sign_in_diagnostics_test.dart
+
       - name: Build debug APK
         working-directory: jarvis_app
         env:
