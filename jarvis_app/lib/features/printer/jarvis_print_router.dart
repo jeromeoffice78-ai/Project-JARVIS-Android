@@ -31,6 +31,7 @@ class JarvisPrintRouter {
   })  : _config = config,
         _printerService = printerService,
         _client = client ?? http.Client() {
+    JarvisAuthSession.sessionRevision.addListener(_onSessionChanged);
     unawaited(start());
   }
 
@@ -50,6 +51,18 @@ class JarvisPrintRouter {
   bool _started = false;
   bool _disposed = false;
   bool _polling = false;
+
+  void _onSessionChanged() {
+    if (_disposed) return;
+    if (!isCloudRoutingConfigured) {
+      _heartbeatTimer?.cancel();
+      _heartbeatTimer = null;
+      _pollTimer?.cancel();
+      _pollTimer = null;
+      return;
+    }
+    unawaited(start());
+  }
 
   String? get deviceId => _deviceId;
   String? get deviceName => _deviceName;
@@ -420,6 +433,7 @@ class JarvisPrintRouter {
     }
 
     _disposed = true;
+    JarvisAuthSession.sessionRevision.removeListener(_onSessionChanged);
     _heartbeatTimer?.cancel();
     _pollTimer?.cancel();
     _heartbeatTimer = null;
