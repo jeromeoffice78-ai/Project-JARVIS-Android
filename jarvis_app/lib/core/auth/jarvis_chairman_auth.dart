@@ -116,7 +116,7 @@ class _JarvisChairmanAuthGateState
       String.fromEnvironment(
     'GOOGLE_SERVER_CLIENT_ID',
     defaultValue:
-        '498363735983-nka03bna11698m7o6ao0l7vnga8fb80e.apps.googleusercontent.com',
+        '498363735983-nka03bna11698m7o6aool7vnga8fb80e.apps.googleusercontent.com',
   );
 
   final http.Client _client = http.Client();
