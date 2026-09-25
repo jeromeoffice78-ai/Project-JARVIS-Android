@@ -74,7 +74,7 @@ class _JarvisVpnScreenState
     try {
       await _service.openWarp();
     } on Object catch (error) {
-      _showMessage('Unable to open Cloudflare One Agent: $error');
+      _showMessage('Unable to open Cloudflare WARP: $error');
     }
   }
 
@@ -191,7 +191,7 @@ class _JarvisVpnScreenState
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          'Cloudflare One Agent',
+                          'Cloudflare WARP',
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                       ),
@@ -205,8 +205,8 @@ class _JarvisVpnScreenState
                   const SizedBox(height: 8),
                   Text(
                     status?.active == true
-                        ? 'Android reports an active VPN connection. Open Cloudflare One Agent to verify its switch shows Connected.'
-                        : 'Cloudflare encrypted protection. Install or open Cloudflare One Agent, enroll with your Zero Trust team, accept Android VPN permission, and switch it to Connected.',
+                        ? 'Android reports an active VPN connection. Open Cloudflare WARP to verify its switch shows Connected.'
+                        : 'Cloudflare encrypted protection. Install or open Cloudflare WARP or One Agent, accept Android VPN permission, and switch it to Connected.',
                   ),
                   const SizedBox(height: 12),
                   FilledButton.icon(
@@ -216,8 +216,8 @@ class _JarvisVpnScreenState
                     ),
                     label: Text(
                       _warpInstalled
-                          ? 'Open Cloudflare One Agent'
-                          : 'Install Cloudflare One Agent',
+                          ? 'Open Cloudflare WARP'
+                          : 'Install Cloudflare WARP',
                     ),
                   ),
                   TextButton.icon(
