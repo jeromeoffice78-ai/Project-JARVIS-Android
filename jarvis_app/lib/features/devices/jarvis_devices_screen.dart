@@ -731,7 +731,7 @@ class _JarvisDevicesScreenState
               'JARVIS VPN Guard',
             ),
             subtitle: const Text(
-              'Verify Android VPN protection and open the system VPN controls.',
+              'Create, connect, and monitor an encrypted Android IKEv2/IPsec VPN.',
             ),
             trailing:
                 const Icon(Icons.chevron_right),
