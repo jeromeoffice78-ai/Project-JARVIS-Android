@@ -212,6 +212,7 @@ class JarvisCloudDeviceNetwork
             deviceRepairService,
         _client = client ?? http.Client() {
     WidgetsBinding.instance.addObserver(this);
+    JarvisAuthSession.sessionRevision.addListener(_onSessionChanged);
     unawaited(start());
   }
 
@@ -364,6 +365,42 @@ class JarvisCloudDeviceNetwork
         clearError: true,
       ),
     );
+  }
+
+  void _onSessionChanged() {
+    if (_disposed) return;
+    if (!isConfigured) {
+      _heartbeatTimer?.cancel();
+      _heartbeatTimer = null;
+      _pollTimer?.cancel();
+      _pollTimer = null;
+      _refreshTimer?.cancel();
+      _refreshTimer = null;
+      _networkStarted = false;
+      _activeAvatar = false;
+      _emit(
+        _state.copyWith(
+          configured: false,
+          activeAvatar: false,
+        ),
+      );
+      if (_nativeRelayStarted) {
+        unawaited(_stopNativeRelay());
+      }
+      return;
+    }
+    unawaited(start());
+  }
+
+  Future<void> _stopNativeRelay() async {
+    _nativeRelayStarted = false;
+    _nativeRelayToken = '';
+    if (!_supportsNativeRelay) return;
+    try {
+      await _relayChannel.invokeMethod<void>('stop');
+    } on Object {
+      // The Dart network stays disabled even if Android is unavailable.
+    }
   }
 
   @override
@@ -1391,6 +1428,7 @@ class JarvisCloudDeviceNetwork
     if (_disposed) return;
     _disposed = true;
     WidgetsBinding.instance.removeObserver(this);
+    JarvisAuthSession.sessionRevision.removeListener(_onSessionChanged);
     _heartbeatTimer?.cancel();
     _pollTimer?.cancel();
     _refreshTimer?.cancel();
