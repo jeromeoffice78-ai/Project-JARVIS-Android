@@ -15,7 +15,8 @@ import io.flutter.plugin.common.MethodChannel
 
 object JarvisVpnBridge {
     private const val CHANNEL = "jarvis.vpn"
-    private const val WARP_PACKAGE = "com.cloudflare.cloudflareoneagent"
+    private const val ONE_AGENT_PACKAGE = "com.cloudflare.cloudflareoneagent"
+    private const val CONSUMER_WARP_PACKAGE = "com.cloudflare.onedotonedotonedotone"
     private const val CONSENT_REQUEST = 7246
     private var pendingResult: MethodChannel.Result? = null
 
@@ -69,29 +70,35 @@ object JarvisVpnBridge {
     }
 
     private fun warpStatus(context: Context): Map<String, Any> {
-        val installed = try {
-            context.packageManager.getApplicationInfo(WARP_PACKAGE, 0)
-            true
-        } catch (_: Throwable) {
-            false
-        }
+        val packageName = installedWarpPackage(context)
         val vpn = status(context)
         return mapOf(
-            "installed" to installed,
+            "installed" to (packageName != null),
             "vpnActive" to (vpn["active"] == true),
-            "packageName" to WARP_PACKAGE,
+            "packageName" to (packageName ?: CONSUMER_WARP_PACKAGE),
         )
     }
 
+    private fun installedWarpPackage(context: Context): String? =
+        listOf(ONE_AGENT_PACKAGE, CONSUMER_WARP_PACKAGE).firstOrNull { packageName ->
+            try {
+                context.packageManager.getApplicationInfo(packageName, 0)
+                true
+            } catch (_: Throwable) {
+                false
+            }
+        }
+
     private fun openWarp(activity: Activity, result: MethodChannel.Result) {
         try {
-            val launch = activity.packageManager.getLaunchIntentForPackage(WARP_PACKAGE)
+            val packageName = installedWarpPackage(activity) ?: CONSUMER_WARP_PACKAGE
+            val launch = activity.packageManager.getLaunchIntentForPackage(packageName)
             if (launch != null) {
                 activity.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             } else {
                 val market = Intent(
                     Intent.ACTION_VIEW,
-                    Uri.parse("market://details?id=$WARP_PACKAGE"),
+                    Uri.parse("market://details?id=$packageName"),
                 )
                 try {
                     activity.startActivity(market)
@@ -99,7 +106,7 @@ object JarvisVpnBridge {
                     activity.startActivity(
                         Intent(
                             Intent.ACTION_VIEW,
-                            Uri.parse("https://play.google.com/store/apps/details?id=$WARP_PACKAGE"),
+                            Uri.parse("https://play.google.com/store/apps/details?id=$packageName"),
                         ),
                     )
                 }
