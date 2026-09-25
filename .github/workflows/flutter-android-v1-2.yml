@@ -144,6 +144,10 @@ jobs:
         working-directory: jarvis_app
         run: flutter test test/jarvis_signed_release_test.dart
 
+      - name: Test cloud authentication lifecycle
+        working-directory: jarvis_app
+        run: flutter test test/jarvis_session_lifecycle_test.dart
+
       - name: Build debug APK
         working-directory: jarvis_app
         env:
