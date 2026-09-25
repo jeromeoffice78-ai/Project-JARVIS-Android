@@ -1,9 +1,13 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
+
+import 'jarvis_google_sign_in_diagnostics.dart';
 
 final class JarvisAuthSession {
   JarvisAuthSession._();
@@ -119,6 +123,7 @@ class _JarvisChairmanAuthGateState
   bool _authenticated = false;
   bool _offlineMode = false;
   bool _submitting = false;
+  bool _oauthConfigurationError = false;
   String? _error;
 
   @override
@@ -212,6 +217,7 @@ class _JarvisChairmanAuthGateState
 
     setState(() {
       _submitting = true;
+      _oauthConfigurationError = false;
       _error = null;
     });
 
@@ -244,8 +250,9 @@ class _JarvisChairmanAuthGateState
 
       setState(() {
         _submitting = false;
-        _error =
-            'Google sign-in failed: $error';
+        _oauthConfigurationError =
+            JarvisGoogleSignInDiagnostics.isOAuthConfigurationError(error);
+        _error = JarvisGoogleSignInDiagnostics.messageFor(error);
       });
     }
   }
@@ -493,6 +500,33 @@ class _JarvisChairmanAuthGateState
                             color:
                                 Colors.amberAccent,
                           ),
+                        ),
+                      ],
+                      if (_oauthConfigurationError) ...<Widget>[
+                        const SizedBox(height: 10),
+                        TextButton.icon(
+                          onPressed: () async {
+                            await Clipboard.setData(const ClipboardData(
+                              text: JarvisGoogleSignInDiagnostics.googleCloudFields,
+                            ));
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Production Android OAuth configuration copied.')),
+                              );
+                            }
+                          },
+                          icon: const Icon(Icons.copy),
+                          label: const Text('COPY ANDROID OAUTH SETTINGS'),
+                        ),
+                        TextButton.icon(
+                          onPressed: () async {
+                            await launchUrl(
+                              Uri.parse('https://console.cloud.google.com/auth/clients'),
+                              mode: LaunchMode.externalApplication,
+                            );
+                          },
+                          icon: const Icon(Icons.open_in_new),
+                          label: const Text('OPEN GOOGLE CLOUD OAUTH CLIENTS'),
                         ),
                       ],
                       const SizedBox(
