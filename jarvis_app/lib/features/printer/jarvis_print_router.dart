@@ -66,20 +66,24 @@ class JarvisPrintRouter {
       _authToken.isNotEmpty &&
       _config.printGatewayUrl.trim().isNotEmpty;
 
+  // A signed production install may open in local mode before Google
+  // authentication. Starting again after sign-in must activate routing.
   Future<void> start() async {
-    if (_started || _disposed) {
+    if (_disposed) return;
+
+    if (!_started) {
+      _started = true;
+      _deviceId = await _loadOrCreateDeviceId();
+      _deviceName = await _printerService.getDeviceName();
+    }
+
+    if (!isCloudRoutingConfigured ||
+        _deviceId == null ||
+        _deviceId!.isEmpty) {
       return;
     }
 
-    _started = true;
-
-    _deviceId = await _loadOrCreateDeviceId();
-    _deviceName =
-        await _printerService.getDeviceName();
-
-    if (!isCloudRoutingConfigured) {
-      return;
-    }
+    if (_heartbeatTimer != null) return;
 
     await refreshHeartbeat();
     await pollForAssignedJobs();
@@ -88,7 +92,6 @@ class JarvisPrintRouter {
       const Duration(seconds: 20),
       (_) => unawaited(refreshHeartbeat()),
     );
-
     _pollTimer = Timer.periodic(
       const Duration(seconds: 5),
       (_) => unawaited(pollForAssignedJobs()),
