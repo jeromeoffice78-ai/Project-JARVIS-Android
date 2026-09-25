@@ -104,6 +104,9 @@ class JarvisPrintRouter {
     int copies = 1,
     String mimeType = 'text/plain',
   }) async {
+    // A print request made after sign-in should also activate presence
+    // when Jarvis originally opened without a cloud session.
+    await start();
     _ensureReady();
 
     final String normalizedTitle = title.trim();
