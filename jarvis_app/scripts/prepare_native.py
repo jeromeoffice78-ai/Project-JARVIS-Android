@@ -274,6 +274,8 @@ import android.bluetooth.BluetoothManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import java.security.MessageDigest
 import android.os.Build
 import android.os.Bundle
 import android.os.CancellationSignal
@@ -314,6 +316,71 @@ class MainActivity : FlutterFragmentActivity() {{
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {{
         super.configureFlutterEngine(flutterEngine)
+
+        // Report the identity Android actually installed, not the constants
+        // embedded by the build. This distinguishes a stale/mis-signed APK
+        // from a Google Cloud configuration issue without exposing tokens.
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "jarvis.auth_identity",
+        ).setMethodCallHandler {{ call, result ->
+            if (call.method != "installedIdentity") {{
+                result.notImplemented()
+            }} else {{
+                try {{
+                    val signingFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {{
+                        PackageManager.GET_SIGNING_CERTIFICATES
+                    }} else {{
+                        @Suppress("DEPRECATION")
+                        PackageManager.GET_SIGNATURES
+                    }}
+                    val appInfo = packageManager.getPackageInfo(packageName, signingFlags)
+                    @Suppress("DEPRECATION")
+                    val installedSignatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {{
+                        appInfo.signingInfo?.apkContentsSigners
+                    }} else {{
+                        appInfo.signatures
+                    }}
+                    val sha1 = installedSignatures?.firstOrNull()?.toByteArray()?.let {{
+                        MessageDigest.getInstance("SHA-1").digest(it)
+                            .joinToString(":") {{ byte ->
+                                "%02X".format(byte.toInt() and 0xFF)
+                            }}
+                    }}.orEmpty()
+                    @Suppress("DEPRECATION")
+                    val installedVersionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {{
+                        appInfo.longVersionCode
+                    }} else {{
+                        appInfo.versionCode.toLong()
+                    }}
+                    val playServicesVersion: Long? = try {{
+                        @Suppress("DEPRECATION")
+                        val gmsInfo = packageManager.getPackageInfo("com.google.android.gms", 0)
+                        @Suppress("DEPRECATION")
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {{
+                            gmsInfo.longVersionCode
+                        }} else {{
+                            gmsInfo.versionCode.toLong()
+                        }}
+                    }} catch (_: PackageManager.NameNotFoundException) {{
+                        null
+                    }}
+                    result.success(mapOf(
+                        "package" to packageName,
+                        "version" to (appInfo.versionName ?: "unknown"),
+                        "versionCode" to installedVersionCode,
+                        "sha1" to sha1,
+                        "googlePlayServicesVersion" to playServicesVersion,
+                    ))
+                }} catch (_: Exception) {{
+                    result.error(
+                        "IDENTITY_UNAVAILABLE",
+                        "Android could not read the installed JARVIS identity.",
+                        null,
+                    )
+                }}
+            }}
+        }}
 
         JarvisVoiceIdentityBridge.register(
             this,
