@@ -21,6 +21,7 @@ def patch_gradle() -> None:
         text += """
 dependencies {
     implementation("org.pytorch:executorch-android:1.3.0")
+    implementation("com.google.android.gms:play-services-auth:21.3.0")
 }
 """
 
@@ -303,6 +304,7 @@ class MainActivity : FlutterFragmentActivity() {{
     private val printerChannel = "jarvis.printer"
     private val controlChannel = "jarvis.system_control"
     private val prefsName = "jarvis_phone"
+    private val nativeGoogleAuth = JarvisNativeGoogleAuthBridge(this)
 
     override fun onNewIntent(intent: Intent) {{
         super.onNewIntent(intent)
@@ -310,12 +312,14 @@ class MainActivity : FlutterFragmentActivity() {{
     }}
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {{
+        if (nativeGoogleAuth.onActivityResult(requestCode, data)) return
         if (JarvisVpnBridge.onActivityResult(requestCode, resultCode)) return
         super.onActivityResult(requestCode, resultCode, data)
     }}
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {{
         super.configureFlutterEngine(flutterEngine)
+        nativeGoogleAuth.register(flutterEngine)
 
         // Report the identity Android actually installed, not the constants
         // embedded by the build. This distinguishes a stale/mis-signed APK
@@ -1735,10 +1739,35 @@ def patch_proguard() -> None:
     )
 
 
+def patch_native_google_auth() -> None:
+    """Copy the independent Google SDK bridge into the generated Android host."""
+    candidates = list(
+        (ROOT / "android" / "app" / "src" / "main" / "kotlin").rglob("MainActivity.kt")
+    )
+    if not candidates:
+        raise RuntimeError("MainActivity.kt missing for native Google fallback")
+    main_path = candidates[0]
+    package_match = re.search(
+        r"^package\s+([\w.]+)",
+        main_path.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    if package_match is None:
+        raise RuntimeError("Native Google fallback could not locate Android package")
+    template = ROOT / "scripts" / "native" / "JarvisNativeGoogleAuthBridge.kt"
+    bridge = template.read_text(encoding="utf-8").replace(
+        "__PACKAGE__", package_match.group(1)
+    )
+    main_path.with_name("JarvisNativeGoogleAuthBridge.kt").write_text(
+        bridge, encoding="utf-8"
+    )
+
+
 def main() -> None:
     patch_gradle()
     patch_manifest()
     patch_activity()
+    patch_native_google_auth()
     patch_branding()
     patch_debug_manifest()
     patch_proguard()
