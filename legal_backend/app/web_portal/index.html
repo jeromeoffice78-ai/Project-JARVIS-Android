@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0a1019">
+  <meta name="description" content="JARVIS Chairman secure cloud access.">
+  <title>JARVIS — Chairman Cloud Access</title>
+  <link rel="stylesheet" href="/login/app.css">
+  <script src="/login/app.js" defer></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="masthead">
+      <span class="glyph" aria-hidden="true">✧</span>
+      <div><strong>JARVIS</strong><span>CHAIRMAN CLOUD ACCESS</span></div>
+      <span class="secure-tag">SECURE</span>
+    </header>
+    <section class="card" id="login-panel">
+      <div class="eyebrow">REBUILT SIGN-IN</div>
+      <h1>Welcome, Chairman.</h1>
+      <p class="intro">Access JARVIS with a secure, one-time verification sent to your approved email. No separate cloud password or Android Google account picker is required.</p>
+      <div class="notice">Your existing Chairman account and stored JARVIS data are preserved.</div>
+      <button class="primary" type="button" id="send-email">SEND VERIFICATION EMAIL</button>
+      <form id="verify-form" hidden>
+        <p class="instructions">Check the approved email inbox. If Google or your mail app displays a sign-in link instead of a code, copy the complete <strong>unopened</strong> link and paste it below.</p>
+        <label for="proof">Verification code or unused sign-in link</label>
+        <textarea id="proof" name="proof" rows="3" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="2500" required placeholder="Paste your one-time code or sign-in link"></textarea>
+        <button class="primary" type="submit" id="verify">VERIFY &amp; OPEN JARVIS</button>
+      </form>
+      <div class="status" id="status" aria-live="polite" role="status"></div>
+      <div class="footer-links"><a href="https://myaccount.google.com/signinoptions/password" rel="noopener noreferrer" target="_blank">Secure your Google account</a><a href="https://github.com/jeromeoffice78-ai/Project-JARVIS-Android/releases" rel="noopener noreferrer" target="_blank">Android releases</a></div>
+    </section>
+    <section class="card" id="chairman-panel" hidden>
+      <div class="eyebrow">SESSION VERIFIED</div>
+      <h1>Chairman access active.</h1>
+      <p class="intro" id="session-email"></p>
+      <div class="notice" id="service-status">Checking JARVIS cloud services…</div>
+      <form id="ask-form">
+        <label for="question">Ask JARVIS</label>
+        <textarea name="question" id="question" rows="4" maxlength="20000" placeholder="Give JARVIS a command or ask a question" required></textarea>
+        <button class="primary" type="submit" id="ask">SEND TO JARVIS</button>
+      </form>
+      <div id="answer" class="answer" aria-live="polite"></div>
+      <button class="secondary" type="button" id="sign-out">SIGN OUT</button>
+    </section>
+    <footer>Encrypted verification · Approved Chairman only · Passwordless cloud access</footer>
+  </main>
+</body>
+</html>
