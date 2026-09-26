@@ -509,16 +509,45 @@ class _JarvisChairmanAuthGateState
         interactive: true,
       );
     } on Object catch (error) {
-      if (!mounted) {
+      if (!mounted) return;
+      final String flutterDiagnostic =
+          JarvisGoogleSignInDiagnostics.diagnosticSummary(error);
+      final bool googleConfigurationError =
+          JarvisGoogleSignInDiagnostics.isOAuthConfigurationError(error);
+
+      if (googleConfigurationError) {
+        // The native Google SDK uses the same Web client ID independently
+        // of the Flutter plugin. It may restore Google login when the plugin
+        // alone is at fault. Otherwise both error codes isolate the cause.
+        final String nativeDiagnostic = await _tryNativeGoogleSignIn();
+        if (!mounted || _authenticated) return;
+        final String? backendDiagnostic = _lastDiagnostic;
+        final bool reachedBackend = backendDiagnostic != null &&
+            backendDiagnostic.startsWith('Stage: jarvis_backend');
+        setState(() {
+          _submitting = false;
+          _oauthConfigurationError = !reachedBackend;
+          _lastDiagnostic = flutterDiagnostic + '\n' + nativeDiagnostic +
+              (reachedBackend ? '\n' + backendDiagnostic : '');
+          if (!reachedBackend) {
+            _error = nativeDiagnostic.contains('Google API status: 10')
+                ? 'Both Flutter and native Android Google Sign-In returned '
+                    'error 10. Your installed app identity matches. '
+                    'Check the Google OAuth client configuration or use '
+                    'Secure Email Sign-In.'
+                : 'The independent native Google SDK also could not '
+                    'establish a session. Copy the updated diagnostic '
+                    'results or use Secure Email Sign-In.';
+          }
+        });
+        await _appendInstalledIdentityToError();
         return;
       }
 
       setState(() {
         _submitting = false;
-        _oauthConfigurationError =
-            JarvisGoogleSignInDiagnostics.isOAuthConfigurationError(error);
-        _lastDiagnostic =
-            JarvisGoogleSignInDiagnostics.diagnosticSummary(error);
+        _oauthConfigurationError = false;
+        _lastDiagnostic = flutterDiagnostic;
         _error = JarvisGoogleSignInDiagnostics.messageFor(error);
       });
       await _appendInstalledIdentityToError();
