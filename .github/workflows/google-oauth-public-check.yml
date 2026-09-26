@@ -55,3 +55,44 @@ jobs:
               ))
               print(f"{label}: HTTP={status}; invalid_client_markers={invalid}; redirect_markers={mismatch}")
           PY
+      - name: Smoke-test deployed Chairman email verification (no email sent)
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import time
+          import urllib.error
+          import urllib.request
+
+          base = "https://jarvis-legal-enterprise-api.onrender.com"
+          tests = [
+              ("GET", "/health", None, 200),
+              ("GET", "/v1/auth/email/start", None, 405),
+              # Valid request schema, invalid proof. A 422 here proves the
+              # backend has the publishable key and validates proofs.
+              # A 503 means email fallback was not correctly configured.
+              ("POST", "/v1/auth/email/verify", {"proof": "notvalidlink"}, 422),
+          ]
+          for method, path, payload, expected in tests:
+              data = json.dumps(payload).encode() if payload else None
+              request = urllib.request.Request(
+                  base + path, method=method, data=data,
+                  headers={"Content-Type": "application/json"},
+              )
+              for attempt in range(8):
+                  try:
+                      with urllib.request.urlopen(request, timeout=30) as result:
+                          status = result.status
+                  except urllib.error.HTTPError as exc:
+                      status = exc.code
+                  except Exception as exc:
+                      status = 0
+                  if status == expected:
+                      print(f"PASS {method} {path}: HTTP {status}")
+                      break
+                  if attempt == 7:
+                      raise SystemExit(
+                          f"FAIL {method} {path}: expected HTTP {expected}, got {status}"
+                      )
+                  time.sleep(8)
+          PY
