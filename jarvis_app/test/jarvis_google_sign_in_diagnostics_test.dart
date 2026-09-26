@@ -65,4 +65,30 @@ void main() {
       contains('39:96:F2:AD:FB:2E:E3:34:97:D7:64:C2:29:44:A8:C8:78:4F:C6:4E'),
     );
   });
+  test('native Google result reports only approved diagnostic fields', () {
+    final summary = JarvisGoogleSignInDiagnostics.nativeResultDiagnostic(
+      <String, Object>{
+        'status': 'google_error',
+        'googleStatus': 10,
+        'idToken': 'SECRET_GOOGLE_ID_TOKEN_NEVER_COPY',
+        'email': 'private@example.com',
+      },
+    );
+    expect(summary, contains('Stage: native_google_web_client'));
+    expect(summary, contains('Result: google_error'));
+    expect(summary, contains('Google API status: 10'));
+    expect(summary, isNot(contains('SECRET_GOOGLE_ID_TOKEN_NEVER_COPY')));
+    expect(summary, isNot(contains('private@example.com')));
+  });
+
+  test('Android-only result is distinguishable from Web-client errors', () {
+    final summary = JarvisGoogleSignInDiagnostics.nativeResultDiagnostic(
+      <String, Object>{'status': 'android_only_ok'},
+      stage: 'android_only_google_probe',
+    );
+    expect(summary, contains('Stage: android_only_google_probe'));
+    expect(summary, contains('Result: android_only_ok'));
+    expect(summary, contains('Google API status: not reported'));
+  });
+
 }
