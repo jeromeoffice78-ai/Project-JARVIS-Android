@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 
 import '../realtime/jarvis_realtime_voice_service.dart';
+import 'jarvis_avatar_asset_server.dart';
 
 final class JarvisSystemOverlayStatus {
   const JarvisSystemOverlayStatus({
@@ -68,9 +69,11 @@ class JarvisSystemOverlayService {
     required bool active,
   }) async {
     try {
+      final Uri avatarUrl = await JarvisAvatarAssetServer.avatarPage();
       return await _channel.invokeMethod<bool>(
             'startOverlay',
             <String, Object?>{
+              'avatarUrl': avatarUrl.toString(),
               'state': avatarState(
                 voiceState: voiceState,
                 active: active,
