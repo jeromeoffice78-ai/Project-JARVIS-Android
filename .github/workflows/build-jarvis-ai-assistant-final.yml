@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/build-jarvis-ai-assistant-final.yml"
+      - "jarvis_app/**"
   workflow_dispatch:
 
 permissions:
@@ -111,6 +112,39 @@ jobs:
 
           flutter pub get
 
+      - name: Verify offline avatar scripts
+        working-directory: jarvis_app
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import re
+          import subprocess
+          from pathlib import Path
+
+          html = Path("assets/avatar/jarvis_human_avatar.html").read_text()
+          scripts = re.findall(r"<script([^>]*)>(.*?)</script>", html, re.S | re.I)
+          seen = {"importmap": 0, "module": 0, "inline": 0}
+          for attrs, source in scripts:
+              if 'importmap' in attrs:
+                  mapping = json.loads(source)
+                  assert mapping["imports"]["three"].startswith("../vendor/"), mapping
+                  seen["importmap"] += 1
+              else:
+                  suffix = ".mjs" if 'type="module"' in attrs else ".js"
+                  seen["module" if suffix == ".mjs" else "inline"] += 1
+                  script_path = Path("/tmp/jarvis-avatar-check" + suffix)
+                  script_path.write_text(source)
+                  subprocess.run(["node", "--check", str(script_path)], check=True)
+          assert seen == {"importmap": 1, "module": 1, "inline": 1}, seen
+          print("Offline avatar JavaScript and import map syntax verified")
+          PY
+
+      - name: Test avatar asset delivery and first-install account
+        working-directory: jarvis_app
+        run: |
+          flutter test test/jarvis_avatar_assets_test.dart test/jarvis_first_install_account_test.dart
+
       - name: Analyze
         working-directory: jarvis_app
         run: flutter analyze --no-fatal-warnings --no-fatal-infos
@@ -129,11 +163,11 @@ jobs:
           AAPT="$(find "${ANDROID_HOME}/build-tools" -type f -name aapt | sort -V | tail -1)"
           mkdir -p dist
 
-          "$APKSIGNER" sign             --key /tmp/jarvis_signing/private-key.pk8             --cert /tmp/jarvis_signing/certificate.pem             --out dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk             jarvis_app/build/app/outputs/flutter-apk/app-release.apk
+          "$APKSIGNER" sign             --key /tmp/jarvis_signing/private-key.pk8             --cert /tmp/jarvis_signing/certificate.pem             --out dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk             jarvis_app/build/app/outputs/flutter-apk/app-release.apk
 
-          "$APKSIGNER" verify --verbose --print-certs             dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk
+          "$APKSIGNER" verify --verbose --print-certs             dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk
 
-          "$AAPT" dump badging dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk             | tee dist/badging.txt
+          "$AAPT" dump badging dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk             | tee dist/badging.txt
           grep "package: name='com.jarvis.project_jarvis'" dist/badging.txt
           grep "native-code: 'arm64-v8a'" dist/badging.txt
           grep "application-label:'JARVIS AI Assistant'" dist/badging.txt
@@ -141,18 +175,18 @@ jobs:
           SHA1_COLON="$(openssl x509 -in /tmp/jarvis_signing/certificate.pem -noout -fingerprint -sha1 | sed 's/^sha1 Fingerprint=//I')"
           echo "ANDROID_PACKAGE=com.jarvis.project_jarvis" | tee dist/OAUTH-ANDROID-IDENTITY.txt
           echo "SIGNING_SHA1=${SHA1_COLON}" | tee -a dist/OAUTH-ANDROID-IDENTITY.txt
-          sha256sum dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk             | tee dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk.sha256
-          ls -lh dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk
+          sha256sum dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk             | tee dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk.sha256
+          ls -lh dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk
 
           rm -f /tmp/jarvis_signing/identity.json             /tmp/jarvis_signing/private-key.pem             /tmp/jarvis_signing/private-key.pk8
 
       - name: Upload final APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: JARVIS-AI-ASSISTANT-FINAL-ARM64
+          name: JARVIS-AI-ASSISTANT-FIXED-ARM64
           path: |
-            dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk
-            dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk.sha256
+            dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk
+            dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk.sha256
             dist/OAUTH-ANDROID-IDENTITY.txt
           compression-level: 0
           retention-days: 30
@@ -163,9 +197,9 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          TAG="jarvis-ai-assistant-final-v1.3.0"
+          TAG="jarvis-ai-assistant-avatar-fix-v1.3.5"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG"               dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk               dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk.sha256               dist/OAUTH-ANDROID-IDENTITY.txt               --clobber
+            gh release upload "$TAG"               dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk               dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk.sha256               dist/OAUTH-ANDROID-IDENTITY.txt               --clobber
           else
-            gh release create "$TAG"               dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk               dist/JARVIS-AI-ASSISTANT-FINAL-ARM64.apk.sha256               dist/OAUTH-ANDROID-IDENTITY.txt               --target "$GITHUB_SHA"               --title "JARVIS AI Assistant Final ARM64"               --notes "Stable JARVIS AI Assistant build with local 3D avatar assets, live backend health, secure Chairman session support, HTTP AI chat, and permanent Android signing."
+            gh release create "$TAG"               dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk               dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk.sha256               dist/OAUTH-ANDROID-IDENTITY.txt               --target "$GITHUB_SHA"               --title "JARVIS AI Assistant v1.3.5 - Avatar Recovery ARM64"               --notes "JARVIS AI Assistant 1.3.5: recover failed human 3D avatar model loads, add offline 3D/simplified rendering, retry main-page failures, validate asset delivery, and use first-install owner email/password sign-in. Permanent Android signing."
           fi
