@@ -31,6 +31,8 @@ class JarvisOverlayService : Service() {
             "jarvis.overlay.STOP"
         const val EXTRA_STATE_JSON =
             "jarvis.overlay.STATE_JSON"
+        const val EXTRA_AVATAR_URL =
+            "jarvis.overlay.AVATAR_URL"
 
         private const val CHANNEL_ID =
             "jarvis_overlay_presence"
@@ -58,6 +60,7 @@ class JarvisOverlayService : Service() {
 
     private var targetIndex = 0
     private var pageReady = false
+    private var avatarPageUrl = ""
     private var lastStateJson =
         """{"active":true,"activity":"idle","mood":"confident","connected":false,"companion":false,"transcript":"","audioLevel":0,"audioLevelAvailable":false}"""
 
@@ -91,6 +94,19 @@ class JarvisOverlayService : Service() {
         }
 
         if (!Settings.canDrawOverlays(this)) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        // Only load the app's localhost asset server. Never accept a
+        // remote website or arbitrary file:// URLs in this overlay.
+        val candidateUrl = intent?.getStringExtra(EXTRA_AVATAR_URL).orEmpty()
+        if (candidateUrl.matches(
+                Regex("""^http://127\.0\.0\.1:[0-9]{1,5}/assets/avatar/jarvis_human_avatar\.html$""")
+            )) {
+            avatarPageUrl = candidateUrl
+        }
+        if (avatarPageUrl.isEmpty()) {
             stopSelf()
             return START_NOT_STICKY
         }
@@ -287,12 +303,10 @@ class JarvisOverlayService : Service() {
             settings.allowFileAccess = true
             settings.allowContentAccess = true
 
-            @Suppress("DEPRECATION")
-            settings.allowFileAccessFromFileURLs =
-                true
-            @Suppress("DEPRECATION")
-            settings.allowUniversalAccessFromFileURLs =
-                true
+            // ES modules and glTF are served by the app on 127.0.0.1.
+            // Disable broad file access; the avatar needs no device files.
+            settings.allowFileAccess = false
+            settings.allowContentAccess = false
 
             webViewClient =
                 object : WebViewClient() {
@@ -305,9 +319,7 @@ class JarvisOverlayService : Service() {
                     }
                 }
 
-            loadUrl(
-                "file:///android_asset/flutter_assets/assets/avatar/jarvis_human_avatar.html",
-            )
+            loadUrl(avatarPageUrl)
         }
 
         try {
