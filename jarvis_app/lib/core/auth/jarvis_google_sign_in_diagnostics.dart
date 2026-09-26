@@ -63,10 +63,9 @@ abstract final class JarvisGoogleSignInDiagnostics {
 
   static String messageFor(Object error) {
     if (isOAuthConfigurationError(error)) {
-      return 'Google configuration error (10). Check that the signed JARVIS '
-          'APK, Android package, signing SHA-1 and Web OAuth client are '
-          'registered in the same Google Cloud project. '
-          'Use COPY DIAGNOSTICS below if this still fails.';
+      return 'Google configuration error (10). Google Sign-In is blocked '
+          'before it reaches JARVIS. Use SECURE EMAIL SIGN-IN below to '
+          'activate your full account, or copy diagnostics for Google setup.';
     }
     if (error is PlatformException) {
       if (error.code == 'sign_in_canceled') {
