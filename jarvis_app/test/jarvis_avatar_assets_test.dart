@@ -34,6 +34,7 @@ void main() {
       );
       await socket.flush();
       final String response = await socket
+          .cast<List<int>>()
           .transform(utf8.decoder)
           .join()
           .timeout(const Duration(seconds: 15));
