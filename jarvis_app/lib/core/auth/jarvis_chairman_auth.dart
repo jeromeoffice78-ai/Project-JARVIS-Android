@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 import 'jarvis_google_sign_in_diagnostics.dart';
+import 'jarvis_password_recovery.dart';
 
 final class JarvisAuthSession {
   JarvisAuthSession._();
@@ -842,6 +843,23 @@ class _JarvisChairmanAuthGateState
                       const SizedBox(height: 18),
                       const Divider(color: Colors.white24),
                       const SizedBox(height: 8),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _submitting
+                              ? null
+                              : () => Navigator.of(context).push(
+                                    MaterialPageRoute<void>(
+                                      builder: (_) =>
+                                          const JarvisPasswordRecoveryPage(),
+                                    ),
+                                  ),
+                          icon: const Icon(Icons.lock_reset_rounded),
+                          label: const Text('FORGOT PASSWORD / RESET MY PASSWORD'),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
                       const Text(
                         'SECURE EMAIL SIGN-IN',
                         style: TextStyle(
