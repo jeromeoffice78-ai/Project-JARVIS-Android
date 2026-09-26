@@ -226,11 +226,11 @@ class _JarvisShellState
                       .primary,
                 ),
               ),
-              child: Icon(
-                Icons.memory,
-                color: Theme.of(context)
-                    .colorScheme
-                    .primary,
+              clipBehavior: Clip.antiAlias,
+              child: Image.asset(
+                'assets/branding/jarvis_ai_assistant_brand_icon.png',
+                fit: BoxFit.cover,
+                semanticLabel: 'JARVIS AI Assistant brand logo',
               ),
             ),
             const SizedBox(width: 12),
