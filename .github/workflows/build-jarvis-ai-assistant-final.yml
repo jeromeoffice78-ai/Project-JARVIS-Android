@@ -1,4 +1,5 @@
 name: Build JARVIS AI Assistant Final
+# Signing service authorization refreshed for branded APK rebuild.
 
 on:
   push:
