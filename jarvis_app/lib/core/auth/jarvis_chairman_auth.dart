@@ -136,6 +136,8 @@ class _JarvisChairmanAuthGateState
   bool _offlineMode = false;
   bool _submitting = false;
   bool _oauthConfigurationError = false;
+  bool _emailSent = false;
+  final TextEditingController _emailProofController = TextEditingController();
   String? _lastDiagnostic;
   String? _error;
 
@@ -147,6 +149,7 @@ class _JarvisChairmanAuthGateState
 
   @override
   void dispose() {
+    _emailProofController.dispose();
     _client.close();
     super.dispose();
   }
@@ -282,6 +285,109 @@ class _JarvisChairmanAuthGateState
         content: Text('Installed JARVIS identity copied safely.'),
       ),
     );
+  }
+
+  // Email verification provides full Chairman access when the platform's
+  // Google account picker fails with DEVELOPER_ERROR 10. The backend only
+  // sends challenges to the existing, verified Chairman account.
+  Future<void> _requestEmailLogin() async {
+    if (_submitting) return;
+    setState(() {
+      _submitting = true;
+      _error = null;
+      _lastDiagnostic = null;
+    });
+    try {
+      final http.Response response = await _client.post(
+        Uri.parse(_baseUrl + '/v1/auth/email/start'),
+        headers: const <String, String>{'content-type': 'application/json'},
+        body: '{}',
+      ).timeout(const Duration(seconds: 35));
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          _emailSent = true;
+          _error = null;
+        } else if (response.statusCode == 429) {
+          _error = 'A sign-in email was requested recently. Wait before trying again.';
+        } else {
+          _error = 'Email verification is temporarily unavailable. You can still use local JARVIS features.';
+        }
+      });
+    } on Object {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _error = 'Could not connect to JARVIS email verification. Check your connection and retry.';
+      });
+    }
+  }
+
+  Future<void> _submitEmailProof() async {
+    if (_submitting) return;
+    final String proof = _emailProofController.text.trim();
+    if (proof.length < 6) {
+      setState(() {
+        _error = 'Paste the six-digit code or the complete unused sign-in link from your email.';
+      });
+      return;
+    }
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      final http.Response response = await _client.post(
+        Uri.parse(_baseUrl + '/v1/auth/email/verify'),
+        headers: const <String, String>{'content-type': 'application/json'},
+        body: jsonEncode(<String, String>{'proof': proof}),
+      ).timeout(const Duration(seconds: 40));
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final dynamic decoded = jsonDecode(response.body);
+        if (decoded is! Map) throw const FormatException('Invalid session');
+        final Map<String, dynamic> payload =
+            Map<String, dynamic>.from(decoded);
+        final String token = payload['access_token']?.toString().trim() ?? '';
+        final String expiresAt = payload['expires_at']?.toString().trim() ?? '';
+        final String email = payload['email']?.toString().trim() ?? '';
+        if (token.isEmpty || expiresAt.isEmpty || email.isEmpty) {
+          throw const FormatException('Missing authenticated session');
+        }
+        await JarvisAuthSession.save(
+          token: token,
+          expiresAt: expiresAt,
+          email: email,
+        );
+        _emailProofController.clear();
+        if (!mounted) return;
+        setState(() {
+          _authenticated = true;
+          _checking = false;
+          _submitting = false;
+          _offlineMode = false;
+          _lastDiagnostic = null;
+          _error = null;
+        });
+        return;
+      }
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _error = response.statusCode == 429
+            ? 'Too many verification attempts. Wait before retrying.'
+            : response.statusCode == 422 || response.statusCode == 401
+                ? 'The code or link is invalid, already used or expired. Request a fresh email.'
+                : 'Email verification could not complete. You can use local features meanwhile.';
+      });
+    } on Object {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _error = 'The secure email sign-in could not complete. Check your connection or request a new email.';
+      });
+    }
   }
 
   Future<void> _signInWithGoogle() async {
@@ -696,6 +802,67 @@ class _JarvisChairmanAuthGateState
                           ),
                         ),
                       ),
+                      const SizedBox(height: 18),
+                      const Divider(color: Colors.white24),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'SECURE EMAIL SIGN-IN',
+                        style: TextStyle(
+                          color: Color(0xFF38E8FF),
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1.1,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Google error 10? Use your existing verified Chairman email to activate remote JARVIS.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _submitting ? null : _requestEmailLogin,
+                          icon: const Icon(Icons.mark_email_unread_outlined),
+                          label: Text(_emailSent
+                              ? 'RESEND VERIFICATION EMAIL'
+                              : 'SEND VERIFICATION EMAIL'),
+                        ),
+                      ),
+                      if (_emailSent) ...<Widget>[
+                        const SizedBox(height: 8),
+                        const SelectableText(
+                          'Check the approved Chairman email. If it contains a link rather than a code, copy the complete sign-in link WITHOUT opening it, then paste it below.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        TextField(
+                          controller: _emailProofController,
+                          keyboardType: TextInputType.text,
+                          autocorrect: false,
+                          enableSuggestions: false,
+                          maxLines: 2,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: const InputDecoration(
+                            labelText: 'Email code or unused sign-in link',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: _submitting ? null : _submitEmailProof,
+                            icon: const Icon(Icons.verified_user_outlined),
+                            label: const Text('VERIFY EMAIL & OPEN JARVIS'),
+                          ),
+                        ),
+                      ],
                       const SizedBox(
                         height: 10,
                       ),
