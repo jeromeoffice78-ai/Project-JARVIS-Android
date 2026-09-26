@@ -61,6 +61,60 @@ abstract final class JarvisGoogleSignInDiagnostics {
         'Error type: ${error.runtimeType}';
   }
 
+  /// Whitelist only stable native result fields. Do not copy the native
+  /// map verbatim because it may contain a live Google identity token.
+  static String nativeResultDiagnostic(
+    Map<dynamic, dynamic>? result, {
+    String stage = 'native_google_web_client',
+  }) {
+    final String safeStage =
+        stage.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+    final String rawResult = result?['status']?.toString() ?? 'no_result';
+    const allowedResults = <String>{
+      'ok',
+      'no_id_token',
+      'google_error',
+      'native_unavailable',
+      'android_only_ok',
+    };
+    final String safeResult =
+        allowedResults.contains(rawResult) ? rawResult : 'unknown';
+    final String rawCode = result?['googleStatus']?.toString() ?? '';
+    final String safeCode = RegExp(r'^\d{1,5}
+    if (isOAuthConfigurationError(error)) {
+      return 'Google configuration error (10). Google Sign-In is blocked '
+          'before it reaches JARVIS. Use SECURE EMAIL SIGN-IN below to '
+          'activate your full account, or copy diagnostics for Google setup.';
+    }
+    if (error is PlatformException) {
+      if (error.code == 'sign_in_canceled') {
+        return 'Google sign-in was canceled. Tap Continue with Google '
+            'when you are ready to choose an account.';
+      }
+      if (error.code == 'network_error' || googleApiStatus(error) == '7') {
+        return 'Google reported a network error. Verify that the phone '
+            'can reach Google Play services and retry.';
+      }
+      if (error.code == 'sign_in_required') {
+        return 'Google requires an account on this phone. Add your '
+            'approved account under Android Settings, then retry.';
+      }
+      return 'Android Google Sign-In failed before JARVIS could '
+          'finish authentication. Copy the diagnostic code below '
+          'to identify the cause.';
+    }
+    return 'Google sign-in did not complete. Copy the diagnostic code '
+        'below to distinguish a device, token or network error.';
+  }
+}
+).hasMatch(rawCode)
+        ? rawCode
+        : 'not reported';
+    return 'Stage: $safeStage\n'
+        'Result: $safeResult\n'
+        'Google API status: $safeCode';
+  }
+
   static String messageFor(Object error) {
     if (isOAuthConfigurationError(error)) {
       return 'Google configuration error (10). Google Sign-In is blocked '
