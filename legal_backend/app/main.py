@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from .auth_google import auth_ready, issue_session, verify_google_chairman, verify_session
 from .auth_email import send_chairman_email, verify_chairman_email
+from .web_portal import router as web_portal_router
 
 APP_NAME = "JARVIS Legal Enterprise API"
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-sol").strip() or "gpt-5.6-sol"
@@ -353,6 +354,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title=APP_NAME, version="1.3.0", lifespan=lifespan)
+app.include_router(web_portal_router)
 
 
 def _extract_bearer(value: str | None) -> str:
