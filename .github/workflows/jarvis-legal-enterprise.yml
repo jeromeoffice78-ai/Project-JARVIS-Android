@@ -399,6 +399,10 @@ jobs:
         working-directory: jarvis_app
         run: flutter analyze --no-fatal-warnings --no-fatal-infos
 
+      - name: Test bundled JARVIS human avatar runtime
+        working-directory: jarvis_app
+        run: flutter test test/jarvis_avatar_asset_server_test.dart
+
       - name: Build JARVIS AI Assistant ARM64
         working-directory: jarvis_app
         run: |
