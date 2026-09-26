@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 /// Serves only bundled avatar files on the device's IPv4 loopback interface.
@@ -14,6 +15,7 @@ final class JarvisAvatarAssetServer {
   JarvisAvatarAssetServer._();
 
   static Future<Uri>? _starting;
+  static HttpServer? _server;
 
   static const Set<String> _bundledAssets = <String>{
     'assets/avatar/jarvis_human_avatar.html',
@@ -50,6 +52,7 @@ final class JarvisAvatarAssetServer {
       await rootBundle.load(_entry);
       final HttpServer server =
           await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      _server = server;
       server.listen(_serve);
       return Uri(
         scheme: 'http',
@@ -61,6 +64,14 @@ final class JarvisAvatarAssetServer {
       _starting = null;
       rethrow;
     }
+  }
+
+  @visibleForTesting
+  static Future<void> closeForTesting() async {
+    final HttpServer? server = _server;
+    _server = null;
+    _starting = null;
+    await server?.close(force: true);
   }
 
   static Future<void> _serve(HttpRequest request) async {
