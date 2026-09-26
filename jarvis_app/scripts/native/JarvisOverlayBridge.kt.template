@@ -72,6 +72,10 @@ object JarvisOverlayBridge {
                                     JarvisOverlayService.EXTRA_STATE_JSON,
                                     encodeState(state),
                                 )
+                                .putExtra(
+                                    JarvisOverlayService.EXTRA_AVATAR_URL,
+                                    call.argument<String>("avatarUrl").orEmpty(),
+                                )
 
                             if (
                                 Build.VERSION.SDK_INT >=
