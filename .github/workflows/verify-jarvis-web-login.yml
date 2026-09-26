@@ -1,0 +1,54 @@
+name: Verify JARVIS replacement web login
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/verify-jarvis-web-login.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Verify live web login, script, styles and proof rejection
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://jarvis-legal-enterprise-api.onrender.com"
+          for attempt in $(seq 1 15); do
+            if curl --fail-with-body -L -fsS --max-time 22 "$BASE/login" -o /tmp/portal.html &&
+               grep -q "SEND VERIFICATION EMAIL" /tmp/portal.html &&
+               grep -q '/login/app.js' /tmp/portal.html; then
+              echo "PASS: Live passwordless Chairman login is reachable."
+              break
+            fi
+            if [ "$attempt" -eq 15 ]; then
+              echo "FAIL: New live login did not become available."
+              exit 1
+            fi
+            sleep 8
+          done
+
+          curl --fail-with-body -L -fsS --max-time 25 "$BASE/login/app.js" -o /tmp/portal.js
+          grep -q '/v1/auth/email/start' /tmp/portal.js
+          grep -q '/v1/auth/email/verify' /tmp/portal.js
+          grep -q 'sessionStorage' /tmp/portal.js
+          echo "PASS: Secure client-side login and session restoration published."
+
+          curl --fail-with-body -L -fsS --max-time 25 "$BASE/login/app.css" -o /tmp/portal.css
+          grep -q '\.card' /tmp/portal.css
+          echo "PASS: Mobile layout stylesheet published."
+
+          code=$(curl -sS -L --max-time 25 -o /tmp/invalid.txt -w "%{http_code}" \
+            -X POST -H 'Content-Type: application/json' \
+            -d '{"proof":"invalid-proof-no-token"}' "$BASE/v1/auth/email/verify")
+          [ "$code" = "422" ] || {
+            echo "FAIL: Invalid proof returned HTTP $code, expected 422."
+            exit 1
+          }
+          echo "PASS: Invalid email proofs rejected without any email being sent."
