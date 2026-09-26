@@ -7,6 +7,39 @@
     html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}
     canvas{display:block;width:100%;height:100%;touch-action:none}
     #status{position:fixed;left:10px;top:8px;color:#9bd7ff;font:11px sans-serif;opacity:.72;pointer-events:none}
+  
+    #backup-avatar{display:none;position:absolute;inset:0;overflow:hidden;pointer-events:none;
+      perspective:850px;align-items:center;justify-content:center;background:transparent}
+    #backup-avatar.visible{display:flex}
+    #backup-avatar .person{width:140px;height:255px;transform-style:preserve-3d;
+      animation:jarvis-presence 5s ease-in-out infinite;position:relative;filter:drop-shadow(0 13px 15px #0009)}
+    #backup-avatar .head{position:absolute;left:46px;top:11px;width:50px;height:63px;
+      border-radius:43% 43% 46% 46%;background:radial-gradient(ellipse at 30% 25%,#d0a788,#8a5f48 74%,#543728);
+      box-shadow:inset -11px -3px 14px #3d231b99,0 0 8px #5fc7ff38;transform:rotateY(-9deg)}
+    #backup-avatar .hair{position:absolute;left:43px;top:5px;width:55px;height:24px;
+      border-radius:50% 55% 25% 25%;background:linear-gradient(140deg,#302720,#080808)}
+    #backup-avatar .eye{position:absolute;top:42px;width:5px;height:3px;background:#221a15;border-radius:50%}
+    #backup-avatar .eye.left{left:58px}#backup-avatar .eye.right{left:80px}
+    #backup-avatar .mouth{position:absolute;left:66px;top:59px;width:12px;height:2px;border-radius:100%;
+      background:#43281d;transition:height .1s}
+    #backup-avatar.speaking .mouth{height:7px;animation:jarvis-mouth .17s ease-in-out infinite alternate}
+    #backup-avatar .torso{position:absolute;left:24px;top:77px;width:96px;height:104px;
+      clip-path:polygon(20% 0,80% 0,100% 19%,83% 100%,17% 100%,0 19%);
+      background:linear-gradient(105deg,#26374b,#080d17 65%,#131e30);
+      border-top:3px solid #51dfff}
+    #backup-avatar .arm{position:absolute;top:89px;width:23px;height:100px;border-radius:17px;
+      background:linear-gradient(90deg,#263446,#090e18)}
+    #backup-avatar .arm.left{left:8px;transform:rotate(9deg);transform-origin:top right}
+    #backup-avatar .arm.right{right:7px;transform:rotate(-9deg);transform-origin:top left}
+    #backup-avatar.speaking .arm.right{animation:jarvis-wave .65s ease-in-out infinite alternate}
+    #backup-avatar .leg{position:absolute;top:176px;width:32px;height:88px;border-radius:0 0 8px 8px;
+      background:linear-gradient(100deg,#1c2635,#070a0f)}
+    #backup-avatar .leg.left{left:38px}#backup-avatar .leg.right{right:36px}
+    #backup-avatar .caption{position:absolute;bottom:0;left:50%;transform:translateX(-50%);white-space:nowrap;
+      font:11px system-ui;color:#9bd7ff;background:#07141ccc;padding:4px 8px;border-radius:8px}
+    @keyframes jarvis-presence{0%,100%{transform:rotateY(-10deg) translateY(2px)}50%{transform:rotateY(11deg) translateY(-5px)}}
+    @keyframes jarvis-mouth{to{height:3px}}
+    @keyframes jarvis-wave{to{transform:rotate(-35deg);transform-origin:top left}}
   </style>
   <script type="importmap">
   {
@@ -19,6 +52,45 @@
 </head>
 <body>
 <div id="status">Loading human JARVIS…</div>
+<div id="backup-avatar" aria-label="JARVIS simplified offline avatar">
+  <div class="person">
+    <div class="torso"></div><div class="arm left"></div><div class="arm right"></div>
+    <div class="leg left"></div><div class="leg right"></div>
+    <div class="head"></div><div class="hair"></div><div class="eye left"></div>
+    <div class="eye right"></div><div class="mouth"></div>
+  </div>
+  <div class="caption">JARVIS · simplified offline avatar</div>
+</div>
+<script>
+// Emergency visual backup: does not depend on the network, ES module support,
+// GPU shaders, 3D model files, or the companion device-cloud connection.
+(function(){
+  const el=document.getElementById('backup-avatar');
+  let shown=false;
+  window.__jarvisAvatarBackup={
+    show:function(reason){
+      if(shown)return;
+      shown=true;el.classList.add('visible');
+      document.getElementById('status').textContent='JARVIS offline avatar active';
+      window.JarvisAvatar?.postMessage(JSON.stringify({type:'ready',mode:'simplified-fallback'}));
+    },
+    hide:function(){shown=false;el.classList.remove('visible');},
+    setState:function(value){
+      el.classList.toggle('speaking',value?.activity==='speaking');
+      el.style.opacity=value?.active===false?'0.18':'1';
+    }
+  };
+  window.__jarvisAvatarWatchdog=setTimeout(()=>{
+    if(!window.__jarvisDetailedModelReady)window.__jarvisAvatarBackup.show('render timeout');
+  },18000);
+  addEventListener('error',function(event){
+    const name=event.filename||event.target?.src||'';
+    if(!window.__jarvisDetailedModelReady && (/three\.module|GLTFLoader|WebGL/.test(name))) {
+      window.__jarvisAvatarBackup.show('3D renderer unavailable');
+    }
+  },true);
+})();
+</script>
 <script type="module">
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -70,6 +142,7 @@ let nextBlink=performance.now()+1200+Math.random()*2200;
 let lastActive=true;
 let speakingPhase=0;
 let groundY=0;
+let fallbackMouth=null;
 
 const state={
   active:true,
@@ -297,6 +370,39 @@ function fitCamera(){
   camera.position.set(0,h*.58,Math.max(3.0,h*1.55));
   camera.lookAt(0,h*.54,0);
 }
+function buildSimplified3DHuman(){
+  // Keep a moving THREE.js figure available even when the downloaded GLB
+  // model or textures cannot be decoded on a particular Android WebView.
+  body=new THREE.Group();
+  const skin=new THREE.MeshStandardMaterial({color:0x9e765c,roughness:.8});
+  const hairColor=new THREE.MeshStandardMaterial({color:0x191513,roughness:.9});
+  const shirt=new THREE.MeshStandardMaterial({color:0x101b2c,roughness:.55});
+  const pants=new THREE.MeshStandardMaterial({color:0x151b24,roughness:.8});
+  const eye=new THREE.MeshStandardMaterial({color:0x14100e});
+  const mouthMat=new THREE.MeshStandardMaterial({color:0x462a29});
+  const mesh=(geo,mat,x,y,z)=>{const m=new THREE.Mesh(geo,mat);m.position.set(x,y,z);body.add(m);return m;};
+  mesh(new THREE.CylinderGeometry(.24,.18,.85,16),shirt,0,1.14,0);
+  mesh(new THREE.CylinderGeometry(.095,.11,.22,12),skin,0,1.65,0);
+  mesh(new THREE.SphereGeometry(.22,16,12),skin,0,1.83,0);
+  mesh(new THREE.SphereGeometry(.227,16,12,0,Math.PI*2,0,Math.PI*.34),hairColor,0,1.91,0);
+  mesh(new THREE.SphereGeometry(.019,8,6),eye,-.084,1.845,.188);
+  mesh(new THREE.SphereGeometry(.019,8,6),eye,.084,1.845,.188);
+  fallbackMouth=mesh(new THREE.SphereGeometry(.042,8,6),mouthMat,0,1.741,.205);
+  fallbackMouth.scale.y=.2;
+  for(const side of [-1,1]){
+    mesh(new THREE.CylinderGeometry(.079,.061,.7,12),shirt,side*.315,1.18,0).rotation.z=side*.18;
+    mesh(new THREE.CylinderGeometry(.11,.085,.87,12),pants,side*.112,.43,0);
+    mesh(new THREE.BoxGeometry(.20,.105,.35),hairColor,side*.11,.055,.12);
+  }
+  root.add(body);
+  fitCamera();
+  ready=true;
+  window.__jarvisDetailedModelReady=true;
+  clearTimeout(window.__jarvisAvatarWatchdog);
+  window.__jarvisAvatarBackup?.hide();
+  status.textContent='JARVIS simplified 3D mode';
+  window.JarvisAvatar?.postMessage(JSON.stringify({type:'ready',mode:'simplified-3d'}));
+}
 async function load(){
   try{
     const [b,h,hr]=await Promise.all([
@@ -337,13 +443,19 @@ async function load(){
     playClip('Idle',0);
     fitCamera();
     ready=true;
+    window.__jarvisDetailedModelReady=true;
+    clearTimeout(window.__jarvisAvatarWatchdog);
+    window.__jarvisAvatarBackup?.hide();
     status.textContent='Human JARVIS online';
     setTimeout(()=>status.style.opacity='0',1800);
     window.JarvisAvatar?.postMessage(JSON.stringify({type:'ready'}));
   }catch(e){
     console.error(e);
-    status.textContent='Human avatar load failed';
-    window.JarvisAvatar?.postMessage(JSON.stringify({type:'error',message:String(e)}));
+    try {
+      buildSimplified3DHuman();
+    } catch(fallbackError) {
+      window.__jarvisAvatarBackup?.show('3D model and renderer unavailable');
+    }
   }
 }
 load();
@@ -405,6 +517,11 @@ function animate(now){
   if(mixer) mixer.update(dt);
   autonomousMotion(now,dt);
   expression(now);
+  if(fallbackMouth){
+    const speaking=state.activity==='speaking';
+    fallbackMouth.scale.y=speaking
+      ? .35 + Math.abs(Math.sin(now*.018))*.75 : .18;
+  }
   renderer.render(scene,camera);
 }
 requestAnimationFrame(animate);
@@ -412,6 +529,7 @@ requestAnimationFrame(animate);
 window.jarvisSetState=(next)=>{
   if(!next||typeof next!=='object') return;
   Object.assign(state,next);
+  window.__jarvisAvatarBackup?.setState(state);
   if(next.active===true && !lastActive){
     root.visible=true;
   }
