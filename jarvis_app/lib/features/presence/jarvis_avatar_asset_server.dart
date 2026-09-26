@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -112,10 +111,11 @@ final class JarvisAvatarAssetServer {
           data.lengthInBytes,
         ));
       }
-    } on FlutterError {
-      response.statusCode = HttpStatus.notFound;
     } on Object {
-      response.statusCode = HttpStatus.internalServerError;
+      // An allowlisted resource that cannot be loaded from the installed
+      // Flutter bundle is missing or incomplete. Return 404 so the avatar
+      // page falls back to its embedded offline model.
+      response.statusCode = HttpStatus.notFound;
     } finally {
       await response.close();
     }
