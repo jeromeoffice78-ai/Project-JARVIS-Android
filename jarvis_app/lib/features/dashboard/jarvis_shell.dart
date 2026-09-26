@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/auth/jarvis_chairman_auth.dart';
 import '../../core/network/jarvis_ws_service.dart';
 import '../../core/network/providers.dart';
 import '../chat/jarvis_chat_screen.dart';
@@ -257,6 +258,32 @@ class _JarvisShellState
           ],
         ),
         actions: <Widget>[
+          // Local Jarvis is always available; only owner-only cloud actions
+          // require optional Google or email verification.
+          ValueListenableBuilder<int>(
+            valueListenable: JarvisAuthSession.sessionRevision,
+            builder: (BuildContext context, int revision, Widget? child) {
+              final bool signedIn =
+                  JarvisAuthSession.currentToken.isNotEmpty;
+              return IconButton(
+                tooltip: signedIn
+                    ? 'Owner account connected'
+                    : 'Connect owner account (no password)',
+                icon: Icon(
+                  signedIn
+                      ? Icons.verified_user_outlined
+                      : Icons.account_circle_outlined,
+                ),
+                onPressed: signedIn
+                    ? () => ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Owner account already connected.'),
+                          ),
+                        )
+                    : JarvisAuthSession.requestSignIn,
+              );
+            },
+          ),
           IconButton(
             tooltip: 'Jarvis Presence',
             icon: const Icon(
