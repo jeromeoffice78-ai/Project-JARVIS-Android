@@ -390,6 +390,90 @@ class _JarvisChairmanAuthGateState
     }
   }
 
+  static const MethodChannel _nativeGoogleChannel =
+      MethodChannel('jarvis.native_google_auth');
+
+  // Try the native Google SDK independently when the Flutter plugin fails.
+  // The token is exchanged over HTTPS for the existing Chairman session.
+  // Never include Google tokens or account details in diagnostics.
+  Future<String> _tryNativeGoogleSignIn() async {
+    try {
+      final Map<dynamic, dynamic>? result = await _nativeGoogleChannel
+          .invokeMapMethod<dynamic, dynamic>(
+            'signInWithWebClient',
+            <String, String>{'webClientId': _googleServerClientId},
+          )
+          .timeout(const Duration(seconds: 90));
+      final String diagnostic =
+          JarvisGoogleSignInDiagnostics.nativeResultDiagnostic(result);
+      if (result?['status'] == 'ok') {
+        final String idToken = result?['idToken']?.toString().trim() ?? '';
+        if (idToken.isNotEmpty) {
+          await _exchangeGoogleIdToken(
+            idToken,
+            fallbackEmail: '',
+            interactive: true,
+            fromNative: true,
+          );
+          return diagnostic + '\nBackend exchange: ' +
+              (_authenticated ? 'authenticated' : 'not authenticated');
+        }
+        return diagnostic + '\nResult: missing Google identity token';
+      }
+      return diagnostic;
+    } on MissingPluginException {
+      return 'Stage: native_google_web_client\n'
+          'Result: native Android fallback not installed';
+    } on PlatformException catch (error) {
+      return JarvisGoogleSignInDiagnostics.diagnosticSummary(
+        error,
+        stage: 'native_google_web_client',
+      );
+    } on Object {
+      return 'Stage: native_google_web_client\n'
+          'Result: native Android fallback unavailable';
+    }
+  }
+
+  Future<void> _checkAndroidGoogleClient() async {
+    if (_submitting) return;
+    setState(() => _submitting = true);
+    String resultSummary;
+    try {
+      final Map<dynamic, dynamic>? response = await _nativeGoogleChannel
+          .invokeMapMethod<dynamic, dynamic>('testAndroidOnly')
+          .timeout(const Duration(seconds: 90));
+      resultSummary = JarvisGoogleSignInDiagnostics.nativeResultDiagnostic(
+        response,
+        stage: 'android_only_google_probe',
+      );
+    } on MissingPluginException {
+      resultSummary = 'Stage: android_only_google_probe\n'
+          'Result: native check not included in installed app';
+    } on PlatformException catch (error) {
+      resultSummary = JarvisGoogleSignInDiagnostics.diagnosticSummary(
+        error,
+        stage: 'android_only_google_probe',
+      );
+    } on Object {
+      resultSummary = 'Stage: android_only_google_probe\n'
+          'Result: Android-only check unavailable';
+    }
+    if (!mounted) return;
+    setState(() {
+      _submitting = false;
+      _lastDiagnostic =
+          ((_lastDiagnostic ?? '') + '\n' + resultSummary).trim();
+      _error = resultSummary.contains('Result: android_only_ok')
+          ? 'The basic Android Google account picker works. '
+              'The Google Web client identity-token request is the '
+              'next thing to inspect. Secure Email Sign-In remains available.'
+          : 'The Android-only Google test is complete. '
+              'Copy diagnostics to see its result.';
+    });
+    await _appendInstalledIdentityToError();
+  }
+
   Future<void> _signInWithGoogle() async {
     if (_submitting) {
       return;
@@ -816,6 +900,22 @@ class _JarvisChairmanAuthGateState
                       ],
                       if (_oauthConfigurationError) ...<Widget>[
                         const SizedBox(height: 10),
+                        TextButton.icon(
+                          onPressed: _submitting
+                              ? null
+                              : _checkAndroidGoogleClient,
+                          icon: const Icon(Icons.bug_report_outlined),
+                          label: const Text('CHECK GOOGLE ANDROID CLIENT'),
+                        ),
+                        const Text(
+                          'This checks Google without requesting the Web '
+                          'client ID. It does not sign you in to JARVIS.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.white60,
+                          ),
+                        ),
                         TextButton.icon(
                           onPressed: () async {
                             await Clipboard.setData(const ClipboardData(
