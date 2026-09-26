@@ -22,6 +22,7 @@ jobs:
           for label, middle in (
               ("copied_from_google_cloud", "aool"),
               ("previous_jarvis_configuration", "ao0l"),
+              ("known_invalid_control", "zzzz"),
           ):
               client_id = project + middle + suffix
               params = urllib.parse.urlencode({
