@@ -98,8 +98,7 @@ class _JarvisHumanAvatarViewState
             });
           },
         ),
-      )
-      ;
+      );
 
     _loadAvatar();
   }
