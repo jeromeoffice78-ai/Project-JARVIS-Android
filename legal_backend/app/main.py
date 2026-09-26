@@ -22,6 +22,7 @@ import websockets
 from pydantic import BaseModel, Field
 
 from .auth_google import auth_ready, issue_session, verify_google_chairman, verify_session
+from .auth_email import send_chairman_email, verify_chairman_email
 
 APP_NAME = "JARVIS Legal Enterprise API"
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-sol").strip() or "gpt-5.6-sol"
@@ -137,6 +138,11 @@ Requirements:
 
 class GoogleAuthRequest(BaseModel):
     id_token: str = Field(min_length=100, max_length=10_000)
+
+
+class EmailChallengeVerifyRequest(BaseModel):
+    # Numeric OTP, or a full *unused* emailed Supabase sign-in link.
+    proof: str = Field(min_length=6, max_length=2500)
 
 
 class AuthResponse(BaseModel):
@@ -1241,6 +1247,29 @@ async def health() -> HealthResponse:
 @app.post("/v1/auth/google", response_model=AuthResponse)
 async def google_auth(payload: GoogleAuthRequest) -> AuthResponse:
     identity = verify_google_chairman(payload.id_token.strip())
+    access_token, expires_at = issue_session(identity)
+    return AuthResponse(
+        access_token=access_token,
+        expires_at=expires_at,
+        role="chairman",
+        display_name=identity.display_name,
+        email=identity.email,
+        subscription_exempt=True,
+    )
+
+
+
+@app.post("/v1/auth/email/start")
+async def start_chairman_email_login() -> dict[str, str]:
+    # Supabase sends only to the configured Chairman; no email parameter
+    # exists for attackers to enumerate or target arbitrary accounts.
+    await send_chairman_email()
+    return {"status": "sent", "message": "Check your approved Chairman email for a sign-in code or link."}
+
+
+@app.post("/v1/auth/email/verify", response_model=AuthResponse)
+async def verify_chairman_email_login(payload: EmailChallengeVerifyRequest) -> AuthResponse:
+    identity = await verify_chairman_email(payload.proof)
     access_token, expires_at = issue_session(identity)
     return AuthResponse(
         access_token=access_token,
