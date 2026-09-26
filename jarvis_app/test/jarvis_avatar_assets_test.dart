@@ -28,9 +28,9 @@ void main() {
         await Socket.connect(InternetAddress.loopbackIPv4, page.port);
     try {
       socket.write(
-        'GET ${page.path} HTTP/1.1\\r\\n'
-        'Host: 127.0.0.1:${page.port}\\r\\n'
-        'Connection: close\\r\\n\\r\\n',
+        'GET ${page.path} HTTP/1.1\r\n'
+        'Host: 127.0.0.1:${page.port}\r\n'
+        'Connection: close\r\n\r\n',
       );
       await socket.flush();
       final String response = await socket
