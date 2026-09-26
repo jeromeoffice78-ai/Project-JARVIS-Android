@@ -267,20 +267,14 @@ class _JarvisShellState
                   JarvisAuthSession.currentToken.isNotEmpty;
               return IconButton(
                 tooltip: signedIn
-                    ? 'Owner account connected'
-                    : 'Connect owner account (no password)',
+                    ? 'Owner account and sign-out options'
+                    : 'Sign in to Jarvis',
                 icon: Icon(
                   signedIn
                       ? Icons.verified_user_outlined
                       : Icons.account_circle_outlined,
                 ),
-                onPressed: signedIn
-                    ? () => ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Owner account already connected.'),
-                          ),
-                        )
-                    : JarvisAuthSession.requestSignIn,
+                onPressed: JarvisAuthSession.requestSignIn,
               );
             },
           ),
