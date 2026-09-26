@@ -1,0 +1,41 @@
+name: Save Approved JARVIS Brand Art
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/sync-jarvis-brand-artwork.yml"
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: jarvis-approved-brand-art
+  cancel-in-progress: false
+jobs:
+  store-brand:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Import the user-selected brand image
+        run: |
+          set -euo pipefail
+          mkdir -p jarvis_app/assets/branding
+          curl --fail --location --retry 5 --retry-delay 3 --max-time 90 \
+            https://jarvis-watch-bridge.floot.app/_cdn/static/bf252f27-cac5-4b08-be13-7f8db203e30a-jarvis_ai_assistant_brand_icon.png \
+            --output jarvis_app/assets/branding/jarvis_ai_assistant_brand_icon.png
+          echo "dae4207780f5648dd639908bdded72b5aa2bbb06fe54c77e1712de9f10a7631e  jarvis_app/assets/branding/jarvis_ai_assistant_brand_icon.png" | sha256sum -c -
+          file jarvis_app/assets/branding/jarvis_ai_assistant_brand_icon.png
+      - name: Store original image permanently in the app source
+        run: |
+          set -euo pipefail
+          git config user.name "jarvis-build-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add jarvis_app/assets/branding/jarvis_ai_assistant_brand_icon.png
+          if git diff --cached --quiet; then
+            echo "Approved image already stored."
+            exit 0
+          fi
+          git commit -m "Save user-approved JARVIS AI Assistant app artwork"
+          git pull --rebase origin main
+          git push origin HEAD:main
