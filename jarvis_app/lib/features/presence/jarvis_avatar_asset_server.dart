@@ -13,7 +13,6 @@ import 'package:flutter/services.dart';
 final class JarvisAvatarAssetServer {
   JarvisAvatarAssetServer._();
 
-  static HttpServer? _server;
   static Future<Uri>? _starting;
 
   static const Set<String> _bundledAssets = <String>{
@@ -51,7 +50,6 @@ final class JarvisAvatarAssetServer {
       await rootBundle.load(_entry);
       final HttpServer server =
           await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-      _server = server;
       server.listen(_serve);
       return Uri(
         scheme: 'http',
