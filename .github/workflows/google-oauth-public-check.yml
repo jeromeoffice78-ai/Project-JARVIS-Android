@@ -1,0 +1,56 @@
+name: Check public Google OAuth client IDs
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/google-oauth-public-check.yml'
+jobs:
+  check-google-oauth-ids:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Compare public Google OAuth authorization responses
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          project = "498363735983-nka03bna11698m7o6"
+          suffix = "l7vnga8fb80e.apps.googleusercontent.com"
+          for label, middle in (
+              ("copied_from_google_cloud", "aool"),
+              ("previous_jarvis_configuration", "ao0l"),
+          ):
+              client_id = project + middle + suffix
+              params = urllib.parse.urlencode({
+                  "client_id": client_id,
+                  "response_type": "code",
+                  "redirect_uri": "https://example.com/jarvis-credential-check",
+                  "scope": "openid email",
+                  "state": "public-client-id-check",
+              })
+              endpoint = "https://accounts.google.com/o/oauth2/v2/auth?" + params
+              try:
+                  req = urllib.request.Request(endpoint, headers={
+                      "User-Agent": "Mozilla/5.0 JARVIS OAuth configuration check",
+                  })
+                  with urllib.request.urlopen(req, timeout=20) as result:
+                      status, body = result.status, result.read(200000).decode("utf-8", "replace")
+              except urllib.error.HTTPError as error:
+                  status, body = error.code, error.read(200000).decode("utf-8", "replace")
+              except Exception as exc:
+                  print(f"{label}: network failure {type(exc).__name__}")
+                  continue
+              lower = body.lower()
+              invalid = any(part in lower for part in (
+                  "invalid_client", "client was not found", "oauth client was not found",
+                  "unknown client", "deleted oauth client",
+              ))
+              mismatch = any(part in lower for part in (
+                  "redirect_uri_mismatch", "redirect uri mismatch", "redirect_uri",
+                  "doesn't comply with google", "not authorized for this client",
+              ))
+              print(f"{label}: HTTP={status}; invalid_client_markers={invalid}; redirect_markers={mismatch}")
+          PY
