@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -27,6 +28,9 @@ class _JarvisHumanAvatarViewState
   late final WebViewController _controller;
   bool _ready = false;
   String? _errorMessage;
+  int _retryCount = 0;
+  bool _retryPending = false;
+  static const int _maxAutomaticRetries = 2;
 
   @override
   void initState() {
@@ -84,23 +88,34 @@ class _JarvisHumanAvatarViewState
         NavigationDelegate(
           onWebResourceError:
               (WebResourceError error) {
-            if (!mounted) {
-              return;
-            }
-
-            if (_ready) return;
-            final String failedResource =
-                Uri.tryParse(error.url ?? '')?.pathSegments.lastOrNull ?? '';
-            setState(() {
-              _errorMessage = failedResource.isEmpty
-                  ? error.description
-                  : '${error.description} ($failedResource)';
-            });
+            if (!mounted || _ready) return;
+            // Android WebView may report optional textures or a transient
+            // glTF subresource as ERR_FAILED. The page handles model errors
+            // with its built-in offline 3D backup. Only the main document
+            // should trigger a WebView restart.
+            if (error.isForMainFrame != true) return;
+            unawaited(_retryMainPage(error.description));
           },
         ),
       );
 
     _loadAvatar();
+  }
+
+  Future<void> _retryMainPage(String reason) async {
+    if (_ready || _retryPending || !mounted) return;
+    if (_retryCount >= _maxAutomaticRetries) {
+      setState(() {
+        _errorMessage = 'Avatar page could not load: $reason';
+      });
+      return;
+    }
+    _retryPending = true;
+    _retryCount++;
+    await Future<void>.delayed(Duration(milliseconds: 350 * _retryCount));
+    _retryPending = false;
+    if (!mounted || _ready) return;
+    await _loadAvatar();
   }
 
   Future<void> _loadAvatar() async {
@@ -109,9 +124,13 @@ class _JarvisHumanAvatarViewState
       await _controller.loadRequest(url);
     } on Object {
       if (!mounted) return;
-      setState(() {
-        _errorMessage = 'Bundled human avatar files could not be opened.';
-      });
+      if (_retryCount < _maxAutomaticRetries) {
+        unawaited(_retryMainPage('Bundled resources unavailable'));
+      } else {
+        setState(() {
+          _errorMessage = 'Bundled human avatar files could not be opened.';
+        });
+      }
     }
   }
 
@@ -185,40 +204,47 @@ class _JarvisHumanAvatarViewState
             child:
                 CircularProgressIndicator(),
           ),
-        if (_errorMessage != null)
+        if (_errorMessage != null && !_ready)
           Center(
             child: Card(
-              color: Colors.black87,
+              color: const Color(0xFF091522),
               child: Padding(
-                padding:
-                    const EdgeInsets.all(14),
+                padding: const EdgeInsets.all(16),
                 child: Column(
-                  mainAxisSize:
-                      MainAxisSize.min,
+                  mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
                     const Icon(
-                      Icons.warning_amber,
-                      color:
-                          Colors.amberAccent,
+                      Icons.person_outline_rounded,
+                      size: 88,
+                      color: Color(0xFF38E8FF),
                     ),
                     const SizedBox(height: 8),
                     const Text(
-                      'Human avatar runtime needs attention',
+                      'Jarvis visual standby',
                       style: TextStyle(
                         color: Colors.white,
-                        fontWeight:
-                            FontWeight.bold,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
                     const SizedBox(height: 6),
-                    Text(
-                      _errorMessage!,
-                      textAlign:
-                          TextAlign.center,
-                      style: const TextStyle(
-                        color:
-                            Colors.white70,
-                      ),
+                    const Text(
+                      'The detailed avatar is unavailable. '
+                      'Voice and chat remain independent.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white70),
+                    ),
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        setState(() {
+                          _errorMessage = null;
+                          _retryCount = 0;
+                          _ready = false;
+                        });
+                        unawaited(_loadAvatar());
+                      },
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: const Text('RETRY AVATAR'),
                     ),
                   ],
                 ),
