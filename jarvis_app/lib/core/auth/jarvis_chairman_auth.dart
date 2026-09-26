@@ -713,6 +713,67 @@ class _JarvisChairmanAuthGateState
                           ),
                         ),
                       ],
+                      const SizedBox(height: 18),
+                      const Divider(color: Colors.white24),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'SECURE EMAIL SIGN-IN',
+                        style: TextStyle(
+                          color: Color(0xFF38E8FF),
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1.1,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Google error 10? Use your existing verified Chairman email to activate remote JARVIS.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _submitting ? null : _requestEmailLogin,
+                          icon: const Icon(Icons.mark_email_unread_outlined),
+                          label: Text(_emailSent
+                              ? 'RESEND VERIFICATION EMAIL'
+                              : 'SEND VERIFICATION EMAIL'),
+                        ),
+                      ),
+                      if (_emailSent) ...<Widget>[
+                        const SizedBox(height: 8),
+                        const SelectableText(
+                          'Check the approved Chairman email. If it contains a link rather than a code, copy the complete sign-in link WITHOUT opening it, then paste it below.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        TextField(
+                          controller: _emailProofController,
+                          keyboardType: TextInputType.text,
+                          autocorrect: false,
+                          enableSuggestions: false,
+                          maxLines: 2,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: const InputDecoration(
+                            labelText: 'Email code or unused sign-in link',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: _submitting ? null : _submitEmailProof,
+                            icon: const Icon(Icons.verified_user_outlined),
+                            label: const Text('VERIFY EMAIL & OPEN JARVIS'),
+                          ),
+                        ),
+                      ],
                       if (_lastDiagnostic != null) ...<Widget>[
                         const SizedBox(height: 10),
                         SelectableText(
@@ -802,67 +863,6 @@ class _JarvisChairmanAuthGateState
                           ),
                         ),
                       ),
-                      const SizedBox(height: 18),
-                      const Divider(color: Colors.white24),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'SECURE EMAIL SIGN-IN',
-                        style: TextStyle(
-                          color: Color(0xFF38E8FF),
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 1.1,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      const Text(
-                        'Google error 10? Use your existing verified Chairman email to activate remote JARVIS.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.white70),
-                      ),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: _submitting ? null : _requestEmailLogin,
-                          icon: const Icon(Icons.mark_email_unread_outlined),
-                          label: Text(_emailSent
-                              ? 'RESEND VERIFICATION EMAIL'
-                              : 'SEND VERIFICATION EMAIL'),
-                        ),
-                      ),
-                      if (_emailSent) ...<Widget>[
-                        const SizedBox(height: 8),
-                        const SelectableText(
-                          'Check the approved Chairman email. If it contains a link rather than a code, copy the complete sign-in link WITHOUT opening it, then paste it below.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 12,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        TextField(
-                          controller: _emailProofController,
-                          keyboardType: TextInputType.text,
-                          autocorrect: false,
-                          enableSuggestions: false,
-                          maxLines: 2,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: const InputDecoration(
-                            labelText: 'Email code or unused sign-in link',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton.icon(
-                            onPressed: _submitting ? null : _submitEmailProof,
-                            icon: const Icon(Icons.verified_user_outlined),
-                            label: const Text('VERIFY EMAIL & OPEN JARVIS'),
-                          ),
-                        ),
-                      ],
                       const SizedBox(
                         height: 10,
                       ),
