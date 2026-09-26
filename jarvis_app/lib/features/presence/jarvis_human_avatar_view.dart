@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../realtime/jarvis_realtime_voice_service.dart';
+import 'jarvis_avatar_asset_server.dart';
 
 class JarvisHumanAvatarView
     extends StatefulWidget {
@@ -87,16 +88,32 @@ class _JarvisHumanAvatarViewState
               return;
             }
 
+            if (_ready) return;
+            final String failedResource =
+                Uri.tryParse(error.url ?? '')?.pathSegments.lastOrNull ?? '';
             setState(() {
-              _errorMessage =
-                  error.description;
+              _errorMessage = failedResource.isEmpty
+                  ? error.description
+                  : '${error.description} ($failedResource)';
             });
           },
         ),
       )
-      ..loadFlutterAsset(
-        'assets/avatar/jarvis_human_avatar.html',
-      );
+      ;
+
+    _loadAvatar();
+  }
+
+  Future<void> _loadAvatar() async {
+    try {
+      final Uri url = await JarvisAvatarAssetServer.avatarPage();
+      await _controller.loadRequest(url);
+    } on Object {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = 'Bundled human avatar files could not be opened.';
+      });
+    }
   }
 
   @override
