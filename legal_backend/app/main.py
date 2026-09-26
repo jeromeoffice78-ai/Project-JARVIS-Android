@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from .auth_google import auth_ready, issue_session, verify_google_chairman, verify_session
 from .auth_email import send_chairman_email, verify_chairman_email
+from .auth_password import verify_password_account
 from .web_portal import router as web_portal_router
 
 APP_NAME = "JARVIS Legal Enterprise API"
@@ -144,6 +145,11 @@ class GoogleAuthRequest(BaseModel):
 class EmailChallengeVerifyRequest(BaseModel):
     # Numeric OTP, or a full *unused* emailed Supabase sign-in link.
     proof: str = Field(min_length=6, max_length=2500)
+
+
+class PasswordAuthRequest(BaseModel):
+    # Android exchanges an authenticated Supabase token, never the password.
+    supabase_access_token: str = Field(min_length=100, max_length=10000)
 
 
 class AuthResponse(BaseModel):
@@ -1259,6 +1265,20 @@ async def google_auth(payload: GoogleAuthRequest) -> AuthResponse:
         subscription_exempt=True,
     )
 
+
+
+@app.post("/v1/auth/password", response_model=AuthResponse)
+async def password_auth(payload: PasswordAuthRequest) -> AuthResponse:
+    identity = await verify_password_account(payload.supabase_access_token)
+    access_token, expires_at = issue_session(identity)
+    return AuthResponse(
+        access_token=access_token,
+        expires_at=expires_at,
+        role="chairman",
+        display_name=identity.display_name,
+        email=identity.email,
+        subscription_exempt=True,
+    )
 
 
 @app.post("/v1/auth/email/start")
