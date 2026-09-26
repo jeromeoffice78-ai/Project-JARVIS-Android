@@ -300,11 +300,8 @@ class JarvisOverlayService : Service() {
 
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
-            settings.allowFileAccess = true
-            settings.allowContentAccess = true
-
             // ES modules and glTF are served by the app on 127.0.0.1.
-            // Disable broad file access; the avatar needs no device files.
+            // The WebView has no reason to load arbitrary device files.
             settings.allowFileAccess = false
             settings.allowContentAccess = false
 
