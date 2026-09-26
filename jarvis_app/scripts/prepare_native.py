@@ -250,6 +250,32 @@ def patch_manifest() -> None:
             1,
         )
 
+    # The bundled 3D avatar uses an app-only HTTP server on 127.0.0.1.
+    # Whitelist only localhost rather than enabling cleartext to the Internet.
+    if "android:networkSecurityConfig" not in text:
+        text = text.replace(
+            "    <application",
+            '    <application android:networkSecurityConfig="@xml/jarvis_avatar_network_security_config"',
+            1,
+        )
+
+    security_path = (
+        ROOT / "android" / "app" / "src" / "main" / "res" / "xml"
+        / "jarvis_avatar_network_security_config.xml"
+    )
+    security_path.parent.mkdir(parents=True, exist_ok=True)
+    security_path.write_text(
+        """<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>
+""",
+        encoding="utf-8",
+    )
+
     path.write_text(text, encoding="utf-8")
 
 
