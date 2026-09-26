@@ -8,7 +8,6 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 import 'jarvis_google_sign_in_diagnostics.dart';
-import 'jarvis_password_recovery.dart';
 
 final class JarvisAuthSession {
   JarvisAuthSession._();
@@ -29,6 +28,14 @@ final class JarvisAuthSession {
   // exposing bearer tokens through application UI or streams.
   static final ValueNotifier<int> sessionRevision =
       ValueNotifier<int>(0);
+
+  // Local use never requires sign-in. The user can explicitly request
+  // passwordless identity verification before using protected cloud features.
+  static final ValueNotifier<int> signInRequests = ValueNotifier<int>(0);
+
+  static void requestSignIn() {
+    signInRequests.value++;
+  }
 
   static void _sessionChanged() {
     sessionRevision.value++;
@@ -132,9 +139,11 @@ class _JarvisChairmanAuthGateState
         _googleServerClientId,
   );
 
-  bool _checking = true;
+  // Always open local Jarvis on startup. Account verification is optional
+  // until a feature requires owner-authenticated cloud access.
+  bool _checking = false;
   bool _authenticated = false;
-  bool _offlineMode = false;
+  bool _offlineMode = true;
   bool _submitting = false;
   bool _oauthConfigurationError = false;
   bool _emailSent = false;
@@ -145,11 +154,23 @@ class _JarvisChairmanAuthGateState
   @override
   void initState() {
     super.initState();
+    JarvisAuthSession.signInRequests.addListener(_onSignInRequested);
     _initialize();
+  }
+
+  void _onSignInRequested() {
+    if (!mounted || _authenticated) return;
+    setState(() {
+      _checking = false;
+      _offlineMode = false;
+      _error = null;
+      _lastDiagnostic = null;
+    });
   }
 
   @override
   void dispose() {
+    JarvisAuthSession.signInRequests.removeListener(_onSignInRequested);
     _emailProofController.dispose();
     _client.close();
     super.dispose();
@@ -815,7 +836,9 @@ class _JarvisChairmanAuthGateState
                         height: 18,
                       ),
                       const Text(
-                        'Sign in with the approved Chairman Google account to activate remote AI, voice, cloud-device and protected backend features.',
+                        'Jarvis runs locally without a password. For protected cloud '
+                          'features, connect your owner account using Google or '
+                          'secure email verification.',
                         textAlign:
                             TextAlign.center,
                         style: TextStyle(
@@ -843,23 +866,6 @@ class _JarvisChairmanAuthGateState
                       const SizedBox(height: 18),
                       const Divider(color: Colors.white24),
                       const SizedBox(height: 8),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: _submitting
-                              ? null
-                              : () => Navigator.of(context).push(
-                                    MaterialPageRoute<void>(
-                                      builder: (_) =>
-                                          const JarvisPasswordRecoveryPage(),
-                                    ),
-                                  ),
-                          icon: const Icon(Icons.lock_reset_rounded),
-                          label: const Text('FORGOT PASSWORD / RESET MY PASSWORD'),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
                       const Text(
                         'SECURE EMAIL SIGN-IN',
                         style: TextStyle(
@@ -1034,7 +1040,7 @@ class _JarvisChairmanAuthGateState
                           });
                         },
                         child: const Text(
-                          'CONTINUE WITH LOCAL FEATURES',
+                          'RETURN TO JARVIS — NO PASSWORD',
                         ),
                       ),
                     ],
