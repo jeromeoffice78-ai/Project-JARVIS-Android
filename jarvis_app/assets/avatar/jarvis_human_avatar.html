@@ -67,6 +67,13 @@
 (function(){
   const el=document.getElementById('backup-avatar');
   let shown=false;
+  // Floating overlays can deliver state before ES modules finish importing.
+  window.jarvisSetState=function(next){
+    if(next && typeof next==='object'){
+      window.__jarvisPendingState=next;
+      window.__jarvisAvatarBackup?.setState(next);
+    }
+  };
   window.__jarvisAvatarBackup={
     show:function(reason){
       if(shown)return;
@@ -530,10 +537,14 @@ window.jarvisSetState=(next)=>{
   if(!next||typeof next!=='object') return;
   Object.assign(state,next);
   window.__jarvisAvatarBackup?.setState(state);
+  window.__jarvisPendingState=next;
   if(next.active===true && !lastActive){
     root.visible=true;
   }
 };
+
+// Apply the state supplied while the module and 3D models were still loading.
+if(window.__jarvisPendingState)window.jarvisSetState(window.__jarvisPendingState);
 
 addEventListener('resize',()=>{
   camera.aspect=innerWidth/innerHeight;
