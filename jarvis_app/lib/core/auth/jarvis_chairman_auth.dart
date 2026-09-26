@@ -483,6 +483,19 @@ class _JarvisChairmanAuthGateState
       return;
     }
 
+    await _exchangeGoogleIdToken(
+      idToken,
+      fallbackEmail: account.email,
+      interactive: interactive,
+    );
+  }
+
+  Future<void> _exchangeGoogleIdToken(
+    String idToken, {
+    required String fallbackEmail,
+    required bool interactive,
+    bool fromNative = false,
+  }) async {
     try {
       final http.Response response =
           await _client
@@ -536,7 +549,7 @@ class _JarvisChairmanAuthGateState
             payload['email']
                     ?.toString()
                     .trim() ??
-                account.email;
+                fallbackEmail;
 
         if (token.isEmpty ||
             expiresAt.isEmpty) {
@@ -566,7 +579,7 @@ class _JarvisChairmanAuthGateState
         return;
       }
 
-      if (interactive) {
+      if (interactive && !fromNative) {
         await _google.signOut();
       }
 
