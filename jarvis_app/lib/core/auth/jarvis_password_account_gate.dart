@@ -489,8 +489,17 @@ class _JarvisPasswordAccountGateState
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: <Widget>[
-                      const Icon(
-                        Icons.memory, size: 54, color: Color(0xFF38E8FF),
+                      Center(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(24),
+                          child: Image.asset(
+                            'assets/branding/jarvis_ai_assistant_brand_icon.png',
+                            width: 132,
+                            height: 132,
+                            fit: BoxFit.cover,
+                            semanticLabel: 'JARVIS AI Assistant logo',
+                          ),
+                        ),
                       ),
                       const SizedBox(height: 12),
                       Text(
