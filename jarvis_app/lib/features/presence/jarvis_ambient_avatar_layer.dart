@@ -57,6 +57,9 @@ class _JarvisAmbientAvatarLayerState
     const double avatarWidth = 155;
     const double avatarHeight = 270;
     const double margin = 8;
+    // The ambient character sits above the chat composer, not on top of
+    // the microphone, Send control or the bottom navigation buttons.
+    const double chatComposerReserve = 106;
 
     final double maxX =
         (constraints.maxWidth -
@@ -70,6 +73,7 @@ class _JarvisAmbientAvatarLayerState
     final double maxY =
         (constraints.maxHeight -
                 avatarHeight -
+                chatComposerReserve -
                 margin)
             .clamp(
               margin,
