@@ -18,6 +18,7 @@ final class JarvisAvatarAssetServer {
 
   static const Set<String> _bundledAssets = <String>{
     'assets/avatar/jarvis_human_avatar.html',
+    'assets/branding/jarvis_ai_assistant_brand_icon.png',
     'assets/vendor/three/three.module.js',
     'assets/vendor/three/addons/loaders/GLTFLoader.js',
     'assets/vendor/three/addons/utils/BufferGeometryUtils.js',
