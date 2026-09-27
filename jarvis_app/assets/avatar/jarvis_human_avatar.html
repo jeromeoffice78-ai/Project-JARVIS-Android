@@ -89,7 +89,7 @@
       if(shown)return;
       shown=true;backupReason=String(reason||'3D loading delay').slice(0,160);
       el.classList.add('visible');
-      document.getElementById('status').textContent='JARVIS visual standby · 3D retry available';
+      document.getElementById('status').textContent='JARVIS VISUAL STANDBY';
       window.JarvisAvatar?.postMessage(JSON.stringify({
         type:'fallback',mode:'branded-visual',reason:backupReason
       }));
