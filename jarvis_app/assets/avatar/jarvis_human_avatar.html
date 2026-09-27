@@ -133,13 +133,15 @@ const camera = new THREE.PerspectiveCamera(31, innerWidth/innerHeight, .01, 100)
 camera.position.set(0, 1.55, 4.5);
 camera.lookAt(0, 1.2, 0);
 
-const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true, powerPreference:'high-performance'});
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+// Favor compatible settings on midrange Android phones; the full human
+// meshes already carry their own surface detail, so MSAA is optional.
+const renderer = new THREE.WebGLRenderer({antialias:false, alpha:true, powerPreference:'default'});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
 renderer.setSize(innerWidth, innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.12;
-renderer.shadowMap.enabled = true;
+renderer.shadowMap.enabled = false;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 
@@ -437,11 +439,20 @@ function buildSimplified3DHuman(){
 }
 async function load(){
   try{
-    const [b,h,hr]=await Promise.all([
-      loader.loadAsync(asset('vitruvian_body.glb')),
-      loader.loadAsync(asset('vitruvian_head.glb')),
-      loader.loadAsync(asset('hairtool_cards.glb'))
-    ]);
+    // Avoid decoding three large models simultaneously in Android WebView.
+    // These assets total >30 MB before meshes are expanded in GPU memory.
+    let stage='body';
+    let b,h,hr;
+    try{
+      b=await loader.loadAsync(asset('vitruvian_body.glb'));
+      stage='head';
+      h=await loader.loadAsync(asset('vitruvian_head.glb'));
+      stage='hair';
+      hr=await loader.loadAsync(asset('hairtool_cards.glb'));
+    }catch(modelError){
+      throw new Error('Unable to load '+stage+' model: '+
+        String(modelError?.message||modelError));
+    }
     body=b.scene; head=h.scene; hair=hr.scene;
     configureBody(body); configureHead(head); configureHair(hair);
     root.add(body);
