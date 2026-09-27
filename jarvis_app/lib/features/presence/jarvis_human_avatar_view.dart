@@ -13,10 +13,12 @@ class JarvisHumanAvatarView
     super.key,
     required this.voiceState,
     required this.active,
+    this.showRecoveryControls = false,
   });
 
   final JarvisRealtimeVoiceState voiceState;
   final bool active;
+  final bool showRecoveryControls;
 
   @override
   State<JarvisHumanAvatarView> createState() =>
@@ -27,6 +29,8 @@ class _JarvisHumanAvatarViewState
     extends State<JarvisHumanAvatarView> {
   late final WebViewController _controller;
   bool _ready = false;
+  bool _fallbackMode = false;
+  String? _avatarDiagnostic;
   String? _errorMessage;
   int _retryCount = 0;
   bool _retryPending = false;
@@ -64,10 +68,27 @@ class _JarvisHumanAvatarViewState
               if (mounted) {
                 setState(() {
                   _ready = true;
+                  _fallbackMode = data['mode'] == 'simplified-3d';
                   _errorMessage = null;
                 });
               }
               _pushState();
+            } else if (data['type'] == 'fallback') {
+              if (mounted) {
+                setState(() {
+                  _ready = true;
+                  _fallbackMode = true;
+                  _avatarDiagnostic = data['reason']?.toString();
+                  _errorMessage = null;
+                });
+              }
+              _pushState();
+            } else if (data['type'] == 'diagnostic') {
+              if (mounted) {
+                setState(() {
+                  _avatarDiagnostic = data['message']?.toString();
+                });
+              }
             } else if (data['type'] ==
                 'error') {
               if (mounted) {
@@ -245,6 +266,59 @@ class _JarvisHumanAvatarViewState
                       },
                       icon: const Icon(Icons.refresh_rounded),
                       label: const Text('RETRY AVATAR'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        if (_fallbackMode && widget.showRecoveryControls)
+          Positioned(
+            top: 10,
+            left: 10,
+            right: 10,
+            child: Material(
+              borderRadius: BorderRadius.circular(12),
+              color: const Color(0xE30B1824),
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    const Text(
+                      '3D model not available — branded visual standby',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (_avatarDiagnostic?.isNotEmpty == true) ...<Widget>[
+                      const SizedBox(height: 4),
+                      Text(
+                        _avatarDiagnostic!,
+                        textAlign: TextAlign.center,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                    TextButton.icon(
+                      onPressed: () {
+                        setState(() {
+                          _ready = false;
+                          _fallbackMode = false;
+                          _avatarDiagnostic = null;
+                          _errorMessage = null;
+                          _retryCount = 0;
+                        });
+                        unawaited(_loadAvatar());
+                      },
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('TRY FULL 3D AGAIN'),
                     ),
                   ],
                 ),
