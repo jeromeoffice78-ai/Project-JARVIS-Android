@@ -20,7 +20,15 @@ void main() {
     expect(html, contains('three.module.js'));
     expect(html, contains('buildSimplified3DHuman'));
     expect(html, contains('__jarvisAvatarBackup'));
+    expect(html, contains('jarvis_ai_assistant_brand_icon.png'));
+    expect(html, contains("type:'fallback'"));
     expect(html, contains('jarvisSetState'));
+    // Android's larger model files should parse sequentially to reduce
+    // cold-start peak memory; diagnostic stages identify the failing file.
+    expect(html.indexOf("b=await loader.loadAsync("),
+      lessThan(html.indexOf("h=await loader.loadAsync(")));
+    expect(html.indexOf("h=await loader.loadAsync("),
+      lessThan(html.indexOf("hr=await loader.loadAsync(")));
 
     // A raw loopback socket is intentionally used: flutter_test overrides
     // HttpClient and can return artificial 400s unrelated to this asset server.
@@ -50,6 +58,7 @@ void main() {
   test('avatar model and JavaScript module assets are present in bundle',
       () async {
     for (final String name in <String>[
+      'assets/branding/jarvis_ai_assistant_brand_icon.png',
       'assets/vendor/three/three.module.js',
       'assets/vendor/three/addons/loaders/GLTFLoader.js',
       'assets/vendor/three/addons/utils/BufferGeometryUtils.js',
