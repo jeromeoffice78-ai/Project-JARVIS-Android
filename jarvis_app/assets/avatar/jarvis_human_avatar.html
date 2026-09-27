@@ -11,7 +11,9 @@
     #backup-avatar{display:none;position:absolute;inset:0;overflow:hidden;pointer-events:none;
       perspective:850px;align-items:center;justify-content:center;background:transparent}
     #backup-avatar.visible{display:flex}
-    #backup-avatar .person{width:140px;height:255px;transform-style:preserve-3d;
+    #backup-avatar .brand{display:block;width:min(142px,94%);height:auto;max-height:72%;object-fit:contain;
+      border-radius:22px;filter:drop-shadow(0 0 15px #2db4ff90);animation:jarvis-presence 5s ease-in-out infinite}
+    #backup-avatar .person{display:none;width:140px;height:255px;transform-style:preserve-3d;
       animation:jarvis-presence 5s ease-in-out infinite;position:relative;filter:drop-shadow(0 13px 15px #0009)}
     #backup-avatar .head{position:absolute;left:46px;top:11px;width:50px;height:63px;
       border-radius:43% 43% 46% 46%;background:radial-gradient(ellipse at 30% 25%,#d0a788,#8a5f48 74%,#543728);
@@ -52,21 +54,29 @@
 </head>
 <body>
 <div id="status">Loading human JARVIS…</div>
-<div id="backup-avatar" aria-label="JARVIS simplified offline avatar">
+<div id="backup-avatar" aria-label="JARVIS offline visual standby">
+  <img id="jarvis-brand-backup" class="brand"
+    src="../branding/jarvis_ai_assistant_brand_icon.png" alt="JARVIS AI Assistant logo"/>
   <div class="person">
     <div class="torso"></div><div class="arm left"></div><div class="arm right"></div>
     <div class="leg left"></div><div class="leg right"></div>
     <div class="head"></div><div class="hair"></div><div class="eye left"></div>
     <div class="eye right"></div><div class="mouth"></div>
   </div>
-  <div class="caption">JARVIS · simplified offline avatar</div>
+  <div class="caption">JARVIS · visual standby</div>
 </div>
 <script>
 // Emergency visual backup: does not depend on the network, ES module support,
 // GPU shaders, 3D model files, or the companion device-cloud connection.
 (function(){
   const el=document.getElementById('backup-avatar');
+  const image=document.getElementById('jarvis-brand-backup');
+  image.addEventListener('error',()=>{
+    image.style.display='none';
+    el.querySelector('.person').style.display='block';
+  });
   let shown=false;
+  let backupReason='';
   // Floating overlays can deliver state before ES modules finish importing.
   window.jarvisSetState=function(next){
     if(next && typeof next==='object'){
@@ -77,9 +87,12 @@
   window.__jarvisAvatarBackup={
     show:function(reason){
       if(shown)return;
-      shown=true;el.classList.add('visible');
-      document.getElementById('status').textContent='JARVIS offline avatar active';
-      window.JarvisAvatar?.postMessage(JSON.stringify({type:'ready',mode:'simplified-fallback'}));
+      shown=true;backupReason=String(reason||'3D loading delay').slice(0,160);
+      el.classList.add('visible');
+      document.getElementById('status').textContent='JARVIS visual standby · 3D retry available';
+      window.JarvisAvatar?.postMessage(JSON.stringify({
+        type:'fallback',mode:'branded-visual',reason:backupReason
+      }));
     },
     hide:function(){shown=false;el.classList.remove('visible');},
     setState:function(value){
@@ -87,13 +100,25 @@
       el.style.opacity=value?.active===false?'0.18':'1';
     }
   };
+  // Large on-device GLB files can take >18 seconds to parse on a phone.
+  // Present the approved lightweight brand art without treating that as
+  // proof that the detailed renderer has failed.
   window.__jarvisAvatarWatchdog=setTimeout(()=>{
-    if(!window.__jarvisDetailedModelReady)window.__jarvisAvatarBackup.show('render timeout');
+    if(!window.__jarvisDetailedModelReady)window.__jarvisAvatarBackup.show('3D loading slowly');
   },18000);
+  addEventListener('unhandledrejection',event=>{
+    if(!window.__jarvisDetailedModelReady){
+      const msg=String(event.reason?.message||event.reason||'JavaScript rejected').slice(0,160);
+      window.JarvisAvatar?.postMessage(JSON.stringify({type:'diagnostic',message:msg}));
+    }
+  });
   addEventListener('error',function(event){
     const name=event.filename||event.target?.src||'';
     if(!window.__jarvisDetailedModelReady && (/three\.module|GLTFLoader|WebGL/.test(name))) {
-      window.__jarvisAvatarBackup.show('3D renderer unavailable');
+      window.JarvisAvatar?.postMessage(JSON.stringify({
+        type:'diagnostic',message:'3D module failed: '+String(name).slice(0,140)
+      }));
+      window.__jarvisAvatarBackup.show('3D module load failed');
     }
   },true);
 })();
@@ -458,6 +483,9 @@ async function load(){
     window.JarvisAvatar?.postMessage(JSON.stringify({type:'ready'}));
   }catch(e){
     console.error(e);
+    window.JarvisAvatar?.postMessage(JSON.stringify({
+      type:'diagnostic',message:String(e?.message||e).slice(0,160)
+    }));
     try {
       buildSimplified3DHuman();
     } catch(fallbackError) {
