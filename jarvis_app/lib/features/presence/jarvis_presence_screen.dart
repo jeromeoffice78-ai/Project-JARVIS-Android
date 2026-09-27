@@ -93,6 +93,7 @@ class JarvisPresenceScreen
                 JarvisHumanAvatarView(
                   voiceState: voice,
                   active: jarvisHere,
+                  showRecoveryControls: true,
                 ),
                 IgnorePointer(
                   child: DecoratedBox(
