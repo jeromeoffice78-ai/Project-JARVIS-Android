@@ -422,79 +422,57 @@ class JarvisVoiceController {
   Future<void> _handleChatState(
     JarvisChatState state,
   ) async {
-    if (_disposed) {
-      return;
-    }
+    if (_disposed) return;
 
-    final String? voiceRequestId =
-        _voiceRequestId;
+    final String? requestId = state.requestId;
+    if (requestId == null || requestId.isEmpty) return;
 
-    if (voiceRequestId == null ||
-        state.requestId != voiceRequestId) {
-      return;
-    }
+    final bool isVoiceRequest = requestId == _voiceRequestId;
 
-    if (state.status ==
-        JarvisChatStatus.completed) {
-      if (_lastSpokenRequestId ==
-          voiceRequestId) {
-        return;
+    if (state.status == JarvisChatStatus.completed) {
+      // Both the Chat tab and spoken commands use JarvisChatController.
+      // Speaking only _voiceRequestId silently discarded *all typed chat
+      // answers*, despite the "Spoken Replies" switch being enabled.
+      if (_lastSpokenRequestId == requestId) return;
+      _lastSpokenRequestId = requestId;
+
+      final int generation = _conversationGeneration;
+      if (_spokenReplies && state.responseText.trim().isNotEmpty) {
+        // An armed wake word must not hear Jarvis reading its own reply.
+        if (_voiceService.isListening) {
+          await _voiceService.cancelListening();
+        }
+        if (!_disposed && generation == _conversationGeneration) {
+          await _voiceService.speak(state.responseText);
+        }
       }
 
-      _lastSpokenRequestId =
-          voiceRequestId;
-
-      final int generation =
-          _conversationGeneration;
-
-      if (_spokenReplies &&
-          state.responseText
-              .trim()
-              .isNotEmpty) {
-        await _voiceService.speak(
-          state.responseText,
-        );
-      }
-
-      if (_voiceRequestId ==
-          voiceRequestId) {
+      if (isVoiceRequest && _voiceRequestId == requestId) {
         _voiceRequestId = null;
       }
 
-      final bool shouldRelisten =
-          _handsFree || _wakeWordMode;
-
+      // Hands-free conversations resume after either a typed or spoken
+      // answer. In ordinary Chat mode there is nothing to re-arm.
       if (_disposed ||
-          !shouldRelisten ||
-          generation !=
-              _conversationGeneration) {
+          !(_handsFree || _wakeWordMode) ||
+          generation != _conversationGeneration) {
         return;
       }
 
-      await Future<void>.delayed(
-        const Duration(
-          milliseconds: 450,
-        ),
-      );
-
+      await Future<void>.delayed(const Duration(milliseconds: 450));
       if (_disposed ||
-          !(_handsFree ||
-              _wakeWordMode) ||
-          generation !=
-              _conversationGeneration) {
+          !(_handsFree || _wakeWordMode) ||
+          generation != _conversationGeneration ||
+          _voiceService.isListening) {
         return;
       }
-
       await _voiceService.startListening();
       return;
     }
 
-    if (state.status ==
-            JarvisChatStatus.error ||
-        state.status ==
-            JarvisChatStatus.cancelled) {
-      _voiceRequestId = null;
-
+    if (state.status == JarvisChatStatus.error ||
+        state.status == JarvisChatStatus.cancelled) {
+      if (isVoiceRequest) _voiceRequestId = null;
       if (_wakeWordMode || _handsFree) {
         _scheduleListenRestart();
       }
