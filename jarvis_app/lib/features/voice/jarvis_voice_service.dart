@@ -307,10 +307,27 @@ class JarvisVoiceService {
     _emitError(null);
 
     try {
-      await _tts.speak(
+      // Android may recognize speech but hold its media session inactive.
+      // Activate the audio route before speaking so playback isn't silently
+      // lost when returning from the speech-recognition microphone.
+      final AudioSession session =
+          _audioSession ?? await AudioSession.instance;
+      _audioSession = session;
+      final bool audioActive = await session.setActive(true);
+      if (!audioActive) {
+        _emitError(
+          'Android did not grant audio focus. Check media volume, '
+          'Bluetooth output, and other apps playing sound.',
+        );
+      }
+
+      final dynamic playbackResult = await _tts.speak(
         normalized,
         focus: true,
       );
+      if (playbackResult is num && playbackResult == 0) {
+        throw StateError('Android text-to-speech engine declined playback.');
+      }
 
       if (!_disposed &&
           _state == JarvisVoiceState.speaking) {
