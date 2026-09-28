@@ -1753,7 +1753,9 @@ async def phone_receptionist_status(
     return PhoneReceptionistStatus(
         configured=False,
         provider="vapi" if vapi_issue else "openai_sip",
-        phone_number="",
+        # Report the operator's planned SIP number, but keep configured=False
+        # until an actual inbound route has been verified.
+        phone_number="" if vapi_issue else RECEPTIONIST_NUMBER,
         active_calls=0,
         detail=vapi_issue or (
             "AI phone service is not ready. Connect a real Vapi phone "
