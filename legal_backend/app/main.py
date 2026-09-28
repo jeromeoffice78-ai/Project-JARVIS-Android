@@ -192,6 +192,8 @@ class HealthResponse(BaseModel):
     model: str
     ai_configured: bool
     ai_provider: str
+    frontier_text_configured: bool
+    frontier_text_provider: str
     chairman_auth_configured: bool
     google_chairman_auth_configured: bool
     client_auth_configured: bool
@@ -1246,6 +1248,19 @@ async def health() -> HealthResponse:
         model=getattr(app.state, "ai_model", GATEWAY_MODEL),
         ai_configured=getattr(app.state, "openai", None) is not None,
         ai_provider=getattr(app.state, "ai_provider", "unconfigured"),
+        frontier_text_configured=(
+            getattr(app.state, "frontier_openai", None) is not None
+            or getattr(app.state, "openai", None) is not None
+        ),
+        frontier_text_provider=(
+            "openai-frontier"
+            if getattr(app.state, "frontier_openai", None) is not None
+            else (
+                getattr(app.state, "ai_provider", "unconfigured")
+                if getattr(app.state, "openai", None) is not None
+                else "unconfigured"
+            )
+        ),
         chairman_auth_configured=bool(CHAIRMAN_TOKEN) or auth_ready(),
         google_chairman_auth_configured=auth_ready(),
         client_auth_configured=bool(CLIENT_TOKEN),
