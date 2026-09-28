@@ -466,20 +466,28 @@ class MainActivity : FlutterFragmentActivity() {{
                     val enabled = call.argument<Boolean>("enabled") ?: false
                     result.success(JarvisInCallService.setSpeakerEnabled(enabled))
                 }}
+                "hasCellularVoiceBridge" -> {{
+                    // InCallService gives call-control access, not a full-duplex
+                    // PCM/audio path. Never claim the spoken receptionist
+                    // can take messages on the handset until that path exists.
+                    result.success(false)
+                }}
                 "setAutoAnswer" -> {{
                     val enabled = call.argument<Boolean>("enabled") ?: false
-                    getSharedPreferences(prefsName, Context.MODE_PRIVATE)
-                        .edit()
-                        .putBoolean("auto_answer", enabled)
-                        .apply()
-                    result.success(true)
+                    if (enabled) {{
+                        result.success(false)
+                    }} else {{
+                        getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+                            .edit()
+                            .putBoolean("auto_answer", false)
+                            .apply()
+                        result.success(true)
+                    }}
                 }}
                 "getAutoAnswer" -> {{
-                    val enabled = getSharedPreferences(
-                        prefsName,
-                        Context.MODE_PRIVATE,
-                    ).getBoolean("auto_answer", false)
-                    result.success(enabled)
+                    // Invalidate older auto-answer preferences that could
+                    // connect incoming calls without speaking to the caller.
+                    result.success(false)
                 }}
                 "setGreeting" -> {{
                     val greeting = call.argument<String>("greeting")?.trim().orEmpty()
@@ -1249,10 +1257,9 @@ class JarvisInCallService : InCallService() {{
 
         showIncomingCallNotification(number)
 
-        val autoAnswer = getSharedPreferences(
-            prefsName,
-            Context.MODE_PRIVATE,
-        ).getBoolean("auto_answer", false)
+        val prefs = getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+        val autoAnswer = prefs.getBoolean("auto_answer", false) &&
+            prefs.getBoolean("cellular_audio_bridge_verified", false)
 
         if (autoAnswer && call.state == Call.STATE_RINGING) {{
             try {{
