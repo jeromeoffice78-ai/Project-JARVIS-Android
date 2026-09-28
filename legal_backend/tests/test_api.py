@@ -47,7 +47,27 @@ def test_groq_free_provider_takes_priority(monkeypatch):
     client, provider, model = api._build_ai_client()
     assert client is not None
     assert provider == "groq-free-tier"
-    assert model == "llama-3.3-70b-versatile"
+    assert model == "openai/gpt-oss-120b"
+
+
+def test_deprecated_groq_environment_models_are_migrated():
+    assert (
+        api._current_groq_model("llama-3.3-70b-versatile")
+        == "openai/gpt-oss-120b"
+    )
+    assert (
+        api._current_groq_model("llama-3.1-8b-instant")
+        == "openai/gpt-oss-20b"
+    )
+    assert (
+        api._current_groq_model("qwen/qwen3.6-27b")
+        == "qwen/qwen3.8-27b"
+    )
+    assert api._current_groq_model("") == "openai/gpt-oss-120b"
+    assert (
+        api._current_groq_model("openai/gpt-oss-120b")
+        == "openai/gpt-oss-120b"
+    )
 
 
 
