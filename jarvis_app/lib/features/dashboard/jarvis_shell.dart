@@ -8,7 +8,6 @@ import '../../core/network/jarvis_ws_service.dart';
 import '../../core/network/providers.dart';
 import '../chat/jarvis_chat_controller.dart';
 import '../chat/jarvis_chat_screen.dart';
-import '../chat/jarvis_chat_controller.dart';
 import '../autonomy/jarvis_autonomy_screen.dart';
 import '../capabilities/jarvis_action_approval_service.dart';
 import '../devices/jarvis_devices_screen.dart';
@@ -216,8 +215,12 @@ class _JarvisShellState
         ref.watch(jarvisChatStateProvider);
     final JarvisChatState chatState = chatSnapshot.valueOrNull ??
         ref.watch(jarvisChatControllerProvider).state;
-    final bool chatIsShowingAnError =
-        chatState.status == JarvisChatStatus.error;
+    // The floating avatar must never obscure a live or completed answer,
+    // thinking state, or backend error. Full-screen animation is always
+    // available from the Jarvis Presence button in the app bar.
+    final bool chatHasVisibleConversation =
+        chatState.status != JarvisChatStatus.idle ||
+        chatState.responseText.trim().isNotEmpty;
     final bool keyboardIsOpen =
         MediaQuery.viewInsetsOf(context).bottom > 0;
 
@@ -355,7 +358,7 @@ class _JarvisShellState
           // Keep the message and any error fully legible. The roaming
           // character returns automatically when the keyboard is dismissed
           // and the next conversation begins.
-          if (_index == 0 && !keyboardIsOpen && !chatIsShowingAnError)
+          if (_index == 0 && !keyboardIsOpen && !chatHasVisibleConversation)
             const Positioned.fill(
               child: JarvisAmbientAvatarLayer(),
             ),
