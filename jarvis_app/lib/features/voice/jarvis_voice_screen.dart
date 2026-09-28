@@ -23,6 +23,9 @@ class _JarvisVoiceScreenState
   bool _wakeWord = false;
   bool _spokenReplies = true;
   bool _loadingDevices = false;
+  bool _testingSpeaker = false;
+  bool _testingMicrophone = false;
+  String? _testResult;
   final TextEditingController
       _wakePassController =
       TextEditingController(
@@ -34,6 +37,72 @@ class _JarvisVoiceScreenState
   void initState() {
     super.initState();
     Future<void>.microtask(_refreshDevices);
+  }
+
+  Future<void> _testSpeaker(JarvisVoiceService service) async {
+    if (_testingSpeaker) return;
+    setState(() {
+      _testingSpeaker = true;
+      _testResult = 'Testing Jarvis on the selected audio output...';
+    });
+    try {
+      await service.speak(
+        'Hello. I am Jarvis. This is your local speaker test.',
+      );
+      if (!mounted) return;
+      setState(() {
+        _testResult = service.lastError ??
+            'Speaker test finished. Did you hear the voice? '
+                'If not, check media volume and Bluetooth output.';
+      });
+    } on Object catch (error) {
+      if (mounted) {
+        setState(() => _testResult = 'Speaker test failed: $error');
+      }
+    } finally {
+      if (mounted) setState(() => _testingSpeaker = false);
+    }
+  }
+
+  Future<void> _testMicrophone(
+    JarvisVoiceController controller,
+    JarvisVoiceService service,
+  ) async {
+    if (_testingMicrophone) return;
+    setState(() {
+      _testingMicrophone = true;
+      _testResult = 'Checking Android speech recognition and microphone...';
+    });
+    try {
+      final bool ready = await controller.initialize();
+      if (!ready) {
+        if (mounted) {
+          setState(() {
+            _testResult = service.lastError ??
+                'Microphone or speech recognition is unavailable. '
+                    'In Android Settings, grant Jarvis Microphone permission '
+                    'and check that a speech-recognition service is installed.';
+          });
+        }
+        return;
+      }
+      await controller.startPushToTalk();
+      if (!mounted) return;
+      setState(() {
+        _testResult = service.isListening
+            ? 'Microphone active. Speak now, then tap STOP on the large '
+                'microphone. Your recognized words appear below.'
+            : (service.lastError ??
+                'Microphone did not begin listening. '
+                    'Check Jarvis Microphone permission.');
+      });
+    } on Object catch (error) {
+      if (mounted) {
+        setState(() => _testResult = 'Microphone test failed: $error');
+      }
+    } finally {
+      if (mounted) setState(() => _testingMicrophone = false);
+    }
   }
 
   Future<void> _saveWakePass(
@@ -118,6 +187,94 @@ class _JarvisVoiceScreenState
               padding: const EdgeInsets.all(18),
               children: <Widget>[
                 _StatusCard(state: voiceState),
+                StreamBuilder<String?>(
+                  stream: service.errorStream,
+                  initialData: service.lastError,
+                  builder: (context, errorSnapshot) {
+                    final String? diagnostic =
+                        errorSnapshot.data ?? service.lastError;
+                    if (diagnostic == null || diagnostic.isEmpty) {
+                      return const SizedBox.shrink();
+                    }
+                    return Card(
+                      color: const Color(0xFF362611),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: SelectableText(
+                          'VOICE DIAGNOSTIC: $diagnostic\n\n'
+                          'If microphone access was denied, open Android '
+                          'Settings → Apps → JARVIS AI Assistant → '
+                          'Permissions → Microphone → Allow while using.',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: <Widget>[
+                        const Text(
+                          'TEST JARVIS VOICE',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Test your speaker and microphone separately. '
+                          'This identifies why Jarvis may not respond.',
+                        ),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: <Widget>[
+                            FilledButton.tonalIcon(
+                              onPressed: _testingSpeaker
+                                  ? null
+                                  : () => unawaited(_testSpeaker(service)),
+                              icon: const Icon(Icons.volume_up),
+                              label: const Text('TEST SPEAKER'),
+                            ),
+                            FilledButton.tonalIcon(
+                              onPressed: _testingMicrophone
+                                  ? null
+                                  : () => unawaited(
+                                        _testMicrophone(controller, service),
+                                      ),
+                              icon: const Icon(Icons.mic),
+                              label: const Text('TEST MICROPHONE'),
+                            ),
+                            OutlinedButton.icon(
+                              onPressed: () {
+                                final String? request =
+                                    controller.submitVoiceCommand(
+                                  'Reply with a short confirmation that '
+                                  'the Jarvis command and voice test works.',
+                                );
+                                setState(() {
+                                  _testResult = request == null
+                                      ? 'Command could not be submitted.'
+                                      : 'Command submitted. Check the text '
+                                          'response below; spoken replies '
+                                          'should read it aloud.';
+                                });
+                              },
+                              icon: const Icon(Icons.chat_outlined),
+                              label: const Text('TEST COMMAND'),
+                            ),
+                          ],
+                        ),
+                        if (_testResult != null) ...<Widget>[
+                          const SizedBox(height: 10),
+                          SelectableText(_testResult!),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 12),
                 Card(
                   child: ListTile(
@@ -337,13 +494,19 @@ class _JarvisVoiceScreenState
                   builder: (context, chatSnapshot) {
                     final JarvisChatState state =
                         chatSnapshot.data ?? chat.state;
-                    if (state.responseText.trim().isEmpty) {
+                    if (state.responseText.trim().isEmpty &&
+                        (state.errorMessage == null ||
+                            state.errorMessage!.trim().isEmpty)) {
                       return const SizedBox.shrink();
                     }
                     return Card(
                       child: Padding(
                         padding: const EdgeInsets.all(16),
-                        child: SelectableText(state.responseText),
+                        child: SelectableText(
+                          state.errorMessage?.trim().isNotEmpty == true
+                              ? 'JARVIS COMMAND ERROR: ${state.errorMessage}'
+                              : state.responseText,
+                        ),
                       ),
                     );
                   },
