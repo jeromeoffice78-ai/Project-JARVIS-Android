@@ -210,6 +210,15 @@ class _JarvisShellState
                 .read(jarvisWsServiceProvider)
                 .currentState;
 
+    final AsyncValue<JarvisChatState> chatSnapshot =
+        ref.watch(jarvisChatStateProvider);
+    final JarvisChatState chatState = chatSnapshot.valueOrNull ??
+        ref.watch(jarvisChatControllerProvider).state;
+    final bool chatIsShowingAnError =
+        chatState.status == JarvisChatStatus.error;
+    final bool keyboardIsOpen =
+        MediaQuery.viewInsetsOf(context).bottom > 0;
+
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 16,
@@ -341,7 +350,10 @@ class _JarvisShellState
           ),
           // The roaming avatar should not cover microphone, diagnostics, or
           // other interactive controls on the Voice and settings tabs.
-          if (_index == 0)
+          // Keep the message and any error fully legible. The roaming
+          // character returns automatically when the keyboard is dismissed
+          // and the next conversation begins.
+          if (_index == 0 && !keyboardIsOpen && !chatIsShowingAnError)
             const Positioned.fill(
               child: JarvisAmbientAvatarLayer(),
             ),
