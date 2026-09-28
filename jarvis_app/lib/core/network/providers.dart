@@ -236,6 +236,13 @@ final jarvisChatControllerProvider =
   return controller;
 });
 
+final jarvisChatStateProvider =
+    StreamProvider<JarvisChatState>(
+  (Ref ref) {
+    return ref.watch(jarvisChatControllerProvider).stateStream;
+  },
+);
+
 final jarvisAutonomyControllerProvider =
     Provider<JarvisAutonomyController>((Ref ref) {
   final JarvisAutonomyController controller =
