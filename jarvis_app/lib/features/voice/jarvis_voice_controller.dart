@@ -5,6 +5,22 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../chat/jarvis_chat_controller.dart';
 import 'jarvis_voice_service.dart';
 
+/// Applies to every completed Jarvis answer, including typed Chat requests.
+/// Does not attempt to read partial streams or errors aloud.
+bool shouldSpeakJarvisChatResponse(
+  JarvisChatState state, {
+  required bool spokenReplies,
+  required String? lastSpokenRequestId,
+}) {
+  final String? requestId = state.requestId;
+  return spokenReplies &&
+      state.status == JarvisChatStatus.completed &&
+      requestId != null &&
+      requestId.isNotEmpty &&
+      requestId != lastSpokenRequestId &&
+      state.responseText.trim().isNotEmpty;
+}
+
 class JarvisVoiceController {
   static const String _wakePassKey =
       'jarvis.voice.wake_pass';
@@ -433,9 +449,11 @@ class JarvisVoiceController {
       // Spoken Replies applies to *both* typed Chat messages and microphone
       // commands. The previous implementation silently discarded completions
       // unless they came from the microphone, leaving text chat mute.
-      if (_spokenReplies &&
-          state.responseText.trim().isNotEmpty &&
-          _lastSpokenRequestId != requestId) {
+      if (shouldSpeakJarvisChatResponse(
+        state,
+        spokenReplies: _spokenReplies,
+        lastSpokenRequestId: _lastSpokenRequestId,
+      )) {
         _lastSpokenRequestId = requestId;
         await _voiceService.speak(state.responseText);
       }
