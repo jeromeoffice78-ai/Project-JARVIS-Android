@@ -2314,11 +2314,6 @@ async def frontier_query(
     authenticated_role: Annotated[str, Depends(authenticate_request)] = "client",
 ) -> FrontierQueryResponse:
     client: AsyncOpenAI | None = getattr(app.state, "frontier_openai", None)
-    if client is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Frontier AI requires OPENAI_API_KEY on the server.",
-        )
 
     mode = payload.mode.strip().lower()
     if mode not in {"reason", "research", "code"}:
@@ -2373,6 +2368,72 @@ async def frontier_query(
                 ],
             }
         ]
+
+    # The Android Chat and Voice tabs both call this endpoint. A Groq or
+    # Vercel chat provider can answer ordinary text queries even when OpenAI
+    # Responses API credentials are not configured. Keep special OpenAI
+    # research/code/vision capabilities explicit rather than silently claiming
+    # that a text-only provider performed them.
+    if client is None:
+        general_client: AsyncOpenAI | None = getattr(app.state, "openai", None)
+        if general_client is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="JARVIS AI provider is not configured on the server.",
+            )
+        if mode == "research":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Live web research requires a provider with a web-search tool.",
+            )
+        if mode == "code":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Code execution requires a provider with a code-interpreter tool.",
+            )
+        if image_url:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Camera analysis requires a compatible vision provider.",
+            )
+        general_model = getattr(app.state, "ai_model", GROQ_MODEL)
+        try:
+            completion = await general_client.chat.completions.create(
+                model=general_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            instructions
+                            + " Answer ordinary conversation naturally and "
+                            "concisely for voice playback. Do not claim to "
+                            "have used web search, code execution, a camera, "
+                            "or any device tool that was not actually run."
+                        ),
+                    },
+                    {"role": "user", "content": payload.prompt.strip()},
+                ],
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"JARVIS AI provider request failed: {type(exc).__name__}",
+            ) from exc
+        choices = getattr(completion, "choices", None) or []
+        message = getattr(choices[0], "message", None) if choices else None
+        content = getattr(message, "content", None)
+        answer = content.strip() if isinstance(content, str) else ""
+        if not answer:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="JARVIS AI provider returned an empty answer.",
+            )
+        return FrontierQueryResponse(
+            answer=answer,
+            model=general_model,
+            mode=mode,
+            sources=[],
+        )
 
     request_kwargs: dict[str, object] = {
         "model": FRONTIER_MODEL,
