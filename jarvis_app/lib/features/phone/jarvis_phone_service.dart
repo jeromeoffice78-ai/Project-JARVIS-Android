@@ -122,6 +122,22 @@ class JarvisPhoneService {
     }
   }
 
+  // Android call controls cannot inject or capture spoken audio by themselves.
+  // Do not offer unattended pickup until a real two-way cellular audio
+  // bridge has been integrated and verified in the Android host.
+  Future<bool> hasCellularVoiceBridge() async {
+    if (!isSupported) return false;
+    try {
+      return await _channel.invokeMethod<bool>(
+            'hasCellularVoiceBridge',
+          ) ?? false;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
   Future<bool> getAutoAnswer() async {
     if (!isSupported) return false;
     try {
@@ -136,10 +152,19 @@ class JarvisPhoneService {
 
   Future<void> setAutoAnswer(bool enabled) async {
     if (!isSupported) return;
-    await _channel.invokeMethod<void>(
+    if (enabled && !(await hasCellularVoiceBridge())) {
+      throw StateError(
+        'A verified two-way cellular voice bridge is required '
+        'before unattended AI call answering can be enabled.',
+      );
+    }
+    final bool? accepted = await _channel.invokeMethod<bool>(
       'setAutoAnswer',
       <String, dynamic>{'enabled': enabled},
     );
+    if (accepted != true) {
+      throw StateError('Android did not accept the auto-answer setting.');
+    }
   }
 
   Future<String> getGreeting() async {
