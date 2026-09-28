@@ -157,6 +157,12 @@ jobs:
         working-directory: jarvis_app
         run: flutter analyze --no-fatal-warnings --no-fatal-infos
 
+      - name: Test spoken replies
+        working-directory: jarvis_app
+        timeout-minutes: 4
+        run: |
+          flutter test --reporter expanded test/jarvis_spoken_replies_test.dart
+
       - name: Build ARM64 release
         working-directory: jarvis_app
         run: |
