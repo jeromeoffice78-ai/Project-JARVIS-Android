@@ -152,14 +152,14 @@ class JarvisVoiceService {
             );
           }
 
-          if (error.permanent) {
+          if (ordinarySilence) {
+            // Some recognition engines mark no-match as a permanent error,
+            // even though the microphone can be used on the next session.
+            _setState(JarvisVoiceState.idle);
+          } else if (error.permanent) {
             _setState(JarvisVoiceState.unavailable);
           } else if (_state == JarvisVoiceState.listening) {
-            // On Android, lack of speech can terminate a recognition window.
-            // Treat ordinary silence as idle so an armed wake word can restart.
-            _setState(ordinarySilence
-                ? JarvisVoiceState.idle
-                : JarvisVoiceState.error);
+            _setState(JarvisVoiceState.error);
           }
         },
         debugLogging: false,
