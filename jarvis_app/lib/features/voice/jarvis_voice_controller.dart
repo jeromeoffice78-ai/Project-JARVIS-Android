@@ -66,8 +66,11 @@ class JarvisVoiceController {
 
   final JarvisVoiceService _voiceService;
   final JarvisChatController _chatController;
-  final SharedPreferencesAsync _preferences =
-      SharedPreferencesAsync();
+  // Create preferences only when the wake phrase is read or saved.
+  // This also keeps text-to-speech independent of Android storage startup.
+  SharedPreferencesAsync? _preferences;
+  SharedPreferencesAsync get _preferencesClient =>
+      _preferences ??= SharedPreferencesAsync();
 
   final StreamController<bool> _handsFreeController =
       StreamController<bool>.broadcast();
@@ -131,7 +134,7 @@ class JarvisVoiceController {
 
   Future<void> _loadWakePass() async {
     final String? stored =
-        await _preferences.getString(
+        await _preferencesClient.getString(
       _wakePassKey,
     );
 
@@ -161,7 +164,7 @@ class JarvisVoiceController {
 
     _wakePass = normalized;
 
-    await _preferences.setString(
+    await _preferencesClient.setString(
       _wakePassKey,
       normalized,
     );
