@@ -80,7 +80,24 @@ REALTIME_MOOD_INSTRUCTIONS = {
 }
 
 GATEWAY_MODEL = os.getenv("AI_GATEWAY_MODEL", f"openai/{OPENAI_MODEL}").strip() or f"openai/{OPENAI_MODEL}"
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip() or "llama-3.3-70b-versatile"
+def _current_groq_model(configured: str | None) -> str:
+    """Map retired Groq model IDs to an active text-chat replacement.
+
+    Groq retired these free/developer-tier models in August/September 2026.
+    The migration must also handle an old GROQ_MODEL value configured in
+    Render rather than only updating this source file's default.
+    """
+    candidate = (configured or "").strip()
+    deprecated = {
+        "llama-3.3-70b-versatile": "openai/gpt-oss-120b",
+        "llama-3.1-8b-instant": "openai/gpt-oss-20b",
+        "qwen/qwen3.6-27b": "qwen/qwen3.8-27b",
+    }
+    return deprecated.get(candidate.lower(), candidate or "openai/gpt-oss-120b")
+
+
+GROQ_MODEL = _current_groq_model(os.getenv("GROQ_MODEL"))
+
 CHAIRMAN_TOKEN = os.getenv("JARVIS_CHAIRMAN_TOKEN", "").strip()
 CLIENT_TOKEN = os.getenv("JARVIS_CLIENT_TOKEN", "").strip()
 PHONE_GATEWAY_URL = os.getenv(
