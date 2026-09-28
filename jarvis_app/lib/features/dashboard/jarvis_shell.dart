@@ -8,6 +8,7 @@ import '../../core/network/jarvis_ws_service.dart';
 import '../../core/network/providers.dart';
 import '../chat/jarvis_chat_controller.dart';
 import '../chat/jarvis_chat_screen.dart';
+import '../chat/jarvis_chat_controller.dart';
 import '../autonomy/jarvis_autonomy_screen.dart';
 import '../capabilities/jarvis_action_approval_service.dart';
 import '../devices/jarvis_devices_screen.dart';
