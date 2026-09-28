@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -98,6 +100,27 @@ class _JarvisChatScreenState
                   if (state.responseText.isNotEmpty)
                     _ResponseCard(
                       text: state.responseText,
+                      onReadAloud: state.status == JarvisChatStatus.completed
+                          ? () {
+                              unawaited(
+                                ref
+                                    .read(jarvisVoiceServiceProvider)
+                                    .speak(state.responseText)
+                                    .then((_) {
+                                      if (!context.mounted) return;
+                                      final String? diagnostic = ref
+                                          .read(jarvisVoiceServiceProvider)
+                                          .lastError;
+                                      if (diagnostic?.isNotEmpty == true) {
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                          SnackBar(content: Text(diagnostic!)),
+                                        );
+                                      }
+                                    }),
+                              );
+                            }
+                          : null,
                     ),
                   if (state.errorMessage != null)
                     _ErrorCard(
@@ -248,21 +271,39 @@ class _ThinkingCard extends StatelessWidget {
 class _ResponseCard extends StatelessWidget {
   const _ResponseCard({
     required this.text,
+    this.onReadAloud,
   });
 
   final String text;
+  final VoidCallback? onReadAloud;
 
   @override
   Widget build(BuildContext context) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(18),
-        child: SelectableText(
-          text,
-          style: Theme.of(context)
-              .textTheme
-              .bodyLarge
-              ?.copyWith(height: 1.55),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            SelectableText(
+              text,
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyLarge
+                  ?.copyWith(height: 1.55),
+            ),
+            if (onReadAloud != null) ...<Widget>[
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerRight,
+                child: OutlinedButton.icon(
+                  onPressed: onReadAloud,
+                  icon: const Icon(Icons.volume_up_outlined),
+                  label: const Text('READ ALOUD'),
+                ),
+              ),
+            ],
+          ],
         ),
       ),
     );
