@@ -33,6 +33,19 @@ class JarvisVoiceController {
         );
       },
     );
+
+    // Android speech recognition stops after a quiet recognition window.
+    // Restart an armed wake-word/hands-free session when that window closes.
+    _voiceStateSubscription = _voiceService.stateStream.listen(
+      (JarvisVoiceState state) {
+        if (state == JarvisVoiceState.listening ||
+            state == JarvisVoiceState.speaking) {
+          _listenRestartTimer?.cancel();
+        } else if (state == JarvisVoiceState.idle) {
+          _scheduleListenRestart();
+        }
+      },
+    );
   }
 
   final JarvisVoiceService _voiceService;
@@ -57,6 +70,11 @@ class JarvisVoiceController {
 
   StreamSubscription<JarvisChatState>?
       _chatStateSubscription;
+
+  StreamSubscription<JarvisVoiceState>?
+      _voiceStateSubscription;
+
+  Timer? _listenRestartTimer;
 
   bool _handsFree = false;
   bool _spokenReplies = true;
@@ -181,6 +199,7 @@ class JarvisVoiceController {
     }
 
     _conversationGeneration++;
+    _listenRestartTimer?.cancel();
 
     _handsFree = false;
     _emitHandsFree();
@@ -213,6 +232,7 @@ class JarvisVoiceController {
     }
 
     _conversationGeneration++;
+    _listenRestartTimer?.cancel();
 
     _wakeWordMode = false;
     _emitWakeWord();
@@ -371,19 +391,32 @@ class JarvisVoiceController {
   }
 
   Future<void> _resumeWakeListening() async {
-    await Future<void>.delayed(
-      const Duration(
-        milliseconds: 350,
-      ),
-    );
+    _scheduleListenRestart();
+  }
 
+  void _scheduleListenRestart() {
     if (_disposed ||
-        !_wakeWordMode ||
-        _voiceRequestId != null) {
+        !(_wakeWordMode || _handsFree) ||
+        _voiceRequestId != null ||
+        _voiceService.state != JarvisVoiceState.idle ||
+        (_listenRestartTimer?.isActive ?? false)) {
       return;
     }
-
-    await _voiceService.startListening();
+    final int generation = _conversationGeneration;
+    _listenRestartTimer = Timer(
+      const Duration(milliseconds: 1200),
+      () {
+        if (_disposed ||
+            generation != _conversationGeneration ||
+            !(_wakeWordMode || _handsFree) ||
+            _voiceRequestId != null ||
+            _voiceService.isListening ||
+            _voiceService.state != JarvisVoiceState.idle) {
+          return;
+        }
+        unawaited(_voiceService.startListening());
+      },
+    );
   }
 
   Future<void> _handleChatState(
@@ -462,8 +495,8 @@ class JarvisVoiceController {
             JarvisChatStatus.cancelled) {
       _voiceRequestId = null;
 
-      if (_wakeWordMode) {
-        await _resumeWakeListening();
+      if (_wakeWordMode || _handsFree) {
+        _scheduleListenRestart();
       }
     }
   }
@@ -493,6 +526,11 @@ class JarvisVoiceController {
 
     _disposed = true;
     _conversationGeneration++;
+    _listenRestartTimer?.cancel();
+    _listenRestartTimer = null;
+
+    await _voiceStateSubscription?.cancel();
+    _voiceStateSubscription = null;
 
     await _finalTranscriptSubscription
         ?.cancel();
