@@ -275,6 +275,7 @@ class PhoneReceptionistStatus(BaseModel):
     provider: str
     phone_number: str
     active_calls: int
+    detail: str = ""
 
 
 class PhoneReceptionistMessage(BaseModel):
@@ -1705,7 +1706,7 @@ async def phone_receptionist_status(
     authenticated_role: Annotated[str, Depends(authenticate_request)],
 ) -> PhoneReceptionistStatus:
     del authenticated_role
-
+    vapi_issue = ""
     if os.getenv("VAPI_API_KEY", "").strip():
         try:
             bound = await _vapi_bind_existing_phone()
@@ -1719,18 +1720,47 @@ async def phone_receptionist_status(
                         phone_map.get("number") or VAPI_PHONE_NUMBER
                     ),
                     active_calls=0,
+                    detail=(
+                        "AI line connected. Test by calling this number. "
+                        "Calls to your personal mobile number require "
+                        "carrier-supported call forwarding."
+                    ),
                 )
+            vapi_issue = "Vapi is connected but has no assigned Jarvis phone line."
         except Exception:
-            pass
+            # Do not expose provider response bodies, secrets or request URLs
+            # in a mobile diagnostic, even to an authenticated user.
+            vapi_issue = "The Vapi number could not be verified right now."
 
+    has_ai_key = bool(os.getenv("OPENAI_API_KEY", "").strip())
+    has_webhook = bool(PHONE_WEBHOOK_SECRET)
+    has_number = bool(RECEPTIONIST_NUMBER)
+    # Environment secrets do not establish that a live SIP trunk is routed.
+    # The operator must mark this true after completing a test inbound call.
+    sip_verified = os.getenv(
+        "JARVIS_PHONE_SIP_ROUTE_VERIFIED", ""
+    ).strip().lower() in {"1", "yes", "true"}
+    sip_ready = has_ai_key and has_webhook and has_number and sip_verified
+
+    if sip_ready:
+        return PhoneReceptionistStatus(
+            configured=True,
+            provider="openai_sip",
+            phone_number=RECEPTIONIST_NUMBER,
+            active_calls=len(ACTIVE_PHONE_CALLS),
+            detail="Verified SIP line connected. Test an incoming call.",
+        )
     return PhoneReceptionistStatus(
-        configured=bool(
-            os.getenv("OPENAI_API_KEY", "").strip()
-            and PHONE_WEBHOOK_SECRET
+        configured=False,
+        provider="vapi" if vapi_issue else "openai_sip",
+        phone_number="",
+        active_calls=0,
+        detail=vapi_issue or (
+            "AI phone service is not ready. Connect a real Vapi phone "
+            "number or finish and test an inbound OpenAI SIP route. "
+            "Being the Android default phone app does not activate "
+            "cloud call audio."
         ),
-        provider="openai_sip",
-        phone_number=RECEPTIONIST_NUMBER,
-        active_calls=len(ACTIVE_PHONE_CALLS),
     )
 
 
