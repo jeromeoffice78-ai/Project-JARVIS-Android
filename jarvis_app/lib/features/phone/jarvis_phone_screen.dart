@@ -17,13 +17,15 @@ class JarvisPhoneScreen
 }
 
 class _JarvisPhoneScreenState
-    extends ConsumerState<JarvisPhoneScreen> {
+    extends ConsumerState<JarvisPhoneScreen> with WidgetsBindingObserver {
   final TextEditingController _greetingController =
       TextEditingController();
+  final FocusNode _greetingFocus = FocusNode();
 
   bool _loading = true;
   bool _isDefaultDialer = false;
   bool _autoAnswer = false;
+  bool _cellularVoiceBridgeReady = false;
   List<JarvisCallMessage> _messages =
       const <JarvisCallMessage>[];
   JarvisActiveCall? _activeCall;
@@ -32,6 +34,8 @@ class _JarvisPhoneScreenState
       _cloudMessages =
       const <JarvisPhoneReceptionistMessage>[];
   String? _cloudError;
+  String? _messageFetchError;
+  int _refreshGeneration = 0;
   JarvisCallerIntelligence? _callerIntelligence;
   bool _callerIntelligenceLoading = false;
   String? _callerIntelligenceError;
@@ -41,6 +45,7 @@ class _JarvisPhoneScreenState
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _refresh();
     _callTimer = Timer.periodic(
       const Duration(seconds: 1),
@@ -49,7 +54,16 @@ class _JarvisPhoneScreenState
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refresh());
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _greetingFocus.dispose();
     _callTimer?.cancel();
     _callTimer = null;
     _greetingController.dispose();
@@ -57,46 +71,45 @@ class _JarvisPhoneScreenState
   }
 
   Future<void> _refresh() async {
-    final JarvisPhoneService phone =
-        ref.read(jarvisPhoneServiceProvider);
-
-    final bool defaultDialer =
-        await phone.isDefaultDialer();
-    final bool autoAnswer =
-        await phone.getAutoAnswer();
-    final String greeting =
-        await phone.getGreeting();
-    final List<JarvisCallMessage> messages =
-        await phone.listCallMessages();
+    final int generation = ++_refreshGeneration;
+    final JarvisPhoneService phone = ref.read(jarvisPhoneServiceProvider);
+    final bool defaultDialer = await phone.isDefaultDialer();
+    final bool bridgeReady = await phone.hasCellularVoiceBridge();
+    final bool autoAnswer = bridgeReady && await phone.getAutoAnswer();
+    final String greeting = await phone.getGreeting();
+    final List<JarvisCallMessage> messages = await phone.listCallMessages();
 
     JarvisPhoneReceptionistStatus? cloudStatus;
-    List<JarvisPhoneReceptionistMessage>
-        cloudMessages =
+    List<JarvisPhoneReceptionistMessage> cloudMessages =
         const <JarvisPhoneReceptionistMessage>[];
     String? cloudError;
-
+    String? messageError;
+    final JarvisApiService api = ref.read(jarvisApiServiceProvider);
     try {
-      final JarvisApiService api = ref.read(
-        jarvisApiServiceProvider,
-      );
-      cloudStatus =
-          await api.phoneReceptionistStatus();
-      cloudMessages =
-          await api.phoneReceptionistMessages();
+      cloudStatus = await api.phoneReceptionistStatus();
     } on Object catch (error) {
       cloudError = error.toString();
     }
-
-    if (!mounted) return;
-
+    // A message-store outage is separate from the actual voice-provider state.
+    try {
+      cloudMessages = await api.phoneReceptionistMessages();
+    } on Object {
+      messageError =
+          'Call history is temporarily unavailable. Try Refresh again.';
+    }
+    if (!mounted || generation != _refreshGeneration) return;
     setState(() {
       _isDefaultDialer = defaultDialer;
+      _cellularVoiceBridgeReady = bridgeReady;
       _autoAnswer = autoAnswer;
       _messages = messages;
       _cloudStatus = cloudStatus;
       _cloudMessages = cloudMessages;
       _cloudError = cloudError;
-      _greetingController.text = greeting;
+      _messageFetchError = messageError;
+      if (!_greetingFocus.hasFocus) {
+        _greetingController.text = greeting;
+      }
       _loading = false;
     });
   }
@@ -217,17 +230,22 @@ class _JarvisPhoneScreenState
     final JarvisPhoneService phone =
         ref.read(jarvisPhoneServiceProvider);
 
-    await phone.requestDefaultDialer();
-
+    final bool opened = await phone.requestDefaultDialer();
     if (!mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Approve Jarvis as the default phone app in Android, then return here.',
+    if (!opened) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Android could not open the default-phone-app chooser. '
+            'Go to Settings → Apps → Default apps → Phone app.',
+          ),
         ),
-      ),
-    );
+      );
+      return;
+    }
+    // Android owns the consent screen. Refresh immediately if the role was
+    // already held, and again when the user returns from system settings.
+    unawaited(_refresh());
   }
 
   @override
@@ -479,34 +497,42 @@ class _JarvisPhoneScreenState
                           ? Icons.support_agent
                           : Icons.cloud_off,
                     ),
-                    title: const Text(
-                      'Spoken AI Cellular Receptionist',
-                    ),
+                    title: const Text('AI cloud phone receptionist'),
                     subtitle: Text(
                       _cloudStatus == null
                           ? (_cloudError ??
-                              'Checking the cloud receptionist...')
-                          : (_cloudStatus!.configured
-                              ? ((_cloudStatus!.provider == 'vapi'
-                                      ? 'Vapi AI receptionist ready'
-                                      : 'OpenAI SIP receptionist ready')
-                                  + (_cloudStatus!.phoneNumber.isEmpty
-                                      ? ''
-                                      : ' • ' + _cloudStatus!.phoneNumber)
-                                  + ' • active calls: '
-                                  + _cloudStatus!.activeCalls.toString())
-                              : 'Cloud receptionist transport is not currently active.'),
+                              'Could not check the cloud phone service.')
+                          : _cloudStatus!.configured
+                              ? ('Cloud AI line connected: ' +
+                                  (_cloudStatus!.phoneNumber.isEmpty
+                                      ? 'number unavailable'
+                                      : _cloudStatus!.phoneNumber) +
+                                  ' • This is separate from your cellular number.')
+                              : (_cloudStatus!.detail.isEmpty
+                                  ? 'No verified AI phone number is connected. '
+                                      'Connect a Vapi number or verified SIP route.'
+                                  : _cloudStatus!.detail),
                     ),
-                    trailing:
-                        _cloudStatus?.configured == true
-                            ? const Icon(
-                                Icons.check_circle,
-                              )
-                            : const Icon(
-                                Icons.warning_amber,
-                              ),
+                    trailing: _cloudStatus?.configured == true
+                        ? const Icon(Icons.check_circle)
+                        : const Icon(Icons.warning_amber),
                   ),
                 ),
+                if (_cloudStatus?.configured == true &&
+                    _cloudStatus!.phoneNumber.isNotEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 12),
+                    child: Text(
+                      'Test the AI line directly first. To receive calls '
+                      'to your personal mobile number, set up call '
+                      'forwarding with your carrier. It is not automatic.',
+                    ),
+                  ),
+                if (_messageFetchError != null)
+                  Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Text(_messageFetchError!),
+                  ),
                 const SizedBox(height: 12),
                 if (_cloudMessages.isNotEmpty) ...[
                   Text(
@@ -623,27 +649,37 @@ class _JarvisPhoneScreenState
                 const SizedBox(height: 12),
                 SwitchListTile(
                   value: _autoAnswer,
-                  onChanged: !_isDefaultDialer
+                  onChanged: !_isDefaultDialer || !_cellularVoiceBridgeReady
                       ? null
                       : (bool value) async {
-                          await phone.setAutoAnswer(
-                            value,
-                          );
-                          if (mounted) {
-                            setState(() {
-                              _autoAnswer = value;
-                            });
+                          try {
+                            await phone.setAutoAnswer(value);
+                            if (mounted) {
+                              setState(() => _autoAnswer = value);
+                            }
+                          } on Object catch (error) {
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(error.toString())),
+                              );
+                            }
                           }
                         },
-                  title:
-                      const Text('Auto-answer calls'),
-                  subtitle: const Text(
-                    'When enabled, Jarvis answers incoming calls through Android InCallService.',
+                  title: const Text('Spoken cellular auto-answer'),
+                  subtitle: Text(
+                    !_isDefaultDialer
+                        ? 'First approve Jarvis as your default phone app.'
+                        : !_cellularVoiceBridgeReady
+                            ? 'Disabled for your safety: the cellular audio '
+                                'bridge is not installed. Android call control '
+                                'alone cannot speak the greeting or take a message.'
+                            : 'Answers calls using the verified two-way audio bridge.',
                   ),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _greetingController,
+                  focusNode: _greetingFocus,
                   maxLines: 4,
                   decoration: const InputDecoration(
                     labelText:
@@ -657,9 +693,35 @@ class _JarvisPhoneScreenState
                       Alignment.centerRight,
                   child: FilledButton.icon(
                     onPressed: () async {
-                      await phone.setGreeting(
-                        _greetingController.text,
-                      );
+                      final String greeting = _greetingController.text.trim();
+                      if (greeting.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Enter a greeting before saving.'),
+                          ),
+                        );
+                        return;
+                      }
+                      try {
+                        await phone.setGreeting(greeting);
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Greeting saved on this device. It will not '
+                              'be spoken to callers until a compatible '
+                              'voice receptionist is connected.',
+                            ),
+                          ),
+                        );
+                      } on Object {
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Unable to save greeting on Android.'),
+                          ),
+                        );
+                      }
                     },
                     icon: const Icon(Icons.save),
                     label:
