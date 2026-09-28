@@ -42,6 +42,8 @@ class JarvisVoiceService {
   JarvisVoiceState _state = JarvisVoiceState.inactive;
   String _currentTranscript = '';
   bool _initialized = false;
+  bool _ttsReady = false;
+  String? _lastError;
   bool _disposed = false;
   bool _finalSentForListen = false;
 
@@ -56,6 +58,8 @@ class JarvisVoiceService {
   String get currentTranscript => _currentTranscript;
   bool get isListening => _speech.isListening;
   bool get isInitialized => _initialized;
+  bool get canSpeak => _ttsReady;
+  String? get lastError => _lastError;
 
   Future<bool> initialize() async {
     if (_disposed) {
@@ -127,6 +131,10 @@ class JarvisVoiceService {
         _setState(JarvisVoiceState.error);
       });
 
+      // Output must work even when Android has disabled the microphone,
+      // denied speech-recognition permission, or lacks a recognition engine.
+      _ttsReady = true;
+
       final bool available = await _speech.initialize(
         onStatus: _handleSpeechStatus,
         onError: (error) {
@@ -134,14 +142,24 @@ class JarvisVoiceService {
             return;
           }
 
-          _emitError(
-            'Speech recognition error: ${error.errorMsg}',
-          );
+          final String errorCode = error.errorMsg;
+          final bool ordinarySilence =
+              errorCode == 'error_no_match' ||
+              errorCode == 'error_speech_timeout';
+          if (!ordinarySilence) {
+            _emitError(
+              'Speech recognition error: $errorCode',
+            );
+          }
 
           if (error.permanent) {
             _setState(JarvisVoiceState.unavailable);
           } else if (_state == JarvisVoiceState.listening) {
-            _setState(JarvisVoiceState.error);
+            // On Android, lack of speech can terminate a recognition window.
+            // Treat ordinary silence as idle so an armed wake word can restart.
+            _setState(ordinarySilence
+                ? JarvisVoiceState.idle
+                : JarvisVoiceState.error);
           }
         },
         debugLogging: false,
@@ -268,10 +286,13 @@ class JarvisVoiceService {
       return;
     }
 
-    if (!_initialized) {
-      final bool ready = await initialize();
-
-      if (!ready) {
+    if (!_ttsReady) {
+      await initialize();
+      if (!_ttsReady) {
+        _emitError(
+          'Speaker test unavailable: Android text-to-speech is not ready.',
+        );
+        _setState(JarvisVoiceState.error);
         return;
       }
     }
@@ -424,6 +445,7 @@ class JarvisVoiceService {
   void _emitError(
     String? message,
   ) {
+    _lastError = message;
     if (!_disposed &&
         !_errorController.isClosed) {
       _errorController.add(message);
