@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/auth/jarvis_chairman_auth.dart';
 import '../../core/network/jarvis_ws_service.dart';
 import '../../core/network/providers.dart';
+import '../chat/jarvis_chat_controller.dart';
 import '../chat/jarvis_chat_screen.dart';
 import '../autonomy/jarvis_autonomy_screen.dart';
 import '../capabilities/jarvis_action_approval_service.dart';
