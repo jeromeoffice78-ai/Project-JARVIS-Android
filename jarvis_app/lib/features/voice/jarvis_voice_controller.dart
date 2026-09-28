@@ -422,57 +422,55 @@ class JarvisVoiceController {
   Future<void> _handleChatState(
     JarvisChatState state,
   ) async {
-    if (_disposed) return;
+    if (_disposed || state.requestId == null) return;
 
-    final String? requestId = state.requestId;
-    if (requestId == null || requestId.isEmpty) return;
-
-    final bool isVoiceRequest = requestId == _voiceRequestId;
+    final String requestId = state.requestId!;
+    final bool isVoiceRequest = _voiceRequestId == requestId;
 
     if (state.status == JarvisChatStatus.completed) {
-      // Both the Chat tab and spoken commands use JarvisChatController.
-      // Speaking only _voiceRequestId silently discarded *all typed chat
-      // answers*, despite the "Spoken Replies" switch being enabled.
-      if (_lastSpokenRequestId == requestId) return;
-      _lastSpokenRequestId = requestId;
-
       final int generation = _conversationGeneration;
-      if (_spokenReplies && state.responseText.trim().isNotEmpty) {
-        // An armed wake word must not hear Jarvis reading its own reply.
-        if (_voiceService.isListening) {
-          await _voiceService.cancelListening();
-        }
-        if (!_disposed && generation == _conversationGeneration) {
-          await _voiceService.speak(state.responseText);
-        }
+
+      // Spoken Replies applies to *both* typed Chat messages and microphone
+      // commands. The previous implementation silently discarded completions
+      // unless they came from the microphone, leaving text chat mute.
+      if (_spokenReplies &&
+          state.responseText.trim().isNotEmpty &&
+          _lastSpokenRequestId != requestId) {
+        _lastSpokenRequestId = requestId;
+        await _voiceService.speak(state.responseText);
       }
 
-      if (isVoiceRequest && _voiceRequestId == requestId) {
+      if (!isVoiceRequest) return;
+
+      if (_voiceRequestId == requestId) {
         _voiceRequestId = null;
       }
 
-      // Hands-free conversations resume after either a typed or spoken
-      // answer. In ordinary Chat mode there is nothing to re-arm.
       if (_disposed ||
           !(_handsFree || _wakeWordMode) ||
           generation != _conversationGeneration) {
         return;
       }
 
-      await Future<void>.delayed(const Duration(milliseconds: 450));
+      await Future<void>.delayed(
+        const Duration(milliseconds: 450),
+      );
+
       if (_disposed ||
           !(_handsFree || _wakeWordMode) ||
-          generation != _conversationGeneration ||
-          _voiceService.isListening) {
+          generation != _conversationGeneration) {
         return;
       }
+
       await _voiceService.startListening();
       return;
     }
 
+    if (!isVoiceRequest) return;
+
     if (state.status == JarvisChatStatus.error ||
         state.status == JarvisChatStatus.cancelled) {
-      if (isVoiceRequest) _voiceRequestId = null;
+      _voiceRequestId = null;
       if (_wakeWordMode || _handsFree) {
         _scheduleListenRestart();
       }
