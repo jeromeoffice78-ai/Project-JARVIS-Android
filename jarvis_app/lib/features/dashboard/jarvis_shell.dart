@@ -339,9 +339,12 @@ class _JarvisShellState
               ),
             ],
           ),
-          const Positioned.fill(
-            child: JarvisAmbientAvatarLayer(),
-          ),
+          // The roaming avatar should not cover microphone, diagnostics, or
+          // other interactive controls on the Voice and settings tabs.
+          if (_index == 0)
+            const Positioned.fill(
+              child: JarvisAmbientAvatarLayer(),
+            ),
           const JarvisSystemOverlaySync(),
         ],
       ),
