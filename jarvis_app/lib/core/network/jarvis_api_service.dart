@@ -56,12 +56,14 @@ class JarvisPhoneReceptionistStatus {
     required this.provider,
     required this.phoneNumber,
     required this.activeCalls,
+    this.detail = '',
   });
 
   final bool configured;
   final String provider;
   final String phoneNumber;
   final int activeCalls;
+  final String detail;
 }
 
 class JarvisPhoneReceptionistMessage {
@@ -292,6 +294,7 @@ class JarvisApiService {
           (data['active_calls'] as num?)
                   ?.toInt() ??
               0,
+      detail: data['detail']?.toString() ?? '',
     );
   }
 
