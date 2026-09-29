@@ -22,6 +22,7 @@ final class JarvisAvatarAssetServer {
     'assets/vendor/three/three.module.js',
     'assets/vendor/three/addons/loaders/GLTFLoader.js',
     'assets/vendor/three/addons/utils/BufferGeometryUtils.js',
+    'assets/models/CesiumMan.glb',
     'assets/models/vitruvian_body.glb',
     'assets/models/vitruvian_head.glb',
     'assets/models/hairtool_cards.glb',
