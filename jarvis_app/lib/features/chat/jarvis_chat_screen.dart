@@ -5,6 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/network/providers.dart';
 import 'jarvis_chat_controller.dart';
+import '../presence/jarvis_human_avatar_view.dart';
+import '../presence/jarvis_avatar_voice_bridge.dart';
+import '../realtime/jarvis_realtime_voice_service.dart';
+import '../voice/jarvis_voice_service.dart';
 
 class JarvisChatScreen extends ConsumerStatefulWidget {
   const JarvisChatScreen({super.key});
@@ -94,12 +98,53 @@ class _JarvisChatScreenState
             snapshot.data ??
                 const JarvisChatState.initial();
         final List<JarvisChatTurn> turns = controller.conversation;
+        final JarvisRealtimeVoiceState liveVoice =
+            ref.watch(jarvisRealtimeVoiceStateProvider).valueOrNull ??
+                const JarvisRealtimeVoiceState.initial();
+        final JarvisVoiceState localVoice =
+            ref.watch(jarvisVoiceStateProvider).valueOrNull ??
+                ref.read(jarvisVoiceServiceProvider).state;
+        final JarvisRealtimeVoiceState animatedVoice =
+            avatarStateForConversation(
+          realtime: liveVoice,
+          localVoice: localVoice,
+          chat: state,
+        );
+        final bool keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
         if (turns.isNotEmpty || state.responseText.isNotEmpty) {
           _scrollToEnd();
         }
 
         return Column(
           children: <Widget>[
+            // Once chat starts, the full-screen roaming overlay hides to
+            // protect the message area. Show Jarvis in his own stage instead.
+            if ((turns.isNotEmpty || state.isGenerating) && !keyboardOpen)
+              SizedBox(
+                height: 174,
+                child: Column(
+                  children: <Widget>[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 2, 18, 0),
+                      child: Row(
+                        children: <Widget>[
+                          const Icon(Icons.auto_awesome, size: 16),
+                          const SizedBox(width: 8),
+                          const Text('JARVIS LIVE'),
+                          const Spacer(),
+                          Text(animatedVoice.activity.name.toUpperCase()),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: JarvisHumanAvatarView(
+                        voiceState: animatedVoice,
+                        active: true,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             if (turns.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.fromLTRB(14, 4, 14, 0),
