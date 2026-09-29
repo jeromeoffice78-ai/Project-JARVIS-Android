@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -62,6 +65,7 @@ class JarvisChatController {
   })  : _wsService = wsService,
         _apiService = apiService,
         _capabilityService = capabilityService {
+    unawaited(_restoreConversation());
     _messageSubscription = _wsService.incomingMessages.listen(
       (Map<String, dynamic> rawMap) {
         unawaited(_handleIncomingMessage(rawMap));
@@ -108,7 +112,52 @@ class JarvisChatController {
   bool _disposed = false;
   final List<JarvisChatTurn> _conversation = <JarvisChatTurn>[];
   final Set<String> _recordedAnswers = <String>{};
+  static const String _historyKey = 'jarvis.conversation.encrypted.v1';
+  static const FlutterSecureStorage _historyStorage = FlutterSecureStorage();
+  Future<void> _persistQueue = Future<void>.value();
+  bool _ignoreLateRestore = false;
   bool _autonomyRequest = false;
+
+  Future<void> _restoreConversation() async {
+    try {
+      final String? json = await _historyStorage.read(key: _historyKey);
+      if (json == null || json.isEmpty || _disposed ||
+          _ignoreLateRestore || _conversation.isNotEmpty) return;
+      final Object? decoded = jsonDecode(json);
+      if (decoded is! List) return;
+      for (final item in decoded.take(24)) {
+        if (item is! Map) continue;
+        final String role = item['role']?.toString() ?? '';
+        final String content = item['content']?.toString() ?? '';
+        if (role == 'user' || role == 'assistant') {
+          _appendTurn(role, content, persist: false);
+        }
+      }
+      _emitState(const JarvisChatState.initial());
+    } on Object {
+      // A Keystore migration failure must not block ordinary conversation.
+    }
+  }
+
+  void _queueHistoryPersistence({bool clear = false}) {
+    final String snapshot = jsonEncode(
+      _conversation.map((JarvisChatTurn turn) => <String, String>{
+        'role': turn.role,
+        'content': turn.content,
+      }).toList(growable: false),
+    );
+    _persistQueue = _persistQueue.then((_) async {
+      try {
+        if (clear) {
+          await _historyStorage.delete(key: _historyKey);
+        } else {
+          await _historyStorage.write(key: _historyKey, value: snapshot);
+        }
+      } on Object {
+        // Keep the in-memory conversation if encrypted storage is unavailable.
+      }
+    });
+  }
 
   /// Most recent completed chat turns; capped so mobile memory and provider
   /// context do not grow without bound.
@@ -116,20 +165,27 @@ class JarvisChatController {
       List<JarvisChatTurn>.unmodifiable(_conversation);
 
   void clearConversation() {
+    if (_state.isGenerating) cancelCurrentResponse();
+    _ignoreLateRestore = true;
     _conversation.clear();
     _recordedAnswers.clear();
+    _queueHistoryPersistence(clear: true);
     _emitState(const JarvisChatState.initial());
   }
 
-  void _appendTurn(String role, String content) {
+  void _appendTurn(String role, String content, {bool persist = true}) {
     final String trimmed = content.trim();
     if (trimmed.isEmpty) return;
     _conversation.add(
-      JarvisChatTurn(role: role, content: trimmed),
+      JarvisChatTurn(
+        role: role,
+        content: trimmed.length > 3000 ? trimmed.substring(0, 3000) : trimmed,
+      ),
     );
     if (_conversation.length > 24) {
       _conversation.removeRange(0, _conversation.length - 24);
     }
+    if (persist) _queueHistoryPersistence();
   }
 
   Stream<JarvisChatState> get stateStream => _stateController.stream;
