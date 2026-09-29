@@ -30,6 +30,8 @@ class _JarvisHumanAvatarViewState
   late final WebViewController _controller;
   bool _ready = false;
   bool _fallbackMode = false;
+  bool _lightweightMode = false;
+  bool _detailedLoading = false;
   String? _avatarDiagnostic;
   String? _errorMessage;
   int _retryCount = 0;
@@ -68,7 +70,10 @@ class _JarvisHumanAvatarViewState
               if (mounted) {
                 setState(() {
                   _ready = true;
-                  _fallbackMode = data['mode'] == 'lightweight-human';
+                  _lightweightMode = data['mode'] == 'lightweight-human';
+                  _fallbackMode = false;
+                  _detailedLoading = false;
+                  if (!_lightweightMode) _avatarDiagnostic = null;
                   _errorMessage = null;
                 });
               }
@@ -78,11 +83,27 @@ class _JarvisHumanAvatarViewState
                 setState(() {
                   _ready = true;
                   _fallbackMode = true;
+                  _lightweightMode = false;
+                  _detailedLoading = false;
                   _avatarDiagnostic = data['reason']?.toString();
                   _errorMessage = null;
                 });
               }
               _pushState();
+            } else if (data['type'] == 'detail-loading') {
+              if (mounted) {
+                setState(() {
+                  _detailedLoading = true;
+                  _avatarDiagnostic = null;
+                });
+              }
+            } else if (data['type'] == 'detail-error') {
+              if (mounted) {
+                setState(() {
+                  _detailedLoading = false;
+                  _avatarDiagnostic = data['message']?.toString();
+                });
+              }
             } else if (data['type'] == 'diagnostic') {
               if (mounted) {
                 setState(() {
@@ -142,7 +163,15 @@ class _JarvisHumanAvatarViewState
   Future<void> _loadAvatar() async {
     try {
       final Uri url = await JarvisAvatarAssetServer.avatarPage();
-      await _controller.loadRequest(url);
+      // Ambient and system-floating avatars load only the lightweight human.
+      // Full-screen presence can upgrade after the working 3D figure appears.
+      await _controller.loadRequest(
+        widget.showRecoveryControls
+            ? url.replace(queryParameters: const <String, String>{
+                'detail': '1',
+              })
+            : url,
+      );
     } on Object {
       if (!mounted) return;
       if (_retryCount < _maxAutomaticRetries) {
@@ -272,53 +301,76 @@ class _JarvisHumanAvatarViewState
               ),
             ),
           ),
-        if (_fallbackMode && widget.showRecoveryControls)
+        if ((_fallbackMode || _lightweightMode) &&
+            widget.showRecoveryControls)
           Positioned(
-            top: 10,
-            left: 10,
-            right: 10,
+            top: 6,
+            left: 12,
+            right: 12,
             child: Material(
-              borderRadius: BorderRadius.circular(12),
-              color: const Color(0xE30B1824),
+              borderRadius: BorderRadius.circular(10),
+              color: const Color(0xDE0B1824),
               child: Padding(
-                padding: const EdgeInsets.all(10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
-                    const Text(
-                      '3D model not available — branded visual standby',
+                    Text(
+                      _fallbackMode
+                          ? '3D unavailable — visual standby'
+                          : _detailedLoading
+                              ? 'Animated 3D online · upgrading detail…'
+                              : 'Animated 3D online',
                       textAlign: TextAlign.center,
-                      style: TextStyle(
+                      style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                     if (_avatarDiagnostic?.isNotEmpty == true) ...<Widget>[
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 2),
                       Text(
                         _avatarDiagnostic!,
                         textAlign: TextAlign.center,
-                        maxLines: 3,
+                        maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           color: Colors.white70,
-                          fontSize: 12,
+                          fontSize: 11,
                         ),
                       ),
                     ],
                     TextButton.icon(
-                      onPressed: () {
-                        setState(() {
-                          _ready = false;
-                          _fallbackMode = false;
-                          _avatarDiagnostic = null;
-                          _errorMessage = null;
-                          _retryCount = 0;
-                        });
-                        unawaited(_loadAvatar());
-                      },
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('TRY FULL 3D AGAIN'),
+                      onPressed: _detailedLoading
+                          ? null
+                          : () {
+                              if (_fallbackMode) {
+                                setState(() {
+                                  _ready = false;
+                                  _fallbackMode = false;
+                                  _lightweightMode = false;
+                                  _avatarDiagnostic = null;
+                                  _errorMessage = null;
+                                  _retryCount = 0;
+                                });
+                                unawaited(_loadAvatar());
+                              } else {
+                                unawaited(_controller.runJavaScript(
+                                  'window.jarvisTryDetailedModel?.();',
+                                ));
+                              }
+                            },
+                      icon: const Icon(Icons.refresh, size: 17),
+                      label: Text(
+                        _fallbackMode
+                            ? 'RETRY 3D'
+                            : _detailedLoading
+                                ? 'LOADING…'
+                                : 'LOAD HIGH DETAIL',
+                      ),
                     ),
                   ],
                 ),
