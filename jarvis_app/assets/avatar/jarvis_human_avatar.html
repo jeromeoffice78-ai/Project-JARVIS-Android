@@ -114,11 +114,15 @@
   });
   addEventListener('error',function(event){
     const name=event.filename||event.target?.src||'';
-    if(!window.__jarvisDetailedModelReady && (/three\.module|GLTFLoader|WebGL/.test(name))) {
+    const message=event.message||'';
+    if(!window.__jarvisDetailedModelReady && (name||message)) {
       window.JarvisAvatar?.postMessage(JSON.stringify({
-        type:'diagnostic',message:'3D module failed: '+String(name).slice(0,140)
+        type:'diagnostic',
+        message:('3D JavaScript: '+String(message||name)).slice(0,160)
       }));
-      window.__jarvisAvatarBackup.show('3D module load failed');
+      if (/three\.module|GLTFLoader|WebGL/i.test(name+' '+message)) {
+        window.__jarvisAvatarBackup.show('3D renderer or module unavailable');
+      }
     }
   },true);
 })();
@@ -177,6 +181,7 @@ let lastActive=true;
 let speakingPhase=0;
 let groundY=0;
 let fallbackMouth=null;
+let detailedLoading=false;
 
 const state={
   active:true,
@@ -430,14 +435,25 @@ async function loadLightweightHuman(){
   window.__jarvisDetailedModelReady=true;
   clearTimeout(window.__jarvisAvatarWatchdog);
   window.__jarvisAvatarBackup?.hide();
-  status.textContent='JARVIS lightweight human active';
+  status.textContent='Animated JARVIS online';
+  setTimeout(()=>{if(ready) status.style.opacity='0';},1800);
   window.JarvisAvatar?.postMessage(JSON.stringify({
     type:'ready',mode:'lightweight-human'
   }));
 }
 async function load(){
+  const previousBody=body;
+  const previousMixer=mixer;
+  const previousActions=actions;
+  const previousAction=activeAction;
+  const previousHeadBone=headBone;
+  const previousHeadPivot=headPivot;
+  let replacementBody=null;
   try{
-    // Avoid decoding three large models simultaneously in Android WebView.
+    status.style.opacity='0.85';
+    status.textContent='Loading detailed human model…';
+    // Load the optional full-resolution character only after the smaller
+    // animated human has already rendered. Its three GLBs are large.
     // These assets total >30 MB before meshes are expanded in GPU memory.
     let stage='body';
     let b,h,hr;
@@ -452,6 +468,7 @@ async function load(){
         String(modelError?.message||modelError));
     }
     body=b.scene; head=h.scene; hair=hr.scene;
+    replacementBody=body;
     configureBody(body); configureHead(head); configureHair(hair);
     root.add(body);
     body.updateMatrixWorld(true);
@@ -482,6 +499,7 @@ async function load(){
       actions[clip.name].setLoop(THREE.LoopRepeat,Infinity);
     }
     playClip('Idle',0);
+    if(previousBody && previousBody!==body) root.remove(previousBody);
     fitCamera();
     ready=true;
     window.__jarvisDetailedModelReady=true;
@@ -492,21 +510,50 @@ async function load(){
     window.JarvisAvatar?.postMessage(JSON.stringify({type:'ready'}));
   }catch(e){
     console.error(e);
-    window.JarvisAvatar?.postMessage(JSON.stringify({
-      type:'diagnostic',message:String(e?.message||e).slice(0,160)
-    }));
-    try {
-      await loadLightweightHuman();
-    } catch(fallbackError) {
+    if(replacementBody) root.remove(replacementBody);
+    // Do not destroy a working real 3D model if the higher-resolution
+    // optional assets fail on the phone.
+    body=previousBody;
+    mixer=previousMixer;
+    actions=previousActions;
+    activeAction=previousAction;
+    headBone=previousHeadBone;
+    headPivot=previousHeadPivot;
+    if(ready){
+      status.textContent='Animated JARVIS online · detailed model unavailable';
       window.JarvisAvatar?.postMessage(JSON.stringify({
-        type:'diagnostic',
-        message:'Lightweight human unavailable: '+String(fallbackError?.message||fallbackError).slice(0,120)
+        type:'detail-error',
+        message:String(e?.message||e).slice(0,160)
       }));
-      window.__jarvisAvatarBackup?.show('3D hardware or model unavailable');
+    }else{
+      window.__jarvisAvatarBackup?.show('Detailed model failed');
     }
   }
 }
-load();
+window.jarvisTryDetailedModel=async()=>{
+  if(detailedLoading) return;
+  detailedLoading=true;
+  window.JarvisAvatar?.postMessage(JSON.stringify({type:'detail-loading'}));
+  try{
+    await load();
+  }finally{
+    detailedLoading=false;
+  }
+};
+// The 30+ MB high-detail figure is never a prerequisite for first paint.
+// Small ambient views render only the bundled lightweight human.
+loadLightweightHuman().then(()=>{
+  window.JarvisAvatar?.postMessage(JSON.stringify({type:'diagnostic',message:'Animated 3D model loaded'}));
+  if(new URLSearchParams(location.search).get('detail')==='1'){
+    setTimeout(()=>window.jarvisTryDetailedModel(),1600);
+  }
+}).catch(error=>{
+  window.JarvisAvatar?.postMessage(JSON.stringify({
+    type:'diagnostic',
+    message:'Lightweight human failed: '+String(error?.message||error).slice(0,140)
+  }));
+  window.__jarvisAvatarBackup?.show('3D model unavailable');
+});
 
 function autonomousMotion(now,dt){
   if(!ready) return;
