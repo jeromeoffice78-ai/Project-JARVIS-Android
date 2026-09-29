@@ -910,3 +910,26 @@ def test_jarvis_websocket_authenticated_handshake():
             cancelled = websocket.receive_json()
             assert cancelled["type"] == "response_cancelled"
             assert cancelled["request_id"] == "request-test-1"
+
+
+
+def test_phone_history_delegates_verified_session_to_gateway(monkeypatch):
+    """The mobile app's authenticated bearer works without a legacy CLIENT_TOKEN."""
+    monkeypatch.delenv("VAPI_API_KEY", raising=False)
+    delegated = []
+
+    async def fake_gateway(operation, *, authorization=None, **payload):
+        delegated.append((operation, authorization, payload))
+        return {"messages": []}
+
+    monkeypatch.setattr(api, "_phone_gateway_call", fake_gateway)
+    with TestClient(api.app) as client:
+        response = client.get(
+            "/v1/phone/messages",
+            headers={"Authorization": "Bearer test-client-token"},
+        )
+    assert response.status_code == 200
+    assert response.json()["messages"] == []
+    assert delegated == [
+        ("list_messages", "Bearer test-client-token", {"limit": 100})
+    ]
