@@ -213,68 +213,29 @@ class JarvisPresenceScreen
                       ),
                     ),
                   ),
-                Positioned(
-                  left: 18,
-                  right: 18,
-                  bottom: 18,
-                  child: Card(
-                    color: Colors.black
-                        .withValues(alpha: 0.68),
-                    child: Padding(
-                      padding:
-                          const EdgeInsets.all(14),
-                      child: Column(
-                        mainAxisSize:
-                            MainAxisSize.min,
-                        children: <Widget>[
-                          Row(
-                            mainAxisAlignment:
-                                MainAxisAlignment
-                                    .center,
-                            children: <Widget>[
-                              _StatusDot(
-                                active:
-                                    voice.isConnected,
-                              ),
-                              const SizedBox(
-                                width: 8,
-                              ),
-                              Text(
-                                stateLabel,
-                                style:
-                                    const TextStyle(
-                                  color:
-                                      Colors.white,
-                                  fontWeight:
-                                      FontWeight.bold,
-                                  letterSpacing: 2,
-                                ),
-                              ),
-                            ],
-                          ),
-                          if (voice.transcript
-                              .trim()
-                              .isNotEmpty) ...[
-                            const SizedBox(
-                              height: 10,
-                            ),
-                            Text(
-                              voice.transcript,
-                              maxLines: 3,
-                              overflow:
-                                  TextOverflow
-                                      .ellipsis,
-                              textAlign:
-                                  TextAlign.center,
-                              style:
-                                  const TextStyle(
-                                color:
-                                    Colors.white70,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
+              ],
+            ),
+          ),
+          // Keep call/voice status outside the renderer. It must not cover
+          // JARVIS's face, body, or WebView diagnostic controls.
+          Container(
+            color: Colors.black,
+            padding: const EdgeInsets.fromLTRB(16, 5, 16, 5),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: <Widget>[
+                _StatusDot(active: voice.isConnected),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    stateLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12,
+                      letterSpacing: 1.3,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),
