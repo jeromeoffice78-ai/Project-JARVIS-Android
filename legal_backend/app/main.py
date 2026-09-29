@@ -985,16 +985,26 @@ def _vapi_message_from_call(call: dict[str, object]) -> dict[str, object]:
 
 async def _phone_gateway_call(
     operation: str,
+    *,
+    authorization: str | None = None,
     **payload: object,
 ) -> dict[str, object]:
-    if not CLIENT_TOKEN or not PHONE_GATEWAY_URL:
+    # Forward the already authenticated caller's short-lived JARVIS token
+    # when reading their call history. The Supabase Edge Function verifies
+    # it through /v1/auth/check before accessing private message rows.
+    # Server-side webhooks still require a separately configured service token.
+    delegated_auth = (authorization or "").strip()
+    gateway_auth = delegated_auth or (
+        f"Bearer {CLIENT_TOKEN}" if CLIENT_TOKEN else ""
+    )
+    if not gateway_auth or not PHONE_GATEWAY_URL:
         raise RuntimeError("Phone message gateway is not configured.")
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         response = await client.post(
             PHONE_GATEWAY_URL,
             headers={
-                "Authorization": f"Bearer {CLIENT_TOKEN}",
+                "Authorization": gateway_auth,
                 "Content-Type": "application/json",
             },
             json={"operation": operation, **payload},
@@ -1775,6 +1785,7 @@ async def phone_receptionist_status(
 @app.get("/v1/phone/messages")
 async def phone_receptionist_messages(
     authenticated_role: Annotated[str, Depends(authenticate_request)],
+    authorization: Annotated[str | None, Header()] = None,
 ) -> dict[str, object]:
     del authenticated_role
 
@@ -1793,7 +1804,11 @@ async def phone_receptionist_messages(
             pass
 
     try:
-        payload = await _phone_gateway_call("list_messages", limit=100)
+        payload = await _phone_gateway_call(
+            "list_messages",
+            authorization=authorization,
+            limit=100,
+        )
         messages = payload.get("messages", [])
         return {"messages": messages if isinstance(messages, list) else []}
     except Exception as exc:
