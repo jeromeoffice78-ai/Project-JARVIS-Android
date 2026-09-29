@@ -10,7 +10,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import httpx
 import phonenumbers
@@ -216,10 +216,16 @@ class HealthResponse(BaseModel):
     client_auth_configured: bool
 
 
+class FrontierChatTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=3_000)
+
+
 class FrontierQueryRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=40_000)
     mode: str = Field(default="reason", min_length=1, max_length=32)
     image_base64: str | None = Field(default=None, max_length=20_000_000)
+    history: list[FrontierChatTurn] = Field(default_factory=list, max_length=16)
 
 
 class FrontierQueryResponse(BaseModel):
@@ -2408,6 +2414,12 @@ async def frontier_query(
         f"Authenticated application role: {authenticated_role}."
     )
 
+    prior_turns = [
+        {"role": turn.role, "content": turn.content.strip()}
+        for turn in payload.history
+        if turn.content.strip()
+    ]
+    # The old single-turn request remains supported for existing app builds.
     input_payload: object = payload.prompt.strip()
     image_url: str | None = None
 
@@ -2418,6 +2430,7 @@ async def frontier_query(
 
     if image_url:
         input_payload = [
+            *prior_turns,
             {
                 "role": "user",
                 "content": [
@@ -2430,7 +2443,12 @@ async def frontier_query(
                         "image_url": image_url,
                     },
                 ],
-            }
+            },
+        ]
+    elif prior_turns:
+        input_payload = [
+            *prior_turns,
+            {"role": "user", "content": payload.prompt.strip()},
         ]
 
     # The Android Chat and Voice tabs both call this endpoint. A Groq or
@@ -2475,6 +2493,7 @@ async def frontier_query(
                             "or any device tool that was not actually run."
                         ),
                     },
+                    *prior_turns,
                     {"role": "user", "content": payload.prompt.strip()},
                 ],
             )
