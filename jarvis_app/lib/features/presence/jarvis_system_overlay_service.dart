@@ -19,6 +19,20 @@ class JarvisSystemOverlayService {
   static const MethodChannel _channel =
       MethodChannel('jarvis.overlay');
 
+  Future<bool> setAppForeground(bool foreground) async {
+    try {
+      return await _channel.invokeMethod<bool>(
+            'setAppForeground',
+            <String, bool>{'foreground': foreground},
+          ) ??
+          false;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
   Future<JarvisSystemOverlayStatus>
       status() async {
     try {
