@@ -178,11 +178,17 @@ jobs:
         run: |
           flutter test --reporter expanded test/jarvis_avatar_voice_bridge_test.dart test/jarvis_autonomy_intents_test.dart test/jarvis_phone_safety_test.dart test/jarvis_avatar_assets_test.dart
 
-      - name: Build ARM64 release
+      - name: Build SP545C compatible ARM releases
         working-directory: jarvis_app
         run: |
           set -euo pipefail
+          mkdir -p ../dist/unsigned
           flutter build apk --release --target-platform android-arm64             --dart-define=JARVIS_HTTP_BASE="$JARVIS_HTTP_BASE"             --dart-define=GOOGLE_SERVER_CLIENT_ID="$GOOGLE_SERVER_CLIENT_ID"
+          cp build/app/outputs/flutter-apk/app-release.apk ../dist/unsigned/jarvis-arm64-unsigned.apk
+          flutter clean
+          flutter pub get
+          flutter build apk --release --target-platform android-arm             --dart-define=JARVIS_HTTP_BASE="$JARVIS_HTTP_BASE"             --dart-define=GOOGLE_SERVER_CLIENT_ID="$GOOGLE_SERVER_CLIENT_ID"
+          cp build/app/outputs/flutter-apk/app-release.apk ../dist/unsigned/jarvis-arm32-unsigned.apk
 
       - name: Sign and validate final APK
         shell: bash
@@ -192,20 +198,27 @@ jobs:
           AAPT="$(find "${ANDROID_HOME}/build-tools" -type f -name aapt | sort -V | tail -1)"
           mkdir -p dist
 
-          "$APKSIGNER" sign             --key /tmp/jarvis_signing/private-key.pk8             --cert /tmp/jarvis_signing/certificate.pem             --out dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk             jarvis_app/build/app/outputs/flutter-apk/app-release.apk
+          "$APKSIGNER" sign             --key /tmp/jarvis_signing/private-key.pk8             --cert /tmp/jarvis_signing/certificate.pem             --out dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk             dist/unsigned/jarvis-arm64-unsigned.apk
+          "$APKSIGNER" sign             --key /tmp/jarvis_signing/private-key.pk8             --cert /tmp/jarvis_signing/certificate.pem             --out dist/JARVIS-AI-ASSISTANT-SP545C-ARM32.apk             dist/unsigned/jarvis-arm32-unsigned.apk
 
           "$APKSIGNER" verify --verbose --print-certs             dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk
+          "$APKSIGNER" verify --verbose --print-certs             dist/JARVIS-AI-ASSISTANT-SP545C-ARM32.apk
 
           "$AAPT" dump badging dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk             | tee dist/badging.txt
           grep "package: name='com.jarvis.project_jarvis'" dist/badging.txt
           grep "native-code: 'arm64-v8a'" dist/badging.txt
           grep "application-label:'JARVIS AI Assistant'" dist/badging.txt
+          "$AAPT" dump badging dist/JARVIS-AI-ASSISTANT-SP545C-ARM32.apk             | tee dist/badging-sp545c.txt
+          grep "package: name='com.jarvis.project_jarvis'" dist/badging-sp545c.txt
+          grep "native-code: 'armeabi-v7a'" dist/badging-sp545c.txt
+          grep "application-label:'JARVIS AI Assistant'" dist/badging-sp545c.txt
 
           SHA1_COLON="$(openssl x509 -in /tmp/jarvis_signing/certificate.pem -noout -fingerprint -sha1 | sed 's/^sha1 Fingerprint=//I')"
           echo "ANDROID_PACKAGE=com.jarvis.project_jarvis" | tee dist/OAUTH-ANDROID-IDENTITY.txt
           echo "SIGNING_SHA1=${SHA1_COLON}" | tee -a dist/OAUTH-ANDROID-IDENTITY.txt
           sha256sum dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk             | tee dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk.sha256
-          ls -lh dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk
+          sha256sum dist/JARVIS-AI-ASSISTANT-SP545C-ARM32.apk             | tee dist/JARVIS-AI-ASSISTANT-SP545C-ARM32.apk.sha256
+          ls -lh dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk dist/JARVIS-AI-ASSISTANT-SP545C-ARM32.apk
 
           rm -f /tmp/jarvis_signing/identity.json             /tmp/jarvis_signing/private-key.pem             /tmp/jarvis_signing/private-key.pk8
 
@@ -216,6 +229,8 @@ jobs:
           path: |
             dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk
             dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk.sha256
+            dist/JARVIS-AI-ASSISTANT-SP545C-ARM32.apk
+            dist/JARVIS-AI-ASSISTANT-SP545C-ARM32.apk.sha256
             dist/OAUTH-ANDROID-IDENTITY.txt
           compression-level: 0
           retention-days: 30
@@ -228,9 +243,9 @@ jobs:
           set -euo pipefail
           TAG="jarvis-conversation-autonomy-v1.3.13"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG"               dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk               dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk.sha256               dist/OAUTH-ANDROID-IDENTITY.txt               --clobber
+            gh release upload "$TAG"               dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk               dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk.sha256               dist/JARVIS-AI-ASSISTANT-SP545C-ARM32.apk               dist/JARVIS-AI-ASSISTANT-SP545C-ARM32.apk.sha256               dist/OAUTH-ANDROID-IDENTITY.txt               --clobber
           else
-            gh release create "$TAG"               dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk               dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk.sha256               dist/OAUTH-ANDROID-IDENTITY.txt               --target "$GITHUB_SHA"               --title "JARVIS AI Assistant v1.3.13 - Conversational Animated Autonomy ARM64"               --notes "JARVIS AI Assistant 1.3.13: secure on-device chat history and context-aware follow-ups; visible animated human in Chat responding to typed and spoken replies; smaller bundled human 3D fallback; explicit voice- or text-launched, step-limited autonomous goals with approval checks and visible progress. Unattended Android background operation and ChatGPT feature parity are not claimed. Branded permanent-signature ARM64 APK."
+            gh release create "$TAG"               dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk               dist/JARVIS-AI-ASSISTANT-FIXED-ARM64.apk.sha256               dist/JARVIS-AI-ASSISTANT-SP545C-ARM32.apk               dist/JARVIS-AI-ASSISTANT-SP545C-ARM32.apk.sha256               dist/OAUTH-ANDROID-IDENTITY.txt               --target "$GITHUB_SHA"               --title "JARVIS AI Assistant v1.3.13 - Conversational Animated Autonomy ARM64"               --notes "JARVIS AI Assistant 1.3.13: secure on-device chat history and context-aware follow-ups; visible animated human in Chat responding to typed and spoken replies; smaller bundled human 3D fallback; explicit voice- or text-launched, step-limited autonomous goals with approval checks and visible progress. Unattended Android background operation and ChatGPT feature parity are not claimed. Branded permanent-signature ARM64 APK."
           fi
       # The integration tests also exercise socket/platform-channel behavior.
       # Run them after the signed APK is published so a hanging test runner
