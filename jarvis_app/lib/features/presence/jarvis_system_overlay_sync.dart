@@ -21,12 +21,39 @@ class JarvisSystemOverlaySync
 }
 
 class _JarvisSystemOverlaySyncState
-    extends ConsumerState<JarvisSystemOverlaySync> {
+    extends ConsumerState<JarvisSystemOverlaySync>
+    with WidgetsBindingObserver {
   static const JarvisSystemOverlayService
       _overlay =
       JarvisSystemOverlayService();
 
   String _lastFingerprint = '';
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // A dedicated Jarvis screen renders the character itself. Do not keep
+    // a second GLB renderer on top of it through Android's system overlay.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_overlay.setAppForeground(true));
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_overlay.setAppForeground(true));
+    } else if (state == AppLifecycleState.paused) {
+      unawaited(_overlay.setAppForeground(false));
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
