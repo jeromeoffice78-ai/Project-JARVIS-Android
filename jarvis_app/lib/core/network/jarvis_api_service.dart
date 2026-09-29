@@ -501,6 +501,7 @@ class JarvisApiService {
     required String prompt,
     required String mode,
     String? imageBase64,
+    List<Map<String, String>> history = const <Map<String, String>>[],
   }) async {
     final response = await _client.post(
       Uri.parse(
@@ -510,6 +511,15 @@ class JarvisApiService {
       body: jsonEncode(<String, dynamic>{
         'prompt': prompt,
         'mode': mode,
+        if (history.isNotEmpty)
+          'history': history.take(16).map(
+            (Map<String, String> turn) => <String, String>{
+              'role': turn['role'] ?? 'user',
+              'content': (turn['content'] ?? '').length > 3000
+                  ? (turn['content'] ?? '').substring(0, 3000)
+                  : (turn['content'] ?? ''),
+            },
+          ).toList(growable: false),
         if (imageBase64 != null &&
             imageBase64.isNotEmpty)
           'image_base64': imageBase64,
