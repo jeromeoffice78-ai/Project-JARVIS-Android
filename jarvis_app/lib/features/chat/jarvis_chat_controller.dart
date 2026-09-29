@@ -9,6 +9,15 @@ import '../../core/network/jarvis_ws_service.dart';
 import '../../core/protocol/jarvis_protocol.dart';
 import '../capabilities/jarvis_capability_service.dart';
 
+/// A visible chat turn. This is in-session conversation context, not a
+/// long-term memory claim or a record of confirmed external actions.
+final class JarvisChatTurn {
+  const JarvisChatTurn({required this.role, required this.content});
+
+  final String role;
+  final String content;
+}
+
 enum JarvisChatStatus {
   idle,
   thinking,
@@ -97,6 +106,31 @@ class JarvisChatController {
   String? _activeRequestId;
   int _expectedChunkIndex = 0;
   bool _disposed = false;
+  final List<JarvisChatTurn> _conversation = <JarvisChatTurn>[];
+  final Set<String> _recordedAnswers = <String>{};
+  bool _autonomyRequest = false;
+
+  /// Most recent completed chat turns; capped so mobile memory and provider
+  /// context do not grow without bound.
+  List<JarvisChatTurn> get conversation =>
+      List<JarvisChatTurn>.unmodifiable(_conversation);
+
+  void clearConversation() {
+    _conversation.clear();
+    _recordedAnswers.clear();
+    _emitState(const JarvisChatState.initial());
+  }
+
+  void _appendTurn(String role, String content) {
+    final String trimmed = content.trim();
+    if (trimmed.isEmpty) return;
+    _conversation.add(
+      JarvisChatTurn(role: role, content: trimmed),
+    );
+    if (_conversation.length > 24) {
+      _conversation.removeRange(0, _conversation.length - 24);
+    }
+  }
 
   Stream<JarvisChatState> get stateStream => _stateController.stream;
   Stream<String> get currentResponseStream =>
@@ -114,6 +148,12 @@ class JarvisChatController {
 
     if (normalized.isEmpty) {
       return null;
+    }
+
+    _autonomyRequest =
+        normalized.startsWith('JARVIS AUTONOMOUS EXECUTION MODE');
+    if (!_autonomyRequest) {
+      _appendTurn('user', normalized);
     }
 
     final String? localRequestId =
@@ -194,10 +234,32 @@ class JarvisChatController {
     required bool autoPrint,
   }) async {
     try {
+      // The final user turn is already in the prompt. Pass only prior turns
+      // so the model receives a genuine multi-turn conversation.
+      final List<JarvisChatTurn> prior =
+          _autonomyRequest ? const <JarvisChatTurn>[] : _conversation.length > 1
+              ? _conversation.sublist(0, _conversation.length - 1)
+              : const <JarvisChatTurn>[];
+      final List<Map<String, String>> history = prior
+          .where((JarvisChatTurn turn) =>
+              turn.role == 'user' || turn.role == 'assistant')
+          .toList(growable: false)
+          .reversed
+          .take(16)
+          .toList(growable: false)
+          .reversed
+          .map((JarvisChatTurn turn) => <String, String>{
+                'role': turn.role,
+                'content': turn.content.length > 3000
+                    ? turn.content.substring(0, 3000)
+                    : turn.content,
+              })
+          .toList(growable: false);
       final JarvisFrontierResult result =
           await _apiService.frontierQuery(
         prompt: prompt,
         mode: 'reason',
+        history: history,
       );
 
       if (_disposed ||
@@ -1379,6 +1441,15 @@ Then add one blank line and the complete document body. Do not include markdown 
       return;
     }
 
+    final String? id = state.requestId;
+    if (!_autonomyRequest &&
+        state.status == JarvisChatStatus.completed &&
+        id != null &&
+        !_recordedAnswers.contains(id) &&
+        state.responseText.trim().isNotEmpty) {
+      _recordedAnswers.add(id);
+      _appendTurn('assistant', state.responseText);
+    }
     _state = state;
     _stateController.add(state);
   }
