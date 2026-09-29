@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../chat/jarvis_chat_controller.dart';
+import '../autonomy/jarvis_autonomy_intents.dart';
 import 'jarvis_voice_service.dart';
 
 /// Applies to every completed Jarvis answer, including typed Chat requests.
@@ -30,8 +31,10 @@ class JarvisVoiceController {
   JarvisVoiceController({
     required JarvisVoiceService voiceService,
     required JarvisChatController chatController,
+    Future<void> Function(String goal)? onAutonomousGoal,
   })  : _voiceService = voiceService,
-        _chatController = chatController {
+        _chatController = chatController,
+        _onAutonomousGoal = onAutonomousGoal {
     _finalTranscriptSubscription =
         _voiceService.finalTranscriptStream.listen(
       (String transcript) {
@@ -66,6 +69,7 @@ class JarvisVoiceController {
 
   final JarvisVoiceService _voiceService;
   final JarvisChatController _chatController;
+  final Future<void> Function(String goal)? _onAutonomousGoal;
   // Create preferences only when the wake phrase is read or saved.
   // This also keeps text-to-speech independent of Android storage startup.
   SharedPreferencesAsync? _preferences;
@@ -337,6 +341,24 @@ class JarvisVoiceController {
       return null;
     }
 
+    final String? autonomousGoal = parseJarvisAutonomousGoal(normalized);
+    if (autonomousGoal != null && _onAutonomousGoal != null) {
+      unawaited(
+        _onAutonomousGoal!(autonomousGoal).then((_) async {
+          await _voiceService.speak(
+            'Autonomous goal accepted. I will ask before '
+            'any action that requires approval.',
+          );
+        }).catchError((Object error) async {
+          await _voiceService.speak(
+            'I could not start that autonomous goal. '
+            'Check the agent status screen.',
+          );
+        }),
+      );
+      return null;
+    }
+
     final String? requestId =
         _chatController.askJarvis(
       normalized,
@@ -456,7 +478,7 @@ class JarvisVoiceController {
         state,
         spokenReplies: _spokenReplies,
         lastSpokenRequestId: _lastSpokenRequestId,
-      )) {
+      ) && !state.responseText.contains('AUTONOMY_STATUS:')) {
         _lastSpokenRequestId = requestId;
         await _voiceService.speak(state.responseText);
       }
