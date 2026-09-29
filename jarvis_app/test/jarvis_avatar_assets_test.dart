@@ -18,7 +18,16 @@ void main() {
     final String html = await rootBundle
         .loadString('assets/avatar/jarvis_human_avatar.html');
     expect(html, contains('three.module.js'));
-    expect(html, contains('loadLightweightHuman'));
+    expect(html, contains('loadLightweightHuman().then'));
+    expect(html, contains('window.jarvisTryDetailedModel'));
+    expect(html, contains('prepareDetailedTextures();'));
+    // A lightweight real GLB must render before any heavyweight models or
+    // textures are requested; the standby picture is only a last resort.
+    expect(html, isNot(contains("const faceBC=texture(")));
+    expect(
+      html.indexOf('loadLightweightHuman().then'),
+      lessThan(html.indexOf('function autonomousMotion(')),
+    );
     expect(html, contains('__jarvisAvatarBackup'));
     expect(html, contains('jarvis_ai_assistant_brand_icon.png'));
     expect(html, contains("type:'fallback'"));
