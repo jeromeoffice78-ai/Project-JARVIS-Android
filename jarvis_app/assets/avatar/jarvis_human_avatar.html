@@ -404,38 +404,36 @@ function fitCamera(){
   camera.position.set(0,h*.58,Math.max(3.0,h*1.55));
   camera.lookAt(0,h*.54,0);
 }
-function buildSimplified3DHuman(){
-  // Keep a moving THREE.js figure available even when the downloaded GLB
-  // model or textures cannot be decoded on a particular Android WebView.
-  body=new THREE.Group();
-  const skin=new THREE.MeshStandardMaterial({color:0x9e765c,roughness:.8});
-  const hairColor=new THREE.MeshStandardMaterial({color:0x191513,roughness:.9});
-  const shirt=new THREE.MeshStandardMaterial({color:0x101b2c,roughness:.55});
-  const pants=new THREE.MeshStandardMaterial({color:0x151b24,roughness:.8});
-  const eye=new THREE.MeshStandardMaterial({color:0x14100e});
-  const mouthMat=new THREE.MeshStandardMaterial({color:0x462a29});
-  const mesh=(geo,mat,x,y,z)=>{const m=new THREE.Mesh(geo,mat);m.position.set(x,y,z);body.add(m);return m;};
-  mesh(new THREE.CylinderGeometry(.24,.18,.85,16),shirt,0,1.14,0);
-  mesh(new THREE.CylinderGeometry(.095,.11,.22,12),skin,0,1.65,0);
-  mesh(new THREE.SphereGeometry(.22,16,12),skin,0,1.83,0);
-  mesh(new THREE.SphereGeometry(.227,16,12,0,Math.PI*2,0,Math.PI*.34),hairColor,0,1.91,0);
-  mesh(new THREE.SphereGeometry(.019,8,6),eye,-.084,1.845,.188);
-  mesh(new THREE.SphereGeometry(.019,8,6),eye,.084,1.845,.188);
-  fallbackMouth=mesh(new THREE.SphereGeometry(.042,8,6),mouthMat,0,1.741,.205);
-  fallbackMouth.scale.y=.2;
-  for(const side of [-1,1]){
-    mesh(new THREE.CylinderGeometry(.079,.061,.7,12),shirt,side*.315,1.18,0).rotation.z=side*.18;
-    mesh(new THREE.CylinderGeometry(.11,.085,.87,12),pants,side*.112,.43,0);
-    mesh(new THREE.BoxGeometry(.20,.105,.35),hairColor,side*.11,.055,.12);
-  }
+// A second, independently bundled human mesh costs a fraction of the
+// memory required to decode three separate Vitruvian meshes and textures.
+async function loadLightweightHuman(){
+  const gltf=await loader.loadAsync(asset('CesiumMan.glb'));
+  body=gltf.scene;
+  if(!body)throw new Error('Lightweight human scene is empty');
+  headBone=findByContains(body,'Head');
+  headPivot=headBone;
   root.add(body);
+  mixer=new THREE.AnimationMixer(body);
+  actions={};
+  activeAction=null;
+  for(const clip of (gltf.animations||[])){
+    actions[clip.name]=mixer.clipAction(clip);
+    actions[clip.name].setLoop(THREE.LoopRepeat,Infinity);
+  }
+  // Even if the GLB has no motion clips, autonomousMotion moves the
+  // character through its scene and turns/nods in speaking mode.
+  if(gltf.animations?.length){
+    actions[gltf.animations[0].name].play();
+  }
   fitCamera();
   ready=true;
   window.__jarvisDetailedModelReady=true;
   clearTimeout(window.__jarvisAvatarWatchdog);
   window.__jarvisAvatarBackup?.hide();
-  status.textContent='JARVIS simplified 3D mode';
-  window.JarvisAvatar?.postMessage(JSON.stringify({type:'ready',mode:'simplified-3d'}));
+  status.textContent='JARVIS lightweight human active';
+  window.JarvisAvatar?.postMessage(JSON.stringify({
+    type:'ready',mode:'lightweight-human'
+  }));
 }
 async function load(){
   try{
@@ -498,9 +496,13 @@ async function load(){
       type:'diagnostic',message:String(e?.message||e).slice(0,160)
     }));
     try {
-      buildSimplified3DHuman();
+      await loadLightweightHuman();
     } catch(fallbackError) {
-      window.__jarvisAvatarBackup?.show('3D model and renderer unavailable');
+      window.JarvisAvatar?.postMessage(JSON.stringify({
+        type:'diagnostic',
+        message:'Lightweight human unavailable: '+String(fallbackError?.message||fallbackError).slice(0,120)
+      }));
+      window.__jarvisAvatarBackup?.show('3D hardware or model unavailable');
     }
   }
 }
