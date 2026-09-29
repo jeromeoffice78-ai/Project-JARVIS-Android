@@ -49,6 +49,21 @@ class _JarvisChatScreenState
     }
   }
 
+  void _readAloud(String message) {
+    unawaited(
+      ref.read(jarvisVoiceServiceProvider).speak(message).then((_) {
+        if (!mounted) return;
+        final String? diagnostic =
+            ref.read(jarvisVoiceServiceProvider).lastError;
+        if (diagnostic?.isNotEmpty == true) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(diagnostic!)),
+          );
+        }
+      }),
+    );
+  }
+
   void _scrollToEnd() {
     WidgetsBinding.instance.addPostFrameCallback(
       (_) {
@@ -78,50 +93,54 @@ class _JarvisChatScreenState
         final JarvisChatState state =
             snapshot.data ??
                 const JarvisChatState.initial();
-
-        if (state.responseText.isNotEmpty) {
+        final List<JarvisChatTurn> turns = controller.conversation;
+        if (turns.isNotEmpty || state.responseText.isNotEmpty) {
           _scrollToEnd();
         }
 
         return Column(
           children: <Widget>[
+            if (turns.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 4, 14, 0),
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: state.isGenerating
+                        ? null
+                        : () {
+                            controller.clearConversation();
+                            setState(() {});
+                          },
+                    icon: const Icon(Icons.add_comment_outlined, size: 18),
+                    label: const Text('NEW CHAT'),
+                  ),
+                ),
+              ),
             Expanded(
               child: ListView(
                 controller: _scroll,
                 padding: const EdgeInsets.all(18),
                 children: <Widget>[
-                  if (state.responseText.isEmpty &&
-                      state.status ==
-                          JarvisChatStatus.idle)
+                  if (turns.isEmpty &&
+                      state.responseText.isEmpty &&
+                      state.status == JarvisChatStatus.idle)
                     const _WelcomeCard(),
-                  if (state.status ==
-                      JarvisChatStatus.thinking)
+                  ...turns.map(
+                    (JarvisChatTurn turn) => turn.role == 'user'
+                        ? _UserMessageBubble(text: turn.content)
+                        : _ResponseCard(
+                            text: turn.content,
+                            onReadAloud: () => _readAloud(turn.content),
+                          ),
+                  ),
+                  if (state.status == JarvisChatStatus.thinking)
                     const _ThinkingCard(),
-                  if (state.responseText.isNotEmpty)
-                    _ResponseCard(
-                      text: state.responseText,
-                      onReadAloud: state.status == JarvisChatStatus.completed
-                          ? () {
-                              unawaited(
-                                ref
-                                    .read(jarvisVoiceServiceProvider)
-                                    .speak(state.responseText)
-                                    .then((_) {
-                                      if (!context.mounted) return;
-                                      final String? diagnostic = ref
-                                          .read(jarvisVoiceServiceProvider)
-                                          .lastError;
-                                      if (diagnostic?.isNotEmpty == true) {
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
-                                          SnackBar(content: Text(diagnostic!)),
-                                        );
-                                      }
-                                    }),
-                              );
-                            }
-                          : null,
-                    ),
+                  if (state.responseText.isNotEmpty &&
+                      (state.isGenerating ||
+                          state.status == JarvisChatStatus.error ||
+                          state.status == JarvisChatStatus.cancelled))
+                    _ResponseCard(text: state.responseText),
                   if (state.errorMessage != null)
                     _ErrorCard(
                       message: state.errorMessage!,
@@ -262,6 +281,34 @@ class _ThinkingCard extends StatelessWidget {
             SizedBox(width: 12),
             Text('Jarvis is processing...'),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _UserMessageBubble extends StatelessWidget {
+  const _UserMessageBubble({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerRight,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.sizeOf(context).width * 0.85,
+        ),
+        child: Card(
+          color: Theme.of(context).colorScheme.primaryContainer,
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: SelectableText(
+              text,
+              style: Theme.of(context).textTheme.bodyLarge,
+            ),
+          ),
         ),
       ),
     );
