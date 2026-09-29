@@ -46,6 +46,12 @@ class JarvisOverlayService : Service() {
         @Volatile
         var isRunning: Boolean = false
             private set
+
+        // The in-app Presence screen already renders its own WebView.
+        // Starting a second GPU-heavy system overlay on top of it
+        // duplicates JARVIS and competes for Android's GPU memory.
+        @Volatile
+        var isAppForeground: Boolean = true
     }
 
     private lateinit var windowManager: WindowManager
@@ -119,8 +125,10 @@ class JarvisOverlayService : Service() {
             }
 
         startAsForeground()
-        ensureOverlay()
         isRunning = true
+        if (!isAppForeground) {
+            ensureOverlay()
+        }
 
         return START_STICKY
     }
@@ -160,6 +168,33 @@ class JarvisOverlayService : Service() {
     ) {
         lastStateJson = stateJson
         applyLatestState()
+    }
+
+    fun onAppVisibilityChanged(foreground: Boolean) {
+        isAppForeground = foreground
+        if (foreground) {
+            // Release the hidden WebView instead of retaining a second
+            // WebGL context next to the full-screen 3D character.
+            handler.removeCallbacks(wanderRunnable)
+            movementAnimator?.cancel()
+            movementAnimator = null
+            pageReady = false
+            val view = avatarView
+            avatarView = null
+            layoutParams = null
+            if (view != null) {
+                try {
+                    windowManager.removeView(view)
+                } catch (_: Throwable) {
+                    // May already be detached during activity transitions.
+                }
+                view.stopLoading()
+                view.loadUrl("about:blank")
+                view.destroy()
+            }
+        } else if (isRunning) {
+            ensureOverlay()
+        }
     }
 
     private fun startAsForeground() {
