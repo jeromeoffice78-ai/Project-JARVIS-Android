@@ -328,6 +328,14 @@ final jarvisVoiceControllerProvider =
     chatController: ref.watch(
       jarvisChatControllerProvider,
     ),
+    onAutonomousGoal: (String goal) async {
+      final JarvisAutonomyController agent =
+          ref.read(jarvisAutonomyControllerProvider);
+      if (agent.state.isActive) {
+        throw StateError('Another autonomous goal is already running.');
+      }
+      await agent.startGoal(goal);
+    },
   );
 
   ref.onDispose(() {
