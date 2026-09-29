@@ -68,7 +68,7 @@ class _JarvisHumanAvatarViewState
               if (mounted) {
                 setState(() {
                   _ready = true;
-                  _fallbackMode = data['mode'] == 'simplified-3d';
+                  _fallbackMode = data['mode'] == 'lightweight-human';
                   _errorMessage = null;
                 });
               }
