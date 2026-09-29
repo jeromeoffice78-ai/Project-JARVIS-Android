@@ -9,6 +9,7 @@ import '../../core/network/providers.dart';
 import '../chat/jarvis_chat_controller.dart';
 import '../chat/jarvis_chat_screen.dart';
 import '../autonomy/jarvis_autonomy_screen.dart';
+import '../autonomy/jarvis_autonomy_controller.dart';
 import '../capabilities/jarvis_action_approval_service.dart';
 import '../devices/jarvis_devices_screen.dart';
 import '../frontier/jarvis_frontier_screen.dart';
@@ -58,6 +59,8 @@ class _JarvisShellState
     ref.read(jarvisCloudDeviceNetworkProvider);
 
     ref.read(jarvisVoiceControllerProvider);
+    // Restore any user-approved goal after restart; never silently resume it.
+    ref.read(jarvisAutonomyControllerProvider);
 
     _approvalSubscription = ref
         .read(
@@ -344,6 +347,7 @@ class _JarvisShellState
                 state: connection,
               ),
               const _MemoryBanner(),
+              const _AutonomyProgressBanner(),
               const JarvisMusicNowPlaying(),
               Expanded(
                 child: IndexedStack(
@@ -407,6 +411,56 @@ class _JarvisShellState
             label: 'System',
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _AutonomyProgressBanner extends ConsumerWidget {
+  const _AutonomyProgressBanner();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final JarvisAutonomyState state =
+        ref.watch(jarvisAutonomyStateProvider).valueOrNull ??
+            ref.read(jarvisAutonomyControllerProvider).state;
+    if (state.status == JarvisAutonomyStatus.idle) {
+      return const SizedBox.shrink();
+    }
+    final bool working = state.isActive;
+    return Material(
+      color: working
+          ? Colors.teal.withValues(alpha: .15)
+          : Colors.amber.withValues(alpha: .11),
+      child: InkWell(
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (BuildContext context) => const JarvisAutonomyScreen(),
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            children: <Widget>[
+              Icon(
+                working ? Icons.autorenew : Icons.smart_toy_outlined,
+                size: 19,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'AUTONOMOUS AGENT: ${state.status.name.toUpperCase()}'
+                  ' • STEP ${state.step}/${state.maxSteps}'
+                  '\\n${state.goal}',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelMedium,
+                ),
+              ),
+              const Icon(Icons.chevron_right),
+            ],
+          ),
+        ),
       ),
     );
   }
