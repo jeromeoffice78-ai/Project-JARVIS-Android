@@ -47,6 +47,7 @@ flutter:
     - assets/branding/jarvis_ai_assistant_brand_icon.png
     - assets/models/SPEAKER-ECAPA-LICENSE.md
     - assets/models/CesiumMan-LICENSE.md
+    - assets/models/CesiumMan.glb
     - assets/avatar/jarvis_human_avatar.html
     - assets/avatar/VITRUVIAN-NOTICE.md
     - assets/vendor/three/three.module.js
