@@ -18,7 +18,7 @@ void main() {
     final String html = await rootBundle
         .loadString('assets/avatar/jarvis_human_avatar.html');
     expect(html, contains('three.module.js'));
-    expect(html, contains('buildSimplified3DHuman'));
+    expect(html, contains('loadLightweightHuman'));
     expect(html, contains('__jarvisAvatarBackup'));
     expect(html, contains('jarvis_ai_assistant_brand_icon.png'));
     expect(html, contains("type:'fallback'"));
@@ -62,6 +62,7 @@ void main() {
       'assets/vendor/three/three.module.js',
       'assets/vendor/three/addons/loaders/GLTFLoader.js',
       'assets/vendor/three/addons/utils/BufferGeometryUtils.js',
+      'assets/models/CesiumMan.glb',
       'assets/models/vitruvian_body.glb',
       'assets/models/vitruvian_head.glb',
       'assets/models/hairtool_cards.glb',
