@@ -7,6 +7,9 @@ import '../../core/network/providers.dart';
 import '../devices/jarvis_cloud_device_network.dart';
 import '../realtime/jarvis_realtime_voice_service.dart';
 import 'jarvis_human_avatar_view.dart';
+import 'jarvis_avatar_voice_bridge.dart';
+import '../chat/jarvis_chat_controller.dart';
+import '../voice/jarvis_voice_service.dart';
 
 class JarvisAmbientAvatarLayer
     extends ConsumerStatefulWidget {
@@ -117,9 +120,20 @@ class _JarvisAmbientAvatarLayerState
       jarvisRealtimeVoiceStateProvider,
     );
 
-    final JarvisRealtimeVoiceState voice =
+    final JarvisRealtimeVoiceState liveVoice =
         voiceAsync.valueOrNull ??
             const JarvisRealtimeVoiceState.initial();
+    final JarvisVoiceState localVoice =
+        ref.watch(jarvisVoiceStateProvider).valueOrNull ??
+            ref.read(jarvisVoiceServiceProvider).state;
+    final JarvisChatState chat =
+        ref.watch(jarvisChatStateProvider).valueOrNull ??
+            ref.read(jarvisChatControllerProvider).state;
+    final JarvisRealtimeVoiceState voice = avatarStateForConversation(
+      realtime: liveVoice,
+      localVoice: localVoice,
+      chat: chat,
+    );
 
     final JarvisCloudDeviceNetwork cloud =
         ref.watch(
