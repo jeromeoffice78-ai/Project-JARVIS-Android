@@ -65,7 +65,7 @@ class JarvisChatController {
   })  : _wsService = wsService,
         _apiService = apiService,
         _capabilityService = capabilityService {
-    unawaited(_restoreConversation());
+    _historyReady = _restoreConversation();
     _messageSubscription = _wsService.incomingMessages.listen(
       (Map<String, dynamic> rawMap) {
         unawaited(_handleIncomingMessage(rawMap));
@@ -115,6 +115,7 @@ class JarvisChatController {
   static const String _historyKey = 'jarvis.conversation.encrypted.v1';
   static const FlutterSecureStorage _historyStorage = FlutterSecureStorage();
   Future<void> _persistQueue = Future<void>.value();
+  late final Future<void> _historyReady;
   bool _ignoreLateRestore = false;
   bool _autonomyRequest = false;
 
@@ -122,18 +123,36 @@ class JarvisChatController {
     try {
       final String? json = await _historyStorage.read(key: _historyKey);
       if (json == null || json.isEmpty || _disposed ||
-          _ignoreLateRestore || _conversation.isNotEmpty) return;
+          _ignoreLateRestore) return;
       final Object? decoded = jsonDecode(json);
       if (decoded is! List) return;
+      final List<JarvisChatTurn> prior = <JarvisChatTurn>[];
       for (final item in decoded.take(24)) {
         if (item is! Map) continue;
         final String role = item['role']?.toString() ?? '';
         final String content = item['content']?.toString() ?? '';
-        if (role == 'user' || role == 'assistant') {
-          _appendTurn(role, content, persist: false);
+        if ((role == 'user' || role == 'assistant') &&
+            content.trim().isNotEmpty) {
+          prior.add(
+            JarvisChatTurn(
+              role: role,
+              content: content.trim().length > 3000
+                  ? content.trim().substring(0, 3000)
+                  : content.trim(),
+            ),
+          );
         }
       }
-      _emitState(const JarvisChatState.initial());
+      if (_ignoreLateRestore || _disposed) return;
+      // A user may send a message while the Android Keystore unlocks.
+      // Preserve that new turn, then prepend saved context in time order.
+      final bool hadNewTurns = _conversation.isNotEmpty;
+      _conversation.insertAll(0, prior);
+      if (_conversation.length > 24) {
+        _conversation.removeRange(0, _conversation.length - 24);
+      }
+      if (hadNewTurns) _queueHistoryPersistence();
+      _emitState(_state);
     } on Object {
       // A Keystore migration failure must not block ordinary conversation.
     }
@@ -290,6 +309,7 @@ class JarvisChatController {
     required bool autoPrint,
   }) async {
     try {
+      await _historyReady;
       // The final user turn is already in the prompt. Pass only prior turns
       // so the model receives a genuine multi-turn conversation.
       final List<JarvisChatTurn> prior =
