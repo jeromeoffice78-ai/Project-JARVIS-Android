@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/network/providers.dart';
 import 'jarvis_chat_controller.dart';
+import '../autonomy/jarvis_autonomy_controller.dart';
+import '../autonomy/jarvis_autonomy_intents.dart';
 import '../presence/jarvis_human_avatar_view.dart';
 import '../presence/jarvis_avatar_voice_bridge.dart';
 import '../realtime/jarvis_realtime_voice_service.dart';
@@ -38,6 +40,39 @@ class _JarvisChatScreenState
     final String text = _input.text.trim();
 
     if (text.isEmpty) {
+      return;
+    }
+
+    // An autonomous execution request must be explicit. Its steps remain
+    // bounded, visible in the agent screen, and subject to approval checks.
+    final String? autonomousGoal = parseJarvisAutonomousGoal(text);
+    if (autonomousGoal != null) {
+      final JarvisAutonomyController agent =
+          ref.read(jarvisAutonomyControllerProvider);
+      if (agent.state.isActive) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('An autonomous goal is already running. '
+                'Pause or finish it before starting another.'),
+          ),
+        );
+        return;
+      }
+      _input.clear();
+      unawaited(agent.startGoal(autonomousGoal).then((_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Autonomous goal accepted. '
+                'Tap the agent status banner to track its progress.'),
+          ),
+        );
+      }).catchError((Object error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not start goal: $error')),
+        );
+      }));
       return;
     }
 
