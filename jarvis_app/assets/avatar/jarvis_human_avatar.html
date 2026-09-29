@@ -205,33 +205,42 @@ function texture(rel, srgb=true){
   return t;
 }
 
-const faceBC=texture('vit_face_bc.png',true);
-const mouthTex=texture('vit_mouth.png',true);
-const scleraTex=texture('vit_sclera.png',true);
-const irisTex=texture('vit_iris.png',true);
-const hairAtlas=texture('vit_hair_atlas.png',true);
-const hairOpacity=texture('vit_hair_opacity.png',false);
-
+// Do not allocate and decode six high-resolution texture maps before
+// the lightweight animated human has its first frame.
 const skinMat=new THREE.MeshStandardMaterial({
-  map:faceBC, color:0xffffff, roughness:.5, metalness:0
+  color:0xffffff, roughness:.5, metalness:0
 });
 const mouthMat=new THREE.MeshStandardMaterial({
-  map:mouthTex, color:0xffffff, roughness:.58
+  color:0xffffff, roughness:.58
 });
 const scleraMat=new THREE.MeshStandardMaterial({
-  map:scleraTex, color:0xffffff, roughness:.34
+  color:0xffffff, roughness:.34
 });
 const irisMat=new THREE.MeshStandardMaterial({
-  map:irisTex, color:0xffffff, roughness:.3
+  color:0xffffff, roughness:.3
 });
 const corneaMat=new THREE.MeshPhysicalMaterial({
   color:0xffffff, roughness:.06, transmission:.05,
   transparent:true, opacity:.35, depthWrite:false
 });
 const hairMat=new THREE.MeshStandardMaterial({
-  map:hairAtlas, alphaMap:hairOpacity, color:0x17130f,
+  color:0x17130f,
   roughness:.55, transparent:true, alphaTest:.22, side:THREE.DoubleSide
 });
+let detailedTexturesStarted=false;
+function prepareDetailedTextures(){
+  if(detailedTexturesStarted)return;
+  detailedTexturesStarted=true;
+  skinMat.map=texture('vit_face_bc.png',true);
+  mouthMat.map=texture('vit_mouth.png',true);
+  scleraMat.map=texture('vit_sclera.png',true);
+  irisMat.map=texture('vit_iris.png',true);
+  hairMat.map=texture('vit_hair_atlas.png',true);
+  hairMat.alphaMap=texture('vit_hair_opacity.png',false);
+  for(const mat of [skinMat,mouthMat,scleraMat,irisMat,hairMat]){
+    mat.needsUpdate=true;
+  }
+}
 
 function materialName(m){return (m?.name||'').split('.')[0];}
 function configureHead(node){
@@ -452,6 +461,7 @@ async function load(){
   try{
     status.style.opacity='0.85';
     status.textContent='Loading detailed human model…';
+    prepareDetailedTextures();
     // Load the optional full-resolution character only after the smaller
     // animated human has already rendered. Its three GLBs are large.
     // These assets total >30 MB before meshes are expanded in GPU memory.
