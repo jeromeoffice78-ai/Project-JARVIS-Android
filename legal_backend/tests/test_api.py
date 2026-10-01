@@ -530,7 +530,7 @@ def test_phone_receptionist_status_and_messages(monkeypatch):
 
     async def fake_vapi_request(method, path, payload=None):
         assert method == "GET"
-        assert path == "/call"
+        assert path == "/call?phoneNumberId=phone_test_1"
         assert payload is None
         return [
             {
@@ -548,6 +548,7 @@ def test_phone_receptionist_status_and_messages(monkeypatch):
                     "transcript": "This is Marcus. Please call me back today."
                 },
                 "status": "ended",
+                "type": "inboundPhoneCall",
                 "createdAt": "2026-09-24T12:00:00Z",
                 "endedAt": "2026-09-24T12:05:00Z",
             }
