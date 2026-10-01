@@ -886,7 +886,6 @@ async def _vapi_find_or_create_assistant() -> dict[str, object]:
 
 
 async def _vapi_bind_existing_phone() -> dict[str, object] | None:
-    assistant = await _vapi_find_or_create_assistant()
     raw_numbers = await _vapi_request("GET", "/phone-number")
     numbers = raw_numbers if isinstance(raw_numbers, list) else []
     phone = next(
@@ -899,30 +898,17 @@ async def _vapi_bind_existing_phone() -> dict[str, object] | None:
         None,
     )
     if phone is None:
-        phone = next(
-            (
-                item
-                for item in numbers
-                if isinstance(item, dict) and item.get("name") == "JARVIS Free Line"
-            ),
-            None,
-        )
-    if phone is None:
         return None
 
-    assistant_id = str(assistant.get("id", "")).strip()
-    phone_id = str(phone.get("id", "")).strip()
-    if not assistant_id or not phone_id:
-        raise RuntimeError("Vapi assistant or phone number is missing an id.")
-
-    if phone.get("assistantId") != assistant_id:
-        updated = await _vapi_request(
-            "PATCH",
-            f"/phone-number/{phone_id}",
-            {"assistantId": assistant_id, "name": "JARVIS Free Line"},
-        )
-        if isinstance(updated, dict):
-            phone = updated
+    # A status refresh must never create an assistant or silently reassign a
+    # working phone number. Verify the line that is actually configured.
+    assistant_id = str(phone.get("assistantId") or "").strip()
+    if not assistant_id:
+        return None
+    raw_assistant = await _vapi_request("GET", f"/assistant/{assistant_id}")
+    assistant = raw_assistant if isinstance(raw_assistant, dict) else {}
+    if assistant.get("name") not in VAPI_ASSISTANT_NAMES:
+        return None
     return {"assistant": assistant, "phone": phone}
 
 
@@ -938,9 +924,23 @@ def _vapi_message_from_call(call: dict[str, object]) -> dict[str, object]:
         or analysis_map.get("structuredData")
         or {}
     )
-    structured_map = structured if isinstance(structured, dict) else {}
+    structured_map: dict[str, object] = {}
+    if isinstance(structured, dict):
+        # Vapi indexes outputs by definition ID; fields live under result.
+        for output in structured.values():
+            if not isinstance(output, dict):
+                continue
+            if output.get("name") != "jarvis_call_message":
+                continue
+            result = output.get("result")
+            if isinstance(result, dict):
+                structured_map = result
+                break
+        if not structured_map:
+            structured_map = structured
     summary = str(
-        analysis_map.get("summary")
+        structured_map.get("summary")
+        or analysis_map.get("summary")
         or artifact_map.get("summary")
         or "Call completed."
     )
@@ -955,11 +955,9 @@ def _vapi_message_from_call(call: dict[str, object]) -> dict[str, object]:
         or caller_number
         or ""
     )
-    urgency_value = (
-        structured_map.get("urgent")
-        or structured_map.get("urgency")
-        or ""
-    )
+    urgency_value = structured_map.get("urgent")
+    if urgency_value is None:
+        urgency_value = structured_map.get("urgency", "")
     urgent = str(urgency_value).lower() in {
         "true", "urgent", "high", "yes", "1"
     }
@@ -972,7 +970,10 @@ def _vapi_message_from_call(call: dict[str, object]) -> dict[str, object]:
         "urgent": urgent,
         "summary": summary,
         "transcript": str(
-            artifact_map.get("transcript")
+            structured_map.get("message")
+            or structured_map.get("completeMessage")
+            or structured_map.get("reasonForCalling")
+            or artifact_map.get("transcript")
             or call.get("transcript")
             or ""
         ),
@@ -1791,13 +1792,20 @@ async def phone_receptionist_messages(
 
     if os.getenv("VAPI_API_KEY", "").strip():
         try:
-            raw_calls = await _vapi_request("GET", "/call")
+            bound = await _vapi_bind_existing_phone()
+            phone = bound.get("phone") if bound else None
+            phone_id = str(phone.get("id") or "") if isinstance(phone, dict) else ""
+            if not phone_id:
+                return {"messages": []}
+            raw_calls = await _vapi_request("GET", f"/call?phoneNumberId={phone_id}")
             calls = raw_calls if isinstance(raw_calls, list) else []
             return {
                 "messages": [
                     _vapi_message_from_call(call)
                     for call in calls[:100]
                     if isinstance(call, dict)
+                    and call.get("type") == "inboundPhoneCall"
+                    and call.get("status") == "ended"
                 ]
             }
         except Exception:
