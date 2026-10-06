@@ -9,6 +9,6 @@ public class MainActivity extends Activity {
  if(Build.VERSION.SDK_INT>=23&&checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{Manifest.permission.CAMERA},7);
  web.loadUrl("https://jarvis-native-watch-bridge.floot.app");}
  void doPrint(){PrintManager pm=(PrintManager)getSystemService(PRINT_SERVICE);pm.print("Trailer Repair Forms",web.createPrintDocumentAdapter("Trailer Repair Forms"),new PrintAttributes.Builder().build());}
- @Override protected void onActivityResult(int r,int c,Intent d){super.onActivityResult(r,c,d);if(r==FILE_REQ&&upload!=null){Uri[] x=null;if(c==RESULT_OK&&d!=null){if(d.getClipData()!=null){int n=d.getClipData().getItemCount();x=new Uri[n];for(int i=0;i<n;i++)x[i]=d.getClipData().getItemAt(i).getUri();else if(d.getData()!=null)x=new Uri[]{d.getData()};}upload.onReceiveValue(x);upload=null;}}
+ @Override protected void onActivityResult(int r,int c,Intent d){super.onActivityResult(r,c,d);if(r==FILE_REQ&&upload!=null){Uri[] x=null;if(c==RESULT_OK&&d!=null){if(d.getClipData()!=null){int n=d.getClipData().getItemCount();x=new Uri[n];for(int i=0;i<n;i++)x[i]=d.getClipData().getItemAt(i).getUri();}else if(d.getData()!=null)x=new Uri[]{d.getData()};}upload.onReceiveValue(x);upload=null;}}
  @Override public void onBackPressed(){if(web.canGoBack())web.goBack();else super.onBackPressed();}
 }
