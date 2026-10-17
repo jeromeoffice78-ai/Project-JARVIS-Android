@@ -116,6 +116,7 @@ class _JarvisPasswordAccountGateState
   }
 
   Future<void> _restore() async {
+    if (mounted) setState(() { _checking = true; _error = null; });
     try {
       final String token = await JarvisAuthSession.loadToken()
           .timeout(const Duration(seconds: 10));
@@ -123,7 +124,7 @@ class _JarvisPasswordAccountGateState
         final http.Response response = await _http.get(
           Uri.parse(_backend + '/v1/auth/session'),
           headers: <String, String>{'authorization': 'Bearer ' + token},
-        ).timeout(const Duration(seconds: 16));
+        ).timeout(const Duration(seconds: 90));
         if (response.statusCode == 200) {
           if (!mounted) return;
           setState(() {
@@ -132,10 +133,17 @@ class _JarvisPasswordAccountGateState
           });
           return;
         }
+        if (response.statusCode != 401 && response.statusCode != 403) {
+          if (mounted) setState(() => _error =
+              'Jarvis is temporarily unavailable. Tap RETRY SESSION.');
+          return;
+        }
       }
       await JarvisAuthSession.clear();
     } on Object {
-      // No valid stored session: ask the owner to sign in.
+      // Keep the saved session when the server is waking or the network fails.
+      if (mounted) setState(() => _error =
+          'Could not check your saved session. Tap RETRY SESSION.');
     } finally {
       if (mounted) setState(() => _checking = false);
     }
@@ -289,7 +297,7 @@ class _JarvisPasswordAccountGateState
         body: jsonEncode(<String, String>{
           'supabase_access_token': supabaseToken,
         }),
-      ).timeout(const Duration(seconds: 30));
+      ).timeout(const Duration(seconds: 90));
       if (!mounted) return;
       if (owner.statusCode != 200) {
         setState(() => _error = owner.statusCode == 403
@@ -534,6 +542,11 @@ class _JarvisPasswordAccountGateState
                         ),
                         const SizedBox(height: 12),
                       ],
+                      if (_error?.contains('RETRY SESSION') ?? false)
+                        TextButton(
+                          onPressed: _restore,
+                          child: const Text('RETRY SESSION'),
+                        ),
                       if (!resetting)
                         TextField(
                           controller: _email,
