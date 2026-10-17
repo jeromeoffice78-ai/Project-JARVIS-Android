@@ -363,6 +363,10 @@ jobs:
           mkdir -p assets/models assets/vendor/three/addons/loaders assets/vendor/three/addons/utils
 
           curl --fail --location --retry 5 --retry-delay 3 \
+            https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/CesiumMan/glTF-Binary/CesiumMan.glb \
+            --output assets/models/CesiumMan.glb
+
+          curl --fail --location --retry 5 --retry-delay 3 \
             https://raw.githubusercontent.com/mrdoob/three.js/r180/build/three.module.js \
             --output assets/vendor/three/three.module.js
           curl --fail --location --retry 5 --retry-delay 3 \
