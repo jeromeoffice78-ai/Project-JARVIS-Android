@@ -85,18 +85,27 @@ class _JarvisPhoneScreenState
     String? cloudError;
     String? messageError;
     final JarvisApiService api = ref.read(jarvisApiServiceProvider);
-    try {
-      cloudStatus = await api.phoneReceptionistStatus();
-    } on Object catch (error) {
-      cloudError = error.toString();
-    }
-    // A message-store outage is separate from the actual voice-provider state.
-    try {
-      cloudMessages = await api.phoneReceptionistMessages();
-    } on Object {
-      messageError =
-          'Call history is temporarily unavailable. Try Refresh again.';
-    }
+    // Run the independent lookups together. A sleeping backend can take time
+    // to wake, while the provider itself may also be slow; neither request
+    // should leave the phone screen loading without a bound.
+    final Future<void> statusTask = () async {
+      try {
+        cloudStatus = await api.phoneReceptionistStatus()
+            .timeout(const Duration(seconds: 90));
+      } on Object catch (error) {
+        cloudError = error.toString();
+      }
+    }();
+    final Future<void> messagesTask = () async {
+      try {
+        cloudMessages = await api.phoneReceptionistMessages()
+            .timeout(const Duration(seconds: 90));
+      } on Object {
+        messageError =
+            'Call history is temporarily unavailable. Try Refresh again.';
+      }
+    }();
+    await Future.wait(<Future<void>>[statusTask, messagesTask]);
     if (!mounted || generation != _refreshGeneration) return;
     setState(() {
       _isDefaultDialer = defaultDialer;
