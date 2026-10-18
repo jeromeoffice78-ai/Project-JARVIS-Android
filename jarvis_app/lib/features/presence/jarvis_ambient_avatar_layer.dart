@@ -129,10 +129,13 @@ class _JarvisAmbientAvatarLayerState
     final JarvisChatState chat =
         ref.watch(jarvisChatStateProvider).valueOrNull ??
             ref.read(jarvisChatControllerProvider).state;
+    final autonomy = ref.watch(jarvisAutonomyStateProvider).valueOrNull ??
+        ref.read(jarvisAutonomyControllerProvider).state;
     final JarvisRealtimeVoiceState voice = avatarStateForConversation(
       realtime: liveVoice,
       localVoice: localVoice,
       chat: chat,
+      autonomy: autonomy,
     );
 
     final JarvisCloudDeviceNetwork cloud =
