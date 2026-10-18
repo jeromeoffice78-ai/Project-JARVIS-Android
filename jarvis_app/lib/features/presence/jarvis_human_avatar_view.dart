@@ -36,6 +36,8 @@ class _JarvisHumanAvatarViewState
   String? _errorMessage;
   int _retryCount = 0;
   bool _retryPending = false;
+  Timer? _pageWatchdog;
+  int _loadGeneration = 0;
   static const int _maxAutomaticRetries = 2;
 
   @override
@@ -67,6 +69,7 @@ class _JarvisHumanAvatarViewState
             );
 
             if (data['type'] == 'ready') {
+              _pageWatchdog?.cancel();
               if (mounted) {
                 setState(() {
                   _ready = true;
@@ -79,6 +82,7 @@ class _JarvisHumanAvatarViewState
               }
               _pushState();
             } else if (data['type'] == 'fallback') {
+              _pageWatchdog?.cancel();
               if (mounted) {
                 setState(() {
                   _ready = true;
@@ -161,8 +165,18 @@ class _JarvisHumanAvatarViewState
   }
 
   Future<void> _loadAvatar() async {
+    final int generation = ++_loadGeneration;
+    _pageWatchdog?.cancel();
+    // WebView can leave a failed module page blank without reporting a main
+    // frame error. Give the bundled renderer time to start, then recover.
+    _pageWatchdog = Timer(const Duration(seconds: 30), () {
+      if (mounted && !_ready && generation == _loadGeneration) {
+        unawaited(_retryMainPage('3D page did not respond'));
+      }
+    });
     try {
       final Uri url = await JarvisAvatarAssetServer.avatarPage();
+      if (!mounted || generation != _loadGeneration) return;
       // Ambient and system-floating avatars load only the lightweight human.
       // Full-screen presence can upgrade after the working 3D figure appears.
       await _controller.loadRequest(
@@ -173,6 +187,8 @@ class _JarvisHumanAvatarViewState
             : url,
       );
     } on Object {
+      if (generation != _loadGeneration) return;
+      _pageWatchdog?.cancel();
       if (!mounted) return;
       if (_retryCount < _maxAutomaticRetries) {
         unawaited(_retryMainPage('Bundled resources unavailable'));
@@ -211,7 +227,7 @@ class _JarvisHumanAvatarViewState
   }
 
   Future<void> _pushState() async {
-    if (!_ready) {
+    if (!_ready || !mounted) {
       return;
     }
 
@@ -233,11 +249,20 @@ class _JarvisHumanAvatarViewState
           widget.voiceState.remoteAudioLevelAvailable,
     };
 
-    await _controller.runJavaScript(
-      'window.jarvisSetState(' +
-          jsonEncode(payload) +
-          ');',
-    );
+    try {
+      await _controller.runJavaScript(
+        'window.jarvisSetState?.(' + jsonEncode(payload) + ');',
+      );
+    } on Object {
+      // WebView can be replaced by Android while a voice frame is in flight.
+      // The next page-ready event sends the latest state again.
+    }
+  }
+
+  @override
+  void dispose() {
+    _pageWatchdog?.cancel();
+    super.dispose();
   }
 
   @override
