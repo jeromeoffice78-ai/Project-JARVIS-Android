@@ -148,6 +148,14 @@ renderer.toneMappingExposure = 1.12;
 renderer.shadowMap.enabled = false;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
+renderer.domElement.addEventListener('webglcontextlost',event=>{
+  event.preventDefault();
+  ready=false;
+  window.__jarvisAvatarBackup?.show('3D graphics context lost');
+});
+renderer.domElement.addEventListener('webglcontextrestored',()=>{
+  location.reload();
+});
 
 const hemi = new THREE.HemisphereLight(0xcfe7ff, 0x101018, 1.1);
 scene.add(hemi);
@@ -409,12 +417,15 @@ function attachWorldAuthored(child,bone){
   bone.add(child);
 }
 function fitCamera(){
+  // Measure the current model from a neutral origin. Re-fitting after the
+  // detailed upgrade must not add the first model's ground offset again.
+  root.position.y=0;
+  root.updateMatrixWorld(true);
   const box=new THREE.Box3().setFromObject(root);
-  const center=box.getCenter(new THREE.Vector3());
   const size=box.getSize(new THREE.Vector3());
   const h=Math.max(size.y,1);
-  root.position.y-=box.min.y;
-  groundY=root.position.y;
+  groundY=-box.min.y;
+  root.position.y=groundY;
   camera.position.set(0,h*.58,Math.max(3.0,h*1.55));
   camera.lookAt(0,h*.54,0);
 }
@@ -457,6 +468,7 @@ async function load(){
   const previousAction=activeAction;
   const previousHeadBone=headBone;
   const previousHeadPivot=headPivot;
+  const previousMorphMeshes=morphMeshes;
   let replacementBody=null;
   try{
     status.style.opacity='0.85';
@@ -479,6 +491,7 @@ async function load(){
     }
     body=b.scene; head=h.scene; hair=hr.scene;
     replacementBody=body;
+    morphMeshes=[];
     configureBody(body); configureHead(head); configureHair(hair);
     root.add(body);
     body.updateMatrixWorld(true);
@@ -504,6 +517,8 @@ async function load(){
     }
 
     mixer=new THREE.AnimationMixer(body);
+    actions={};
+    activeAction=null;
     for(const clip of b.animations){
       actions[clip.name]=mixer.clipAction(clip);
       actions[clip.name].setLoop(THREE.LoopRepeat,Infinity);
@@ -529,6 +544,7 @@ async function load(){
     activeAction=previousAction;
     headBone=previousHeadBone;
     headPivot=previousHeadPivot;
+    morphMeshes=previousMorphMeshes;
     if(ready){
       status.textContent='Animated JARVIS online · detailed model unavailable';
       window.JarvisAvatar?.postMessage(JSON.stringify({
