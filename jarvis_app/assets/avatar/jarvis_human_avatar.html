@@ -504,6 +504,8 @@ async function load(){
     }
 
     mixer=new THREE.AnimationMixer(body);
+    actions={};
+    activeAction=null;
     for(const clip of b.animations){
       actions[clip.name]=mixer.clipAction(clip);
       actions[clip.name].setLoop(THREE.LoopRepeat,Infinity);
