@@ -80,4 +80,38 @@ void main() {
       expect(data.lengthInBytes, greaterThan(100), reason: name);
     }
   });
+
+  test('bundled avatar models and textures have valid file signatures',
+      () async {
+    for (final String name in <String>[
+      'CesiumMan.glb',
+      'vitruvian_body.glb',
+      'vitruvian_head.glb',
+      'hairtool_cards.glb',
+    ]) {
+      final ByteData data = await rootBundle.load('assets/models/$name');
+      expect(data.lengthInBytes, greaterThan(20), reason: name);
+      // GLB files start with ASCII "glTF". A nonempty HTTP error page can
+      // otherwise pass the size-only check and break the avatar at runtime.
+      expect(data.getUint32(0, Endian.little), 0x46546c67, reason: name);
+      expect(data.getUint32(4, Endian.little), 2, reason: name);
+      expect(data.getUint32(8, Endian.little), data.lengthInBytes,
+          reason: name);
+    }
+
+    for (final String name in <String>[
+      'vit_face_bc.png',
+      'vit_mouth.png',
+      'vit_sclera.png',
+      'vit_iris.png',
+      'vit_hair_atlas.png',
+      'vit_hair_opacity.png',
+    ]) {
+      final ByteData data = await rootBundle.load('assets/models/$name');
+      expect(data.lengthInBytes, greaterThan(24), reason: name);
+      expect(data.getUint32(0), 0x89504e47, reason: name);
+      expect(data.getUint32(4), 0x0d0a1a0a, reason: name);
+      expect(data.getUint32(12), 0x49484452, reason: name);
+    }
+  });
 }
