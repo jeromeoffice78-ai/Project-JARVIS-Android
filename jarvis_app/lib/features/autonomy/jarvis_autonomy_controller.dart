@@ -83,6 +83,8 @@ class JarvisAutonomyController {
   StreamSubscription<JarvisChatState>? _chatSubscription;
   JarvisAutonomyState _state =
       const JarvisAutonomyState.initial();
+  String? _activeRequestId;
+  int _goalGeneration = 0;
   bool _disposed = false;
 
   Stream<JarvisAutonomyState> get stateStream =>
@@ -95,6 +97,8 @@ class JarvisAutonomyController {
     int maxSteps = 8,
   }) async {
     _ensureNotDisposed();
+    _goalGeneration++;
+    _activeRequestId = null;
 
     final String normalized = goal.trim();
     if (normalized.isEmpty) {
@@ -122,6 +126,8 @@ class JarvisAutonomyController {
 
   Future<void> pause() async {
     _ensureNotDisposed();
+    _goalGeneration++;
+    _activeRequestId = null;
 
     if (_chatController.state.isGenerating) {
       _chatController.cancelCurrentResponse();
@@ -142,6 +148,7 @@ class JarvisAutonomyController {
 
   Future<void> resume() async {
     _ensureNotDisposed();
+    _goalGeneration++;
 
     if (_state.goal.trim().isEmpty) {
       return;
@@ -165,6 +172,8 @@ class JarvisAutonomyController {
 
   Future<void> stop() async {
     _ensureNotDisposed();
+    _goalGeneration++;
+    _activeRequestId = null;
 
     if (_chatController.state.isGenerating) {
       _chatController.cancelCurrentResponse();
@@ -177,11 +186,14 @@ class JarvisAutonomyController {
   void _handleChatState(JarvisChatState chatState) {
     if (_disposed ||
         _state.status !=
-            JarvisAutonomyStatus.waitingForResponse) {
+            JarvisAutonomyStatus.waitingForResponse ||
+        _activeRequestId == null ||
+        chatState.requestId != _activeRequestId) {
       return;
     }
 
     if (chatState.status == JarvisChatStatus.completed) {
+      _activeRequestId = null;
       unawaited(
         _handleCompletedResponse(chatState.responseText),
       );
@@ -189,6 +201,7 @@ class JarvisAutonomyController {
     }
 
     if (chatState.status == JarvisChatStatus.error) {
+      _activeRequestId = null;
       _emit(
         JarvisAutonomyState(
           status: JarvisAutonomyStatus.error,
@@ -208,6 +221,11 @@ class JarvisAutonomyController {
   Future<void> _handleCompletedResponse(
     String response,
   ) async {
+    if (_disposed ||
+        _state.status != JarvisAutonomyStatus.waitingForResponse) {
+      return;
+    }
+    final int generation = _goalGeneration;
     final _AutonomyDirective? directive =
         _parseDirective(response);
 
@@ -222,6 +240,11 @@ class JarvisAutonomyController {
 
     _emit(base);
     await _persist();
+    if (_disposed ||
+        generation != _goalGeneration ||
+        _state.status != JarvisAutonomyStatus.running) {
+      return;
+    }
 
     if (directive == null) {
       _emit(
@@ -313,7 +336,7 @@ class JarvisAutonomyController {
     required String nextAction,
   }) async {
     if (_disposed ||
-        _state.status == JarvisAutonomyStatus.paused) {
+        _state.status != JarvisAutonomyStatus.running) {
       return;
     }
 
@@ -345,6 +368,7 @@ class JarvisAutonomyController {
 
     final String? requestId =
         _chatController.askJarvis(prompt);
+    _activeRequestId = requestId;
 
     if (requestId == null) {
       _emit(
@@ -441,6 +465,7 @@ Use AUTONOMY_STATUS: BLOCKED when user input, permission, authentication, or app
         await _preferences.getString(_goalKey);
 
     if (_disposed ||
+        _state.status != JarvisAutonomyStatus.idle ||
         goal == null ||
         goal.trim().isEmpty) {
       return;
