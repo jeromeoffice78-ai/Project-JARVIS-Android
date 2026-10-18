@@ -186,7 +186,6 @@ let nextWander=performance.now()+5000;
 let blinkStart=-1;
 let nextBlink=performance.now()+1200+Math.random()*2200;
 let lastActive=true;
-let speakingPhase=0;
 let groundY=0;
 let fallbackMouth=null;
 let detailedLoading=false;
@@ -342,10 +341,10 @@ function expression(t){
   }
 
   if(state.activity==='speaking'){
-    speakingPhase += .17;
-
+    // Time-based visemes keep the same speaking rhythm at 30, 60, and 120 Hz.
+    const speechPhase=t*.01938;
     const fallbackOpen =
-      .16 + Math.abs(Math.sin(speakingPhase*1.9))*.42;
+      .16 + Math.abs(Math.sin(speechPhase))*.42;
 
     const rawLevel = Number.isFinite(state.audioLevel)
       ? THREE.MathUtils.clamp(state.audioLevel,0,1)
@@ -369,7 +368,7 @@ function expression(t){
     const slot=Math.floor((t/105)%5);
     const visemeStrength = state.audioLevelAvailable
       ? THREE.MathUtils.clamp(open*.62, .04, .52)
-      : .22+.18*Math.abs(Math.sin(speakingPhase));
+      : .22+.18*Math.abs(Math.sin(speechPhase*.53));
 
     morph(
       ['aa_02','ow_08','p_b_m_21','f_v_18','ey_eh_uh_04'][slot],
@@ -601,12 +600,14 @@ function autonomousMotion(now,dt){
 
   const dx=targetX-root.position.x;
   const moving=Math.abs(dx)>.025;
+  const turnAlpha=1-Math.exp(-5*dt);
+  const settleAlpha=1-Math.exp(-12*dt);
   if(moving){
     root.position.x += Math.sign(dx)*Math.min(Math.abs(dx),dt*.48);
-    root.rotation.y=THREE.MathUtils.lerp(root.rotation.y, dx>0?.10:-.10, .08);
+    root.rotation.y=THREE.MathUtils.lerp(root.rotation.y, dx>0?.28:-.28, turnAlpha);
     playClip('Walk');
   }else{
-    root.rotation.y=THREE.MathUtils.lerp(root.rotation.y,0,.06);
+    root.rotation.y=THREE.MathUtils.lerp(root.rotation.y,0,turnAlpha);
     if(state.activity==='speaking'){
       playClip(Math.sin(now*.0017)>.72?'Wave':'Sway');
     }else if(state.activity==='thinking'){
@@ -628,7 +629,7 @@ function autonomousMotion(now,dt){
   if(moving){
     root.position.y=groundY+Math.abs(Math.sin(now*.008))*0.012;
   }else{
-    root.position.y=THREE.MathUtils.lerp(root.position.y,groundY,.18);
+    root.position.y=THREE.MathUtils.lerp(root.position.y,groundY,settleAlpha);
   }
 }
 const clock=new THREE.Clock();
