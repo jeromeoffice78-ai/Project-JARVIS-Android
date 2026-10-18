@@ -415,6 +415,25 @@ function attachWorldAuthored(child,bone){
   child.applyMatrix4(inv);
   bone.add(child);
 }
+// Release the retired lightweight figure only after detailed replacement succeeds.
+// Its imported materials and textures are owned by the Cesium model, unlike
+// the shared materials used by the detailed figure.
+function disposeRetiredModel(model,mix){
+  mix?.stopAllAction();
+  mix?.uncacheRoot(model);
+  model.traverse(node=>{
+    if(!node.isMesh) return;
+    node.geometry?.dispose();
+    const materials=Array.isArray(node.material)?node.material:[node.material];
+    for(const material of materials){
+      if(!material) continue;
+      for(const value of Object.values(material)){
+        if(value?.isTexture) value.dispose();
+      }
+      material.dispose();
+    }
+  });
+}
 function fitCamera(){
   // Measure the current model from a neutral origin. Re-fitting after the
   // detailed upgrade must not add the first model's ground offset again.
@@ -532,6 +551,9 @@ async function load(){
     status.textContent='Human JARVIS online';
     setTimeout(()=>status.style.opacity='0',1800);
     window.JarvisAvatar?.postMessage(JSON.stringify({type:'ready'}));
+    if(previousBody && previousBody!==body){
+      try{disposeRetiredModel(previousBody,previousMixer);}catch(error){console.warn(error);}
+    }
   }catch(e){
     console.error(e);
     if(replacementBody) root.remove(replacementBody);
@@ -633,8 +655,21 @@ function autonomousMotion(now,dt){
   }
 }
 const clock=new THREE.Clock();
+function scheduleFrame(){
+  // An inactive figure that has left the stage needs no high-refresh render.
+  const resting=!state.active && Math.abs(targetX-root.position.x)<.025;
+  if(document.hidden || resting){
+    setTimeout(()=>animate(performance.now()),document.hidden?250:83);
+  }else{
+    requestAnimationFrame(animate);
+  }
+}
 function animate(now){
-  requestAnimationFrame(animate);
+  if(document.hidden){
+    clock.getDelta();
+    scheduleFrame();
+    return;
+  }
   const dt=Math.min(clock.getDelta(),.05);
   if(mixer) mixer.update(dt);
   autonomousMotion(now,dt);
@@ -645,8 +680,9 @@ function animate(now){
       ? .35 + Math.abs(Math.sin(now*.018))*.75 : .18;
   }
   renderer.render(scene,camera);
+  scheduleFrame();
 }
-requestAnimationFrame(animate);
+scheduleFrame();
 
 window.jarvisSetState=(next)=>{
   if(!next||typeof next!=='object') return;
