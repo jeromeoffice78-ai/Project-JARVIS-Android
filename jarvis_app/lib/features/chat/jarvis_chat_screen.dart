@@ -139,11 +139,14 @@ class _JarvisChatScreenState
         final JarvisVoiceState localVoice =
             ref.watch(jarvisVoiceStateProvider).valueOrNull ??
                 ref.read(jarvisVoiceServiceProvider).state;
+        final autonomy = ref.watch(jarvisAutonomyStateProvider).valueOrNull ??
+            ref.read(jarvisAutonomyControllerProvider).state;
         final JarvisRealtimeVoiceState animatedVoice =
             avatarStateForConversation(
           realtime: liveVoice,
           localVoice: localVoice,
           chat: state,
+          autonomy: autonomy,
         );
         final bool keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
         if (turns.isNotEmpty || state.responseText.isNotEmpty) {

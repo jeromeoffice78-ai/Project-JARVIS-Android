@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:project_jarvis/features/chat/jarvis_chat_controller.dart';
+import 'package:project_jarvis/features/autonomy/jarvis_autonomy_controller.dart';
 import 'package:project_jarvis/features/presence/jarvis_avatar_voice_bridge.dart';
 import 'package:project_jarvis/features/realtime/jarvis_realtime_voice_service.dart';
 import 'package:project_jarvis/features/voice/jarvis_voice_service.dart';
@@ -49,5 +50,38 @@ void main() {
       chat: chatIdle,
     );
     expect(result.activity, JarvisConversationActivity.listening);
+  });
+
+  test('Autonomous work makes an otherwise idle avatar look focused', () {
+    final result = avatarStateForConversation(
+      realtime: idle,
+      localVoice: JarvisVoiceState.idle,
+      chat: chatIdle,
+      autonomy: const JarvisAutonomyState(
+        status: JarvisAutonomyStatus.running,
+        goal: 'Find a route',
+        step: 1,
+        maxSteps: 8,
+        lastResponse: '',
+      ),
+    );
+    expect(result.activity, JarvisConversationActivity.thinking);
+    expect(result.mood, 'focused');
+  });
+
+  test('Speech takes precedence over an autonomous task', () {
+    final result = avatarStateForConversation(
+      realtime: idle,
+      localVoice: JarvisVoiceState.speaking,
+      chat: chatIdle,
+      autonomy: const JarvisAutonomyState(
+        status: JarvisAutonomyStatus.waitingForResponse,
+        goal: 'Find a route',
+        step: 1,
+        maxSteps: 8,
+        lastResponse: '',
+      ),
+    );
+    expect(result.activity, JarvisConversationActivity.speaking);
   });
 }
