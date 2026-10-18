@@ -5,6 +5,7 @@ import '../devices/jarvis_cloud_device_network.dart';
 import 'jarvis_human_avatar_view.dart';
 import 'jarvis_avatar_voice_bridge.dart';
 import '../chat/jarvis_chat_controller.dart';
+import '../autonomy/jarvis_autonomy_controller.dart';
 import '../voice/jarvis_voice_service.dart';
 import 'jarvis_system_overlay_control.dart';
 import '../realtime/jarvis_realtime_voice_screen.dart';
@@ -34,10 +35,14 @@ class JarvisPresenceScreen
     final JarvisChatState chat =
         ref.watch(jarvisChatStateProvider).valueOrNull ??
             ref.read(jarvisChatControllerProvider).state;
+    final JarvisAutonomyState autonomy =
+        ref.watch(jarvisAutonomyStateProvider).valueOrNull ??
+            ref.read(jarvisAutonomyControllerProvider).state;
     final JarvisRealtimeVoiceState voice = avatarStateForConversation(
       realtime: liveVoice,
       localVoice: localVoice,
       chat: chat,
+      autonomy: autonomy,
     );
 
     final JarvisCloudDeviceNetwork cloud =
@@ -82,7 +87,12 @@ class JarvisPresenceScreen
       JarvisRealtimeVoiceStatus.connecting =>
         'CONNECTING',
       JarvisRealtimeVoiceStatus.connected =>
-        'LISTENING / SPEAKING',
+        switch (voice.activity) {
+          JarvisConversationActivity.listening => 'LISTENING',
+          JarvisConversationActivity.speaking => 'SPEAKING',
+          JarvisConversationActivity.thinking => 'THINKING',
+          JarvisConversationActivity.idle => 'VOICE CONNECTED',
+        },
       JarvisRealtimeVoiceStatus.stopping =>
         'ENDING SESSION',
       JarvisRealtimeVoiceStatus.error =>
@@ -193,9 +203,15 @@ class JarvisPresenceScreen
                                               cloudState
                                                   .deviceId,
                                             );
-                                          } on Object {
-                                            // Network state exposes
-                                            // the failure message.
+                                          } on Object catch (error) {
+                                            if (context.mounted) {
+                                              ScaffoldMessenger.of(context)
+                                                  .showSnackBar(SnackBar(
+                                                content: Text(
+                                                  'Could not bring Jarvis here: $error',
+                                                ),
+                                              ));
+                                            }
                                           }
                                         },
                               icon:
@@ -242,108 +258,109 @@ class JarvisPresenceScreen
               ],
             ),
           ),
-          Container(
-            color: Colors.black,
-            width: double.infinity,
-            padding:
-                const EdgeInsets.fromLTRB(
-              16,
-              12,
-              16,
-              20,
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(context).height * 0.38,
             ),
-            child: Column(
-              children: <Widget>[
-                Text(
-                  jarvisHere
-                      ? 'JARVIS ONLINE'
-                      : 'JARVIS REMOTE',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight:
-                        FontWeight.bold,
-                    fontSize: 22,
-                    letterSpacing: 3,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  jarvisHere
-                      ? 'Standalone 3D companion • voice • vision • memory • autonomous tools'
-                      : (activeDeviceName.isEmpty
-                          ? 'Jarvis is active on another cloud-connected device'
-                          : 'Active on ' +
-                              activeDeviceName +
-                              ' through the Jarvis cloud network'),
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Colors.white60,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Wrap(
-                  alignment:
-                      WrapAlignment.center,
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: <Widget>[
-                    FilledButton.icon(
-                      onPressed: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder:
-                                (BuildContext
-                                        context) =>
-                                    const JarvisRealtimeVoiceScreen(),
-                          ),
-                        );
-                      },
-                      icon: const Icon(
-                        Icons.graphic_eq,
-                      ),
-                      label: const Text(
-                        'Live Voice',
-                      ),
+            child: SingleChildScrollView(
+              child: Container(
+                color: Colors.black,
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+                child: Column(
+                children: <Widget>[
+                  Text(
+                    jarvisHere
+                        ? 'JARVIS PRESENCE'
+                        : 'JARVIS REMOTE',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight:
+                          FontWeight.bold,
+                      fontSize: 22,
+                      letterSpacing: 3,
                     ),
-                    OutlinedButton.icon(
-                      style: OutlinedButton
-                          .styleFrom(
-                        foregroundColor:
-                            Colors.white,
-                      ),
-                      onPressed: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder:
-                                (BuildContext
-                                        context) =>
-                                    const JarvisVoiceScreen(),
-                          ),
-                        );
-                      },
-                      icon: const Icon(
-                        Icons.mic_none,
-                      ),
-                      label: const Text(
-                        'Voice Hub',
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                JarvisSystemOverlayControl(
-                  voiceState: voice,
-                  active: jarvisHere,
-                ),
-                const SizedBox(height: 10),
-                const Text(
-                  'Autonomous human presence • facial expressions • lip motion • walking • device handoff • Android system overlay',
-                  style: TextStyle(
-                    color: Colors.white38,
-                    fontSize: 12,
                   ),
+                  const SizedBox(height: 6),
+                  Text(
+                    jarvisHere
+                        ? 'Avatar activity follows voice, chat, and autonomous tasks'
+                        : (activeDeviceName.isEmpty
+                            ? 'Jarvis is active on another cloud-connected device'
+                            : 'Active on ' +
+                                activeDeviceName +
+                                ' through the Jarvis cloud network'),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white60,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Wrap(
+                    alignment:
+                        WrapAlignment.center,
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: <Widget>[
+                      FilledButton.icon(
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder:
+                                  (BuildContext
+                                          context) =>
+                                      const JarvisRealtimeVoiceScreen(),
+                            ),
+                          );
+                        },
+                        icon: const Icon(
+                          Icons.graphic_eq,
+                        ),
+                        label: const Text(
+                          'Live Voice',
+                        ),
+                      ),
+                      OutlinedButton.icon(
+                        style: OutlinedButton
+                            .styleFrom(
+                          foregroundColor:
+                              Colors.white,
+                        ),
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder:
+                                  (BuildContext
+                                          context) =>
+                                      const JarvisVoiceScreen(),
+                            ),
+                          );
+                        },
+                        icon: const Icon(
+                          Icons.mic_none,
+                        ),
+                        label: const Text(
+                          'Voice Hub',
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  JarvisSystemOverlayControl(
+                    voiceState: voice,
+                    active: jarvisHere,
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'Avatar animation depends on your device graphics support. Voice and cloud connection are shown separately.',
+                    style: TextStyle(
+                      color: Colors.white38,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
                 ),
-              ],
+              ),
             ),
           ),
         ],
