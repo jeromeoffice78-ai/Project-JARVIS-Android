@@ -503,6 +503,7 @@ class JarvisApiService {
     String? imageBase64,
     List<Map<String, String>> history = const <Map<String, String>>[],
   }) async {
+    // Allow cold startup and reasoning time, but recover from a stalled request.
     final response = await _client.post(
       Uri.parse(
         '${_config.httpBaseUrl}/v1/frontier/query',
@@ -524,7 +525,7 @@ class JarvisApiService {
             imageBase64.isNotEmpty)
           'image_base64': imageBase64,
       }),
-    );
+    ).timeout(const Duration(seconds: 180));
 
     final Object? decoded = jsonDecode(response.body);
     if (response.statusCode != 200) {
