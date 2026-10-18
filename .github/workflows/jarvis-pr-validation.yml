@@ -124,6 +124,14 @@ jobs:
         working-directory: jarvis_app
         run: flutter test test/jarvis_session_lifecycle_test.dart
 
+      - name: Test account gate, spoken chat, and voice state
+        working-directory: jarvis_app
+        run: flutter test test/jarvis_first_install_account_test.dart test/jarvis_spoken_replies_test.dart test/jarvis_avatar_voice_bridge_test.dart
+
+      - name: Test phone safety, autonomous intent, and cloud device state
+        working-directory: jarvis_app
+        run: flutter test test/jarvis_phone_safety_test.dart test/jarvis_autonomy_intents_test.dart test/jarvis_cloud_device_contract_test.dart
+
       - name: Build debug APK
         working-directory: jarvis_app
         env:
