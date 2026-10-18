@@ -495,7 +495,7 @@ class _JarvisDevicesScreenState
                         ),
                   ),
                   Text(
-                    '${state.connectedCount} Bluetooth LE device(s) connected',
+                    '${state.connectedCount} Bluetooth LE device(s) connected to Android',
                   ),
                 ],
               ),
@@ -539,7 +539,7 @@ class _JarvisDevicesScreenState
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'Jarvis can keep multiple BLE devices connected at the same time. Each device has an independent connection state and known devices are remembered for reconnection.',
+                  'Devices already connected through another app may appear here as Android-connected. Jarvis remembers BLE devices only after you connect them from this screen.',
                 ),
                 if (state.errorMessage != null) ...[
                   const SizedBox(height: 8),
@@ -641,7 +641,8 @@ class _JarvisDevicesScreenState
                 subtitle: Text(
                   '${device.connectionState.name}'
                   '${device.rssi == null ? '' : ' • RSSI ${device.rssi}'}'
-                  '${device.isKnown ? ' • remembered' : ''}'
+                  '${device.isSystemDevice && !device.isKnown ? ' • Android-connected (companion app)' : ''}'
+                  '${device.isKnown ? ' • remembered by Jarvis' : ''}'
                   '${device.error == null ? '' : '\n${device.error}'}',
                 ),
                 controlAffinity:
