@@ -148,6 +148,14 @@ renderer.toneMappingExposure = 1.12;
 renderer.shadowMap.enabled = false;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
+renderer.domElement.addEventListener('webglcontextlost',event=>{
+  event.preventDefault();
+  ready=false;
+  window.__jarvisAvatarBackup?.show('3D graphics context lost');
+});
+renderer.domElement.addEventListener('webglcontextrestored',()=>{
+  location.reload();
+});
 
 const hemi = new THREE.HemisphereLight(0xcfe7ff, 0x101018, 1.1);
 scene.add(hemi);
@@ -460,6 +468,7 @@ async function load(){
   const previousAction=activeAction;
   const previousHeadBone=headBone;
   const previousHeadPivot=headPivot;
+  const previousMorphMeshes=morphMeshes;
   let replacementBody=null;
   try{
     status.style.opacity='0.85';
@@ -482,6 +491,7 @@ async function load(){
     }
     body=b.scene; head=h.scene; hair=hr.scene;
     replacementBody=body;
+    morphMeshes=[];
     configureBody(body); configureHead(head); configureHair(hair);
     root.add(body);
     body.updateMatrixWorld(true);
@@ -534,6 +544,7 @@ async function load(){
     activeAction=previousAction;
     headBone=previousHeadBone;
     headPivot=previousHeadPivot;
+    morphMeshes=previousMorphMeshes;
     if(ready){
       status.textContent='Animated JARVIS online · detailed model unavailable';
       window.JarvisAvatar?.postMessage(JSON.stringify({
