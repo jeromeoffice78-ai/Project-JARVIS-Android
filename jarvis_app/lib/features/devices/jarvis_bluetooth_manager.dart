@@ -94,6 +94,7 @@ class JarvisBluetoothManager {
       _connectionSubscriptions =
       <String, StreamSubscription<bool>>{};
   final Set<String> _knownDeviceIds = <String>{};
+  final Set<String> _jarvisConnectedIds = <String>{};
   final Set<String> _manualDisconnectIds = <String>{};
   final Map<String, int> _reconnectAttempts = <String, int>{};
   final Map<String, Timer> _reconnectTimers = <String, Timer>{};
@@ -267,6 +268,7 @@ class JarvisBluetoothManager {
           JarvisBluetoothConnectionState.connected;
 
       _knownDeviceIds.add(normalized);
+      _jarvisConnectedIds.add(normalized);
       await _saveKnownDevices();
 
       _rebuildState();
@@ -324,6 +326,7 @@ class JarvisBluetoothManager {
             _connections[id] =
                 JarvisBluetoothConnectionState.connected;
             _knownDeviceIds.add(id);
+            _jarvisConnectedIds.add(id);
           } on Object catch (error) {
             _connections[id] =
                 JarvisBluetoothConnectionState.error;
@@ -350,6 +353,7 @@ class JarvisBluetoothManager {
     }
 
     _manualDisconnectIds.add(normalized);
+    _jarvisConnectedIds.remove(normalized);
     _reconnectTimers.remove(normalized)?.cancel();
     _reconnectAttempts.remove(normalized);
 
@@ -399,8 +403,14 @@ class JarvisBluetoothManager {
       _devices[device.deviceId] = device;
       _connections[device.deviceId] =
           JarvisBluetoothConnectionState.connected;
-      _knownDeviceIds.add(device.deviceId);
-      _listenForConnection(device.deviceId);
+      // Prior builds incorrectly remembered Android-owned devices for
+      // reconnection. Drop those IDs so Jarvis will not contend with the
+      // companion app for the watch's BLE link.
+      if (!_jarvisConnectedIds.contains(device.deviceId)) {
+        _knownDeviceIds.remove(device.deviceId);
+      }
+      // A device connected by another app belongs to Android, not Jarvis.
+      // Do not claim ownership or schedule a competing GATT reconnect.
     }
 
     await _saveKnownDevices();
@@ -426,6 +436,8 @@ class JarvisBluetoothManager {
           timeout: const Duration(seconds: 12),
           attempts: 3,
         );
+        _connections[deviceId] = JarvisBluetoothConnectionState.connected;
+        _jarvisConnectedIds.add(deviceId);
       } on Object catch (error) {
         _connections[deviceId] =
             JarvisBluetoothConnectionState.disconnected;
@@ -518,6 +530,7 @@ class JarvisBluetoothManager {
           );
           _connections[deviceId] =
               JarvisBluetoothConnectionState.connected;
+          _jarvisConnectedIds.add(deviceId);
           _errors.remove(deviceId);
         } on Object catch (error) {
           _connections[deviceId] =
@@ -546,15 +559,19 @@ class JarvisBluetoothManager {
             : JarvisBluetoothConnectionState.disconnected;
 
         if (connected) {
+          _jarvisConnectedIds.add(deviceId);
           _errors.remove(deviceId);
           _knownDeviceIds.add(deviceId);
           _manualDisconnectIds.remove(deviceId);
           _reconnectAttempts.remove(deviceId);
           _reconnectTimers.remove(deviceId)?.cancel();
           unawaited(_saveKnownDevices());
-        } else if (_knownDeviceIds.contains(deviceId) &&
-            !_manualDisconnectIds.contains(deviceId)) {
-          _scheduleReconnect(deviceId);
+        } else {
+          _jarvisConnectedIds.remove(deviceId);
+          if (_knownDeviceIds.contains(deviceId) &&
+              !_manualDisconnectIds.contains(deviceId)) {
+            _scheduleReconnect(deviceId);
+          }
         }
 
         _rebuildState();
